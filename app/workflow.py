@@ -83,7 +83,7 @@ def publish_product_end_to_end(
     payload: ProductWorkflowInput,
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> dict[str, object]:
-    """Generate image, persist product, generate DeepSeek copy, ensure board, and publish one Pin."""
+    """Generate image and copy before persisting, then publish one Pin."""
     try:
         existing = get_product_by_idempotency_key(idempotency_key)
     except Exception as exc:
@@ -103,7 +103,6 @@ def publish_product_end_to_end(
         raise HTTPException(status_code=404, detail="Pinterest account is not connected in the credential vault.") from exc
 
     # Validate the stored OAuth token before invoking billable image/LLM providers.
-    # Pinterest v5 user_account requires the user_accounts:read scope.
     try:
         _pinterest_request("GET", "/user_account", credential["access_token"])
     except HTTPException as exc:
@@ -112,6 +111,9 @@ def publish_product_end_to_end(
             detail="Stored Pinterest credential could not be verified. Reconnect the account before publishing.",
         ) from exc
 
+    # Generate both external-provider outputs before consuming the persisted key.
+    # A transient DeepSeek failure therefore leaves no product row behind and the
+    # same Idempotency-Key remains retryable.
     try:
         media = generate_and_host_pin_image(
             product_name=payload.product_name,
@@ -121,6 +123,15 @@ def publish_product_end_to_end(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     try:
+        generated, model_id = generate_pin_content(
+            product_name=payload.product_name,
+            product_details=payload.product_details,
+            image_url=media["image_url"],
+        )
+    except ContentGenerationError as exc:
+        raise HTTPException(status_code=503, detail="Content generation failed before product persistence; retry with the same Idempotency-Key.") from exc
+
+    try:
         product = create_product(
             product_name=payload.product_name,
             product_details=payload.product_details,
@@ -128,20 +139,13 @@ def publish_product_end_to_end(
             affiliate_url=payload.affiliate_url,
             idempotency_key=idempotency_key,
         )
-        generated, model_id = generate_pin_content(
-            product_name=payload.product_name,
-            product_details=payload.product_details,
-            image_url=media["image_url"],
-        )
         content = create_content_version(
             product_id=product["id"], provider="deepseek", model_id=model_id,
             prompt_version="pin-content-v1", pin_idea=generated.pin_idea,
             title=generated.title, description=generated.description, alt_text=generated.alt_text,
         )
-    except ContentGenerationError as exc:
-        raise HTTPException(status_code=503, detail=f"Content generation failed; product was saved as draft (product_id={product['id'] if 'product' in locals() else 'not-created'}).") from exc
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Product/content persistence failed; no Pinterest Pin was intentionally published.") from exc
+        raise HTTPException(status_code=503, detail="Product/content persistence failed; no Pinterest Pin was intentionally published. Check the database before retrying.") from exc
 
     token = credential["access_token"]
     board_id = _ensure_board(token, payload.board_name, payload.board_description)
