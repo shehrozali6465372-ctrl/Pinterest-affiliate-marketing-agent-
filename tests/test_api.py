@@ -602,3 +602,110 @@ def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(mon
     assert response.json()["published"] is True
     assert len(persistence) == 1
     assert persistence[0]["idempotency_key"] == "request-key-success-123"
+
+
+def test_live_diagnostics_requires_api_key_and_never_runs_without_auth(monkeypatch):
+    from app import diagnostics
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(
+        diagnostics,
+        "run_live_diagnostics",
+        lambda payload: {"ok": True, "side_effects": {"pinterest_pin_created": False}},
+    )
+    response = client.post("/diagnostics/run", json={"account_id": "pinterest:test-account"})
+    assert response.status_code == 401
+
+
+def test_live_diagnostics_runs_read_only_pinterest_and_reports_side_effect_guard(monkeypatch):
+    from types import SimpleNamespace
+    from app import diagnostics
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(settings, "llm_api_key", "test-llm-key")
+    monkeypatch.setattr(diagnostics, "_require_api_key", lambda: None)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def execute(self, query):
+            assert query == "SELECT 1"
+            return SimpleNamespace(fetchone=lambda: (1,))
+
+    monkeypatch.setattr("app.database.connection", lambda: FakeConnection())
+    monkeypatch.setattr(
+        "app.credential_vault.get_pinterest_credential",
+        lambda account_id: {"access_token": "test-token"},
+    )
+
+    class FakeResponse:
+        is_success = True
+        status_code = 200
+
+    class FakeHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def get(self, url, *, headers):
+            assert url.endswith("/user_account")
+            assert "Authorization" in headers
+            return FakeResponse()
+
+    monkeypatch.setattr(diagnostics.httpx, "Client", FakeHttpClient)
+    monkeypatch.setattr(
+        "app.media_generation.generate_and_host_pin_image",
+        lambda **kwargs: {"image_url": "https://images.example/test.png", "image_id": "test-image", "model": "test-image-model"},
+    )
+    monkeypatch.setattr(
+        "app.content_generation.generate_pin_content",
+        lambda **kwargs: (
+            SimpleNamespace(title="Test title", description="Test description", alt_text="Test alt text"),
+            "test-deepseek-model",
+        ),
+    )
+
+    result = diagnostics.run_live_diagnostics(diagnostics.DiagnosticRunInput(account_id="pinterest:test-account"))
+    assert result["ok"] is True
+    assert result["checks"]["database"]["ok"] is True
+    assert result["checks"]["pinterest"]["ok"] is True
+    assert result["checks"]["cloudflare_image_generation_and_upload"]["ok"] is True
+    assert result["checks"]["deepseek_multimodal_generation"]["ok"] is True
+    assert result["side_effects"]["pinterest_pin_created"] is False
+    assert result["side_effects"]["pinterest_board_created"] is False
+    assert result["side_effects"]["product_persisted"] is False
+    assert result["secrets_returned"] is False
+
+
+def test_live_diagnostics_does_not_call_image_generator_if_db_or_pinterest_fails(monkeypatch):
+    from app import diagnostics
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(settings, "llm_api_key", "test-llm-key")
+    monkeypatch.setattr(diagnostics, "_require_api_key", lambda: None)
+
+    class BrokenConnection:
+        def __enter__(self):
+            raise RuntimeError("database down")
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr("app.database.connection", lambda: BrokenConnection())
+    monkeypatch.setattr(
+        "app.credential_vault.get_pinterest_credential",
+        lambda account_id: (_ for _ in ()).throw(LookupError("not connected")),
+    )
+    called = []
+    monkeypatch.setattr(
+        "app.media_generation.generate_and_host_pin_image",
+        lambda **kwargs: called.append(True),
+    )
+
+    result = diagnostics.run_live_diagnostics(diagnostics.DiagnosticRunInput(account_id="pinterest:missing"))
+    assert result["ok"] is False
+    assert called == []
+    assert result["side_effects"]["cloudflare_test_image_uploaded"] is False

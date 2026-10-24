@@ -33,6 +33,9 @@ app = FastAPI(
 from app.workflow import router as workflow_router
 app.include_router(workflow_router)
 
+from app.diagnostics import router as diagnostics_router
+app.include_router(diagnostics_router)
+
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
     """Protect operational endpoints when APP_API_KEY is configured."""
