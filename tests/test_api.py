@@ -163,7 +163,7 @@ def test_deepseek_client_uses_flash_model_and_image_and_adds_disclosure(monkeypa
     assert calls["headers"]["Authorization"] == "Bearer unit-test-secret"
     assert isinstance(calls["payload"]["messages"][1]["content"], str)
     assert "text only, not the image itself" in calls["payload"]["messages"][1]["content"]
-    assert "verify" in calls["payload"]["messages"][1]["content"].lower()
+    assert "checked against the final image" in calls["payload"]["messages"][1]["content"].lower()
     assert AFFILIATE_DISCLOSURE in content.description
 
 
