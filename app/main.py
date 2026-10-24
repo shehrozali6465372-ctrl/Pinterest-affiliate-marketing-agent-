@@ -6,27 +6,14 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, status
-from pydantic import Field, HttpUrl, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
-
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-    database_url: str | None = None
-    pinterest_access_token: str | None = None
-    pinterest_board_id: str | None = None
-    pinterest_api_base_url: str = "https://api.pinterest.com/v5"
-    cloudflare_api_token: str | None = None
-    cloudflare_account_id: str | None = None
-    cloudflare_image_model: str = "@cf/black-forest-labs/flux-1-schnell"
-    llm_api_key: str | None = None
-    llm_base_url: str = "https://api.deepseek.com"
-    llm_model: str = "deepseek-flash"
-
-
-settings = Settings()
+from app.config import settings
+from app.content_generation import (
+    ContentGenerationError,
+    PROMPT_VERSION,
+    generate_pin_content,
+)
 
 
 @asynccontextmanager
@@ -45,13 +32,6 @@ app = FastAPI(
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
     lifespan=lifespan,
 )
-
-
-class ProductInput:
-    """Typed request model is declared below to keep URL validation explicit."""
-
-
-from pydantic import BaseModel  # Keep BaseModel imported after service modules load settings.
 
 
 class ProductInput(BaseModel):
@@ -80,6 +60,15 @@ class ProductInput(BaseModel):
         if parts.username or parts.password:
             raise ValueError("affiliate_url must not contain embedded credentials")
         return value
+
+
+def _serialize_row(row: dict) -> dict[str, object]:
+    """Convert DB rows to JSON-safe responses."""
+    result = dict(row)
+    created_at = result.get("created_at")
+    if created_at:
+        result["created_at"] = created_at.isoformat()
+    return result
 
 
 @app.get("/health")
@@ -128,7 +117,10 @@ def create_product(product: ProductInput) -> dict[str, object]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Product persistence is unavailable. Apply database migrations and check database connectivity.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Product persistence is unavailable. Apply database migrations and check database connectivity.",
+        ) from exc
 
 
 @app.get("/products/{product_id}")
@@ -142,7 +134,10 @@ def read_product(product_id: int) -> dict[str, object]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Product persistence is unavailable. Check database connectivity and schema setup.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Product persistence is unavailable. Check database connectivity and schema setup.",
+        ) from exc
     if row is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return _serialize_row(row)
@@ -150,7 +145,7 @@ def read_product(product_id: int) -> dict[str, object]:
 
 @app.post("/products/{product_id}/content")
 def generate_product_content(product_id: int) -> dict[str, object]:
-    """Generate and persist a content version via the real configured DeepSeek Flash API."""
+    """Generate and persist a content version through the real configured DeepSeek Flash API."""
     if product_id <= 0:
         raise HTTPException(status_code=422, detail="product_id must be a positive integer")
     try:
@@ -181,24 +176,25 @@ def generate_product_content(product_id: int) -> dict[str, object]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Content generation or persistence failed. Check database and provider configuration.") from exc
-
-
-def _serialize_row(row: dict) -> dict[str, object]:
-    result = dict(row)
-    created_at = result.get("created_at")
-    if created_at:
-        result["created_at"] = created_at.isoformat()
-    return result
+        raise HTTPException(
+            status_code=503,
+            detail="Content generation or persistence failed. Check database and provider configuration.",
+        ) from exc
 
 
 @app.post("/publish")
 def publish_unavailable() -> None:
     """Publishing remains unavailable until a real authorized Pinterest client is implemented."""
-    raise HTTPException(status_code=501, detail="Pinterest publishing is not implemented. No Pin was published.")
+    raise HTTPException(
+        status_code=501,
+        detail="Pinterest publishing is not implemented. No Pin was published.",
+    )
 
 
 @app.post("/learning-loop")
 def learning_loop_unavailable() -> None:
     """Learning remains unavailable until real analytics ingestion and evaluation exist."""
-    raise HTTPException(status_code=501, detail="Learning Loop is not implemented. No analytics were ingested and no model was trained.")
+    raise HTTPException(
+        status_code=501,
+        detail="Learning Loop is not implemented. No analytics were ingested and no model was trained.",
+    )
