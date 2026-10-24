@@ -67,3 +67,26 @@ def store_pinterest_credential(payload: dict[str, Any]) -> dict[str, Any]:
             ),
         ).fetchone()
         return dict(row)
+
+
+def get_pinterest_credential(account_id: str) -> dict[str, Any]:
+    """Decrypt a connected account token only in process memory for a server-side API call."""
+    cipher = _cipher()
+    with connection() as conn:
+        row = conn.execute(
+            """SELECT account_id, pinterest_user_id, username, access_token_ciphertext,
+                      token_type, scope, expires_at, status
+               FROM pinterest_credentials WHERE account_id = %s""",
+            (account_id,),
+        ).fetchone()
+    if not row or row["status"] != "connected":
+        raise LookupError("Pinterest account is not connected")
+    blob = bytes(row["access_token_ciphertext"])
+    token = cipher.decrypt(blob[:12], blob[12:], f"{account_id}:access".encode()).decode("utf-8")
+    return {"account_id": row["account_id"], "pinterest_user_id": row["pinterest_user_id"], "username": row["username"], "access_token": token, "token_type": row["token_type"], "scope": row["scope"], "expires_at": row["expires_at"]}
+
+
+def revoke_pinterest_credential(account_id: str) -> None:
+    """Disable an account in the Agent database without exposing its token."""
+    with connection() as conn:
+        conn.execute("UPDATE pinterest_credentials SET status = 'revoked', updated_at = now() WHERE account_id = %s", (account_id,))
