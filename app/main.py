@@ -14,6 +14,7 @@ from app.content_generation import (
     PROMPT_VERSION,
     generate_pin_content,
 )
+from app.pinterest import PinterestPublishError, publish_image_pin
 
 
 @asynccontextmanager
@@ -28,7 +29,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Pinterest Affiliate Marketing Agent",
-    version="1.3.0",
+    version="1.4.0",
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
     lifespan=lifespan,
 )
@@ -205,12 +206,112 @@ def list_product_content(product_id: int) -> dict[str, object]:
         ) from exc
 
 
+@app.post("/products/{product_id}/content/{content_version_id}/publish")
+def publish_product_content(product_id: int, content_version_id: int) -> dict[str, object]:
+    """Publish a saved content version and record only verified Pinterest results."""
+    if product_id <= 0 or content_version_id <= 0:
+        raise HTTPException(status_code=422, detail="product_id and content_version_id must be positive integers")
+    if not settings.pinterest_access_token or not settings.pinterest_board_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Pinterest access token and board ID must be configured before publishing.",
+        )
+
+    from app.database import (
+        begin_publish_attempt,
+        finish_publish_attempt,
+        get_content_version,
+        get_product as fetch_product,
+    )
+    try:
+        product = fetch_product(product_id)
+        if product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        content = get_content_version(product_id, content_version_id)
+        if content is None:
+            raise HTTPException(status_code=404, detail="Content version not found")
+
+        attempt = begin_publish_attempt(
+            product_id=product_id,
+            content_version_id=content_version_id,
+            board_id=settings.pinterest_board_id,
+        )
+        if attempt.get("blocked"):
+            state = attempt["status"]
+            if state == "succeeded":
+                return {
+                    "published": True,
+                    "already_published": True,
+                    "pin_id": attempt["pinterest_pin_id"],
+                    "publication_id": attempt["id"],
+                }
+            raise HTTPException(
+                status_code=409,
+                detail="A previous publish attempt is pending or has an uncertain outcome. Check Pinterest before retrying.",
+            )
+
+        try:
+            actual = publish_image_pin(
+                board_id=settings.pinterest_board_id,
+                title=content["title"],
+                description=content["description"],
+                alt_text=content["alt_text"],
+                image_url=product["image_url"],
+                affiliate_url=product["affiliate_url"],
+            )
+        except PinterestPublishError as exc:
+            outcome = "unknown" if exc.outcome_uncertain else "failed"
+            finish_publish_attempt(
+                attempt["id"],
+                status=outcome,
+                http_status=exc.http_status,
+                error_code=exc.error_code,
+                response_metadata={},
+            )
+            if exc.outcome_uncertain:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Pinterest publish outcome is uncertain. Automatic retry is blocked; verify the board before retrying.",
+                ) from exc
+            raise HTTPException(
+                status_code=502,
+                detail="Pinterest rejected the request. No successful Pin creation was confirmed.",
+            ) from exc
+
+        # A missing ID is handled by the client as uncertain, never as success.
+        saved = finish_publish_attempt(
+            attempt["id"],
+            status="succeeded",
+            pinterest_pin_id=str(actual["pin_id"]),
+            http_status=int(actual["http_status"]),
+            response_metadata=actual["metadata"],
+        )
+        return {
+            "published": True,
+            "already_published": False,
+            "pin_id": saved["pinterest_pin_id"],
+            "publication_id": saved["id"],
+            "http_status": saved["http_status"],
+        }
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        # A database failure after the external call can leave an attempt pending.
+        # The pending state intentionally blocks automatic retries to avoid duplicates.
+        raise HTTPException(
+            status_code=503,
+            detail="Publish request could not be fully recorded. Inspect the publication record and Pinterest board before retrying.",
+        ) from exc
+
+
 @app.post("/publish")
 def publish_unavailable() -> None:
-    """Publishing remains unavailable until a real authorized Pinterest client is implemented."""
+    """The version-specific publish route is required; no empty or fabricated publish is allowed."""
     raise HTTPException(
-        status_code=501,
-        detail="Pinterest publishing is not implemented. No Pin was published.",
+        status_code=422,
+        detail="Publish requires a product_id and saved content_version_id.",
     )
 
 
