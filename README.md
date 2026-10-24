@@ -80,7 +80,7 @@ Required server-side Render environment:
 - `LLM_API_KEY`: DeepSeek API key.
 - Optional: `CLOUDFLARE_IMAGE_MODEL` (default `@cf/black-forest-labs/flux-1-schnell`), `LLM_MODEL`, `LLM_BASE_URL`, `PINTEREST_API_BASE_URL`.
 
-Example request (send `X-API-Key` securely; do not place secrets in source code):
+Example request (send `X-API-Key` securely; include a unique `Idempotency-Key` for each new publish request and reuse that same key for retries; do not place secrets in source code):
 ```json
 {
   "product_name": "Copco 3-Tier Spice Rack Organizer",
@@ -91,5 +91,7 @@ Example request (send `X-API-Key` securely; do not place secrets in source code)
   "board_description": "Practical kitchen organization and pantry storage ideas."
 }
 ```
+
+Idempotency: `Idempotency-Key` is required (8–200 characters). A key already accepted for a product is rejected with HTTP 409 to prevent accidentally starting a duplicate workflow. Reuse the original key for retries; inspect the stored product/publication record before deciding whether a new key is appropriate.
 
 Important: this endpoint must be deployed only after confirming the database URL points at the intended Neon database and the encryption key matches the existing stored credential. The Cloudflare token needs both Workers AI and Images permissions. Cloudflare Images must return an accessible HTTPS variant URL. The endpoint has not yet been live-tested against the real Cloudflare, DeepSeek, or Pinterest providers; a successful response with a real `pin_id` is the acceptance criterion. Check the board and publication record before retrying any request with an uncertain outcome.
