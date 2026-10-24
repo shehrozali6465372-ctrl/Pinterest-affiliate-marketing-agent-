@@ -63,6 +63,11 @@ class ProductInput(BaseModel):
         return value
 
 
+class PublishRequest(BaseModel):
+    product_id: int = Field(gt=0)
+    content_version_id: int = Field(gt=0)
+
+
 def _serialize_row(row: dict) -> dict[str, object]:
     """Convert DB rows to JSON-safe responses."""
     result = dict(row)
@@ -237,8 +242,7 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
             board_id=settings.pinterest_board_id,
         )
         if attempt.get("blocked"):
-            state = attempt["status"]
-            if state == "succeeded":
+            if attempt["status"] == "succeeded":
                 return {
                     "published": True,
                     "already_published": True,
@@ -278,7 +282,6 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
                 detail="Pinterest rejected the request. No successful Pin creation was confirmed.",
             ) from exc
 
-        # A missing ID is handled by the client as uncertain, never as success.
         saved = finish_publish_attempt(
             attempt["id"],
             status="succeeded",
@@ -298,8 +301,6 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        # A database failure after the external call can leave an attempt pending.
-        # The pending state intentionally blocks automatic retries to avoid duplicates.
         raise HTTPException(
             status_code=503,
             detail="Publish request could not be fully recorded. Inspect the publication record and Pinterest board before retrying.",
@@ -307,12 +308,9 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
 
 
 @app.post("/publish")
-def publish_unavailable() -> None:
-    """The version-specific publish route is required; no empty or fabricated publish is allowed."""
-    raise HTTPException(
-        status_code=422,
-        detail="Publish requires a product_id and saved content_version_id.",
-    )
+def publish(payload: PublishRequest) -> dict[str, object]:
+    """Convenience entry point for the locked Publish capability."""
+    return publish_product_content(payload.product_id, payload.content_version_id)
 
 
 @app.post("/learning-loop")
