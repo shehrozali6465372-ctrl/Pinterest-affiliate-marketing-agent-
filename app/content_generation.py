@@ -37,18 +37,21 @@ def generate_pin_content(
         raise ContentGenerationError("LLM_API_KEY is not configured; content generation is unavailable.")
 
     endpoint = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
+    # DeepSeek Flash supports image input. Use the generated image as visual evidence
+    # for accessible alt text, while restricting product claims to supplied facts.
     prompt = (
         "Create Pinterest affiliate Pin content for a USA audience in the Home Decor & Kitchen niche. "
-        "Use only product facts in the supplied text and visual facts visible in the supplied image. "
-        "Do not invent materials, dimensions, certifications, product performance, prices, or other claims. "
+        "You can inspect the supplied image. Use visible evidence for alt_text, but use only supplied product "
+        "facts for claims about materials, dimensions, certifications, performance, prices, or specifications. "
+        "Do not infer hidden properties or invent unsupported claims. "
         "Return one JSON object with exactly these string keys: pin_idea, title, description, alt_text. "
-        "pin_idea: a concrete visual/creative concept, max 500 characters. "
+        "pin_idea: a concrete visual/creative concept consistent with the product details, max 500 characters. "
         "title: concise and relevant, max 100 characters. "
         "description: natural useful copy, avoid keyword stuffing, max 2000 characters, and include this "
         "clear disclosure verbatim: \"Affiliate disclosure: This post contains affiliate links; I may earn "
         "a commission at no extra cost to you.\" "
-        "alt_text: accessibility-focused description of the actual image only, max 500 characters; "
-        "if a visual detail is uncertain, leave it out. Do not put Markdown fences around the JSON.\n\n"
+        "alt_text: concise accessibility-focused description of visible image content, max 500 characters; "
+        "describe only what is actually visible. Do not put Markdown fences around the JSON.\n\n"
         f"Product name: {product_name}\nProduct details: {product_details}"
     )
     payload = {

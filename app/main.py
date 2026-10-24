@@ -30,6 +30,9 @@ app = FastAPI(
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
 )
 
+from app.workflow import router as workflow_router
+app.include_router(workflow_router)
+
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
     """Protect operational endpoints when APP_API_KEY is configured."""

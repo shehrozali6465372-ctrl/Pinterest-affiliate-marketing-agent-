@@ -114,7 +114,7 @@ def test_product_not_found_when_database_returns_none(monkeypatch):
     assert response.status_code == 404
 
 
-def test_deepseek_client_uses_flash_model_and_image_and_adds_disclosure(monkeypatch):
+def test_deepseek_client_uses_image_and_adds_disclosure(monkeypatch):
     monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
     monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
     monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
@@ -161,7 +161,12 @@ def test_deepseek_client_uses_flash_model_and_image_and_adds_disclosure(monkeypa
     assert model == "deepseek-flash"
     assert calls["endpoint"] == "https://api.deepseek.com/chat/completions"
     assert calls["headers"]["Authorization"] == "Bearer unit-test-secret"
-    assert calls["payload"]["messages"][1]["content"][1]["image_url"]["url"] == VALID_PRODUCT["image_url"]
+    message_content = calls["payload"]["messages"][1]["content"]
+    assert isinstance(message_content, list)
+    assert message_content[0]["type"] == "text"
+    assert "visible image content" in message_content[0]["text"]
+    assert message_content[1]["type"] == "image_url"
+    assert message_content[1]["image_url"]["url"] == VALID_PRODUCT["image_url"]
     assert AFFILIATE_DISCLOSURE in content.description
 
 
@@ -402,3 +407,198 @@ def test_learning_is_not_faked():
     response = client.post("/learning-loop")
     assert response.status_code == 501
     assert "no model was trained" in response.json()["detail"]
+
+
+
+def test_end_to_end_publish_requires_idempotency_key(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    payload = {
+        "product_name": "Copco 3-Tier Spice Rack Organizer",
+        "product_details": "Three-tier spice rack organizer.",
+        "affiliate_url": "https://example.com/affiliate",
+        "account_id": "pinterest:test-account",
+    }
+    headers = {"X-API-Key": "private-test-api-key"}
+    missing_key = client.post("/workflow/publish-product", json=payload, headers=headers)
+    assert missing_key.status_code == 422
+
+    short_key = client.post(
+        "/workflow/publish-product",
+        json=payload,
+        headers={**headers, "Idempotency-Key": "short"},
+    )
+    assert short_key.status_code == 422
+
+
+def test_end_to_end_publish_rejects_reused_idempotency_key(monkeypatch):
+    import app.workflow as workflow
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(
+        workflow,
+        "get_product_by_idempotency_key",
+        lambda key: {"id": 123, "product_name": "Previously accepted"},
+    )
+    payload = {
+        "product_name": "Copco 3-Tier Spice Rack Organizer",
+        "product_details": "Three-tier spice rack organizer.",
+        "affiliate_url": "https://example.com/affiliate",
+        "account_id": "pinterest:test-account",
+    }
+    response = client.post(
+        "/workflow/publish-product",
+        json=payload,
+        headers={
+            "X-API-Key": "private-test-api-key",
+            "Idempotency-Key": "request-key-12345",
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "idempotency_key_reused"
+
+
+
+def test_end_to_end_publish_checks_pinterest_before_generating_image(monkeypatch):
+    from fastapi import HTTPException
+    import app.workflow as workflow
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    monkeypatch.setattr(workflow, "get_pinterest_credential", lambda account_id: {"access_token": "test-token"})
+
+    def reject_token(*args, **kwargs):
+        raise HTTPException(status_code=401, detail="invalid token")
+
+    def should_not_generate_image(**kwargs):
+        raise AssertionError("image generation must not run for an invalid Pinterest token")
+
+    monkeypatch.setattr(workflow, "_pinterest_request", reject_token)
+    monkeypatch.setattr(workflow, "generate_and_host_pin_image", should_not_generate_image)
+    response = client.post(
+        "/workflow/publish-product",
+        json={
+            "product_name": "Copco 3-Tier Spice Rack Organizer",
+            "product_details": "Three-tier spice rack organizer.",
+            "affiliate_url": "https://example.com/affiliate",
+            "account_id": "pinterest:test-account",
+        },
+        headers={
+            "X-API-Key": "private-test-api-key",
+            "Idempotency-Key": "request-key-12345",
+        },
+    )
+    assert response.status_code == 401
+    assert "Stored Pinterest credential could not be verified" in response.json()["detail"]
+
+
+
+def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(monkeypatch):
+    from fastapi import HTTPException
+    import app.workflow as workflow
+    from app.content_generation import ContentGenerationError
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    monkeypatch.setattr(workflow, "get_pinterest_credential", lambda account_id: {"access_token": "test-token"})
+    monkeypatch.setattr(workflow, "_pinterest_request", lambda *args, **kwargs: (200, {"id": "test-user"}))
+    monkeypatch.setattr(workflow, "generate_and_host_pin_image", lambda **kwargs: {
+        "image_url": "https://cdn.example.com/pin.png",
+        "model": "test-image-model",
+    })
+
+    def fail_generation(**kwargs):
+        raise ContentGenerationError("provider temporarily unavailable")
+
+    persistence_calls = []
+    monkeypatch.setattr(workflow, "generate_pin_content", fail_generation)
+    monkeypatch.setattr(
+        workflow, "create_product_with_content_version",
+        lambda **kwargs: persistence_calls.append(kwargs),
+    )
+
+    response = client.post(
+        "/workflow/publish-product",
+        json={
+            "product_name": "Copco 3-Tier Spice Rack Organizer",
+            "product_details": "Three-tier spice rack organizer.",
+            "affiliate_url": "https://example.com/affiliate",
+            "account_id": "pinterest:test-account",
+        },
+        headers={
+            "X-API-Key": "private-test-api-key",
+            "Idempotency-Key": "request-key-content-fail",
+        },
+    )
+    assert response.status_code == 503
+    assert "before product persistence" in response.json()["detail"]
+    assert persistence_calls == []
+
+
+
+def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(monkeypatch):
+    from types import SimpleNamespace
+    import app.workflow as workflow
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    monkeypatch.setattr(workflow, "get_pinterest_credential", lambda account_id: {"access_token": "test-token"})
+    monkeypatch.setattr(workflow, "generate_and_host_pin_image", lambda **kwargs: {
+        "image_url": "https://cdn.example.com/pin.png",
+        "model": "test-image-model",
+    })
+    monkeypatch.setattr(workflow, "generate_pin_content", lambda **kwargs: (
+        SimpleNamespace(
+            pin_idea="Organized kitchen shelf",
+            title="Kitchen Spice Rack Organization",
+            description="Organize spices. Affiliate disclosure: This post contains affiliate links; I may earn a commission at no extra cost to you.",
+            alt_text="A spice rack organizer.",
+        ),
+        "deepseek-test-model",
+    ))
+    persistence = []
+    monkeypatch.setattr(workflow, "create_product_with_content_version", lambda **kwargs: (
+        persistence.append(kwargs) or (
+            {"id": 101, "product_name": kwargs["product_name"]},
+            {"id": 202, "product_id": 101},
+        )
+    ))
+    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {
+        "blocked": False, "id": 303, "status": "pending",
+    })
+    monkeypatch.setattr(workflow, "finish_publish_attempt", lambda publication_id, **kwargs: {
+        "id": publication_id, "status": kwargs["status"],
+        "pinterest_pin_id": kwargs.get("pinterest_pin_id"), "http_status": kwargs.get("http_status"),
+    })
+
+    def pinterest_request(method, path, token, *, body=None):
+        if method == "GET" and path == "/user_account":
+            return 200, {"id": "test-user"}
+        if method == "GET" and path == "/boards?page_size=100":
+            return 200, {"items": []}
+        if method == "POST" and path == "/boards":
+            return 201, {"id": "board-404"}
+        if method == "POST" and path == "/pins":
+            assert body["link"] == "https://example.com/affiliate"
+            return 201, {"id": "pin-505", "created_at": "2026-10-25T00:00:00Z"}
+        raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
+
+    monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
+    response = client.post(
+        "/workflow/publish-product",
+        json={
+            "product_name": "Copco 3-Tier Spice Rack Organizer",
+            "product_details": "Three-tier spice rack organizer.",
+            "affiliate_url": "https://example.com/affiliate",
+            "account_id": "pinterest:test-account",
+        },
+        headers={
+            "X-API-Key": "private-test-api-key",
+            "Idempotency-Key": "request-key-success-123",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["pin_id"] == "pin-505"
+    assert response.json()["published"] is True
+    assert len(persistence) == 1
+    assert persistence[0]["idempotency_key"] == "request-key-success-123"
