@@ -6,8 +6,10 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import Field, HttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
 
 
 class Settings(BaseSettings):
@@ -39,17 +41,24 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Pinterest Affiliate Marketing Agent",
-    version="1.2.0",
+    version="1.3.0",
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
     lifespan=lifespan,
 )
+
+
+class ProductInput:
+    """Typed request model is declared below to keep URL validation explicit."""
+
+
+from pydantic import BaseModel  # Keep BaseModel imported after service modules load settings.
 
 
 class ProductInput(BaseModel):
     product_name: str = Field(min_length=1, max_length=300)
     product_details: str = Field(min_length=1, max_length=10000)
     image_url: HttpUrl
-    # Keep affiliate URL as raw text so Pydantic cannot normalize its tracking parameters.
+    # Keep affiliate URL as raw text so validation does not rewrite tracking parameters.
     affiliate_url: str = Field(min_length=8, max_length=4096)
 
     @field_validator("product_name", "product_details")
@@ -115,14 +124,7 @@ def create_product(product: ProductInput) -> dict[str, object]:
             image_url=str(product.image_url),
             affiliate_url=product.affiliate_url,
         )
-        return {
-            "id": row["id"],
-            "product_name": row["product_name"],
-            "product_details": row["product_details"],
-            "image_url": row["image_url"],
-            "affiliate_url": row["affiliate_url"],
-            "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
-        }
+        return _serialize_row(row)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -143,14 +145,51 @@ def read_product(product_id: int) -> dict[str, object]:
         raise HTTPException(status_code=503, detail="Product persistence is unavailable. Check database connectivity and schema setup.") from exc
     if row is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    return {
-        "id": row["id"],
-        "product_name": row["product_name"],
-        "product_details": row["product_details"],
-        "image_url": row["image_url"],
-        "affiliate_url": row["affiliate_url"],
-        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
-    }
+    return _serialize_row(row)
+
+
+@app.post("/products/{product_id}/content")
+def generate_product_content(product_id: int) -> dict[str, object]:
+    """Generate and persist a content version via the real configured DeepSeek Flash API."""
+    if product_id <= 0:
+        raise HTTPException(status_code=422, detail="product_id must be a positive integer")
+    try:
+        from app.database import create_content_version, get_product as fetch_product
+        product = fetch_product(product_id)
+        if product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        generated, model_id = generate_pin_content(
+            product_name=product["product_name"],
+            product_details=product["product_details"],
+            image_url=product["image_url"],
+        )
+        row = create_content_version(
+            product_id=product_id,
+            provider="deepseek",
+            model_id=model_id,
+            prompt_version=PROMPT_VERSION,
+            pin_idea=generated.pin_idea,
+            title=generated.title,
+            description=generated.description,
+            alt_text=generated.alt_text,
+        )
+        return _serialize_row(row)
+    except HTTPException:
+        raise
+    except ContentGenerationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Content generation or persistence failed. Check database and provider configuration.") from exc
+
+
+def _serialize_row(row: dict) -> dict[str, object]:
+    result = dict(row)
+    created_at = result.get("created_at")
+    if created_at:
+        result["created_at"] = created_at.isoformat()
+    return result
 
 
 @app.post("/publish")
