@@ -147,11 +147,13 @@ def publish_product_end_to_end(payload: ProductWorkflowInput) -> dict[str, objec
             response_metadata={"id": pin_id, "board_id": board_id, "created_at": result.get("created_at")},
         )
     except HTTPException as exc:
-        if exc.status_code >= 500:
-            try:
+        try:
+            if exc.status_code >= 500:
                 finish_publish_attempt(attempt["id"], status="unknown", error_code="pinterest_outcome_uncertain", response_metadata={})
-            except Exception:
-                pass
+            else:
+                finish_publish_attempt(attempt["id"], status="failed", http_status=exc.status_code, error_code="pinterest_request_rejected", response_metadata={})
+        except Exception:
+            pass
         raise
     except Exception as exc:
         try:
