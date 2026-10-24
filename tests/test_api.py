@@ -114,7 +114,7 @@ def test_product_not_found_when_database_returns_none(monkeypatch):
     assert response.status_code == 404
 
 
-def test_deepseek_client_uses_flash_model_and_image_and_adds_disclosure(monkeypatch):
+def test_deepseek_client_uses_text_only_and_adds_disclosure(monkeypatch):
     monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
     monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
     monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
