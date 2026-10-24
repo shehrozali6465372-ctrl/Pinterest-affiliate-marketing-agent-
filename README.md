@@ -62,3 +62,34 @@ Use only server-side environment secrets in Render. Never commit API keys or tok
 - No real Pinterest API call was made in CI; publish tests use mocked responses.
 - Learning Loop remains disabled. Do not train or promote ML without enough suitable real analytics history.
 - Passing CI proves tested software contracts, not live database/provider access.
+
+## End-to-end workflow (new, requires live verification)
+
+A new authenticated endpoint is available on branch `feature/e2e-production-workflow`:
+
+`POST /workflow/publish-product`
+
+It generates a product lifestyle image with Cloudflare Workers AI, uploads the image to Cloudflare Images, generates Pin Idea/title/description/alt text with DeepSeek, stores the product and content version, finds or creates the requested Pinterest board using the encrypted OAuth credential in Neon, publishes through Pinterest API v5, and records the returned Pin ID.
+
+Required server-side Render environment:
+- `APP_API_KEY`: required by the new workflow endpoint.
+- `DATABASE_URL`: Neon database URL containing the existing credential vault and publication tables.
+- `PINTEREST_TOKEN_ENCRYPTION_KEY`: same base64-encoded 32-byte key used to encrypt the already-stored Pinterest credential.
+- `CLOUDFLARE_API_TOKEN`: token with Workers AI Run and Cloudflare Images Write permissions.
+- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account that owns Workers AI and Images.
+- `LLM_API_KEY`: DeepSeek API key.
+- Optional: `CLOUDFLARE_IMAGE_MODEL` (default `@cf/black-forest-labs/flux-1-schnell`), `LLM_MODEL`, `LLM_BASE_URL`, `PINTEREST_API_BASE_URL`.
+
+Example request (send `X-API-Key` securely; do not place secrets in source code):
+```json
+{
+  "product_name": "Copco 3-Tier Spice Rack Organizer",
+  "product_details": "Three-tier spice rack organizer for keeping spice containers visible and accessible. Verify dimensions and materials against the product listing before including those details.",
+  "affiliate_url": "https://link.amazon/B01vlJZST",
+  "account_id": "pinterest:1069323642682526567",
+  "board_name": "Kitchen Organization Ideas",
+  "board_description": "Practical kitchen organization and pantry storage ideas."
+}
+```
+
+Important: this endpoint must be deployed only after confirming the database URL points at the intended Neon database and the encryption key matches the existing stored credential. The Cloudflare token needs both Workers AI and Images permissions. Cloudflare Images must return an accessible HTTPS variant URL. The endpoint has not yet been live-tested against the real Cloudflare, DeepSeek, or Pinterest providers; a successful response with a real `pin_id` is the acceptance criterion. Check the board and publication record before retrying any request with an uncertain outcome.
