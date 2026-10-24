@@ -486,3 +486,43 @@ def test_end_to_end_publish_checks_pinterest_before_generating_image(monkeypatch
     )
     assert response.status_code == 401
     assert "Stored Pinterest credential could not be verified" in response.json()["detail"]
+
+
+
+def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(monkeypatch):
+    from fastapi import HTTPException
+    import app.workflow as workflow
+    from app.content_generation import ContentGenerationError
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    monkeypatch.setattr(workflow, "get_pinterest_credential", lambda account_id: {"access_token": "test-token"})
+    monkeypatch.setattr(workflow, "_pinterest_request", lambda *args, **kwargs: (200, {"id": "test-user"}))
+    monkeypatch.setattr(workflow, "generate_and_host_pin_image", lambda **kwargs: {
+        "image_url": "https://cdn.example.com/pin.png",
+        "model": "test-image-model",
+    })
+
+    def fail_generation(**kwargs):
+        raise ContentGenerationError("provider temporarily unavailable")
+
+    persisted_products = []
+    monkeypatch.setattr(workflow, "generate_pin_content", fail_generation)
+    monkeypatch.setattr(workflow, "create_product", lambda **kwargs: persisted_products.append(kwargs))
+
+    response = client.post(
+        "/workflow/publish-product",
+        json={
+            "product_name": "Copco 3-Tier Spice Rack Organizer",
+            "product_details": "Three-tier spice rack organizer.",
+            "affiliate_url": "https://example.com/affiliate",
+            "account_id": "pinterest:test-account",
+        },
+        headers={
+            "X-API-Key": "private-test-api-key",
+            "Idempotency-Key": "request-key-content-fail",
+        },
+    )
+    assert response.status_code == 503
+    assert "before product persistence" in response.json()["detail"]
+    assert persisted_products == []
