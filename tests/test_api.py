@@ -39,6 +39,18 @@ def test_readiness_does_not_expose_secrets():
     assert "access_token" not in str(body).lower()
 
 
+def test_operational_routes_require_api_key_when_configured(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    assert client.get("/health").status_code == 200
+    assert client.get("/readiness").status_code == 401
+    assert client.post("/products/validate", json=VALID_PRODUCT).status_code == 401
+    assert client.post(
+        "/products/validate",
+        json=VALID_PRODUCT,
+        headers={"X-API-Key": "private-test-api-key"},
+    ).status_code == 200
+
+
 def test_product_validate_preserves_affiliate_url_byte_for_byte():
     affiliate_url = "https://EXAMPLE.com/item?tag=abc%2D20&campaign=kitchen&x=a%2Fb"
     response = client.post(
