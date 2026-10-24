@@ -37,18 +37,23 @@ def generate_pin_content(
         raise ContentGenerationError("LLM_API_KEY is not configured; content generation is unavailable.")
 
     endpoint = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
+    # DeepSeek chat models are text-only; do not send OpenAI-style image_url content
+    # that the provider may reject. Ground every generated claim in supplied product
+    # text and have the owner verify alt text against the generated image.
     prompt = (
         "Create Pinterest affiliate Pin content for a USA audience in the Home Decor & Kitchen niche. "
-        "Use only product facts in the supplied text and visual facts visible in the supplied image. "
-        "Do not invent materials, dimensions, certifications, product performance, prices, or other claims. "
+        "You are receiving text only, not the image itself. Use only product facts in the supplied text. "
+        "Do not claim to have inspected the image and do not invent materials, dimensions, certifications, "
+        "product performance, prices, colors, or other unsupported claims. "
         "Return one JSON object with exactly these string keys: pin_idea, title, description, alt_text. "
-        "pin_idea: a concrete visual/creative concept, max 500 characters. "
+        "pin_idea: a concrete visual/creative concept consistent with the product details, max 500 characters. "
         "title: concise and relevant, max 100 characters. "
         "description: natural useful copy, avoid keyword stuffing, max 2000 characters, and include this "
         "clear disclosure verbatim: \"Affiliate disclosure: This post contains affiliate links; I may earn "
         "a commission at no extra cost to you.\" "
-        "alt_text: accessibility-focused description of the actual image only, max 500 characters; "
-        "if a visual detail is uncertain, leave it out. Do not put Markdown fences around the JSON.\n\n"
+        "alt_text: a cautious accessibility-focused draft based only on the supplied product facts and intended "
+        "image concept, max 500 characters; do not assert unverified visual details. It must be checked against "
+        "the final image before publication. Do not put Markdown fences around the JSON.\n\n"
         f"Product name: {product_name}\nProduct details: {product_details}"
     )
     payload = {
@@ -58,13 +63,7 @@ def generate_pin_content(
                 "role": "system",
                 "content": "You produce accurate, accessible Pinterest copy and follow requested JSON output exactly.",
             },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            },
+            {"role": "user", "content": prompt},
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.4,
