@@ -62,20 +62,22 @@ def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
     # Avoid billable generation/upload if critical read-only connectivity checks fail.
     prerequisites_ok = bool(checks.get("database", {}).get("ok") and checks.get("pinterest", {}).get("ok"))
     if prerequisites_ok:
-      try:
-        media = generate_and_host_pin_image(product_name=payload.product_name, product_details=payload.product_details)
-        checks["cloudflare_image_generation_and_upload"] = {
-            "ok": bool(media.get("image_url")),
-            "model": media.get("model"),
-            "uploaded": True,
-            "image_id_returned": bool(media.get("image_id")),
-        }
-      except ImageGenerationError as exc:
-        checks["cloudflare_image_generation_and_upload"] = {"ok": False, "error": str(exc)[:180]}
-        overall_ok = False
-      except Exception:
-        checks["cloudflare_image_generation_and_upload"] = {"ok": False, "error": "image_generation_or_upload_failed"}
-        overall_ok = False
+        try:
+            media = generate_and_host_pin_image(product_name=payload.product_name, product_details=payload.product_details)
+            checks["cloudflare_image_generation_and_upload"] = {
+                "ok": bool(media.get("image_url")),
+                "model": media.get("model"),
+                "uploaded": True,
+                "image_id_returned": bool(media.get("image_id")),
+            }
+            if not media.get("image_url"):
+                overall_ok = False
+        except ImageGenerationError as exc:
+            checks["cloudflare_image_generation_and_upload"] = {"ok": False, "error": str(exc)[:180]}
+            overall_ok = False
+        except Exception:
+            checks["cloudflare_image_generation_and_upload"] = {"ok": False, "error": "image_generation_or_upload_failed"}
+            overall_ok = False
     else:
         checks["cloudflare_image_generation_and_upload"] = {
             "ok": False, "skipped": True, "error": "database_or_pinterest_check_failed",
