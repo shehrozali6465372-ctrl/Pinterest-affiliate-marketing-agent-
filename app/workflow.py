@@ -12,7 +12,7 @@ from app.config import settings
 from app.content_generation import ContentGenerationError, generate_pin_content
 from app.credential_vault import get_pinterest_credential
 from app.database import (
-    begin_publish_attempt, create_content_version, create_product,
+    begin_publish_attempt, create_product_with_content_version,
     finish_publish_attempt, get_product_by_idempotency_key,
 )
 from app.media_generation import ImageGenerationError, generate_and_host_pin_image
@@ -132,20 +132,22 @@ def publish_product_end_to_end(
         raise HTTPException(status_code=503, detail="Content generation failed before product persistence; retry with the same Idempotency-Key.") from exc
 
     try:
-        product = create_product(
+        product, content = create_product_with_content_version(
             product_name=payload.product_name,
             product_details=payload.product_details,
             image_url=media["image_url"],
             affiliate_url=payload.affiliate_url,
             idempotency_key=idempotency_key,
-        )
-        content = create_content_version(
-            product_id=product["id"], provider="deepseek", model_id=model_id,
-            prompt_version="pin-content-v1", pin_idea=generated.pin_idea,
-            title=generated.title, description=generated.description, alt_text=generated.alt_text,
+            provider="deepseek",
+            model_id=model_id,
+            prompt_version="pin-content-v1",
+            pin_idea=generated.pin_idea,
+            title=generated.title,
+            description=generated.description,
+            alt_text=generated.alt_text,
         )
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Product/content persistence failed; no Pinterest Pin was intentionally published. Check the database before retrying.") from exc
+        raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. If the transaction rolled back, retry with the same Idempotency-Key; otherwise inspect the stored product before retrying.") from exc
 
     token = credential["access_token"]
     board_id = _ensure_board(token, payload.board_name, payload.board_description)
