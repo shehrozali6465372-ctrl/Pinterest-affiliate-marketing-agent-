@@ -1,6 +1,7 @@
 """PostgreSQL connection and persistence layer for Model 1."""
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -168,10 +169,8 @@ def list_content_versions(product_id: int) -> list[dict]:
 def begin_publish_attempt(*, product_id: int, content_version_id: int, board_id: str) -> dict:
     """Reserve one publish attempt per version/board, preventing blind duplicates."""
     with connection() as conn:
-        conn.execute(
-            "SELECT pg_advisory_xact_lock(%s)",
-            (int.from_bytes(f"{content_version_id}:{board_id}".encode()[:8].ljust(8, b"0"), "big"),),
-        )
+        lock_key = f"{content_version_id}:{board_id}"
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
         row = conn.execute(
             """
             SELECT * FROM pin_publications
@@ -217,7 +216,7 @@ def finish_publish_attempt(
     error_code: str | None = None,
     response_metadata: dict | None = None,
 ) -> dict:
-    """Persist the outcome of a real Pinterest request without storing access tokens."""
+    """Persist outcome metadata from the real Pinterest API, never an access token."""
     if status not in {"succeeded", "failed", "unknown"}:
         raise ValueError("unsupported publication status")
     if status == "succeeded" and not pinterest_pin_id:
@@ -233,7 +232,7 @@ def finish_publish_attempt(
             """,
             (
                 status, pinterest_pin_id, http_status, error_code,
-                __import__("json").dumps(response_metadata or {}), publication_id,
+                json.dumps(response_metadata or {}), publication_id,
             ),
         ).fetchone()
         if row is None:
