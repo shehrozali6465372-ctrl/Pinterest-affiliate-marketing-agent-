@@ -1,5 +1,6 @@
 """Server-side environment settings for the Pinterest agent."""
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict, field_validator
+import unicodedata
 
 
 class Settings(BaseSettings):
@@ -15,6 +16,14 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-flash"
+
+    @field_validator("llm_api_key", "cloudflare_api_token", "app_api_key", mode="before")
+    @classmethod
+    def clean_secret_values(cls, value: str | None) -> str | None:
+        """Remove invisible Unicode formatting characters accidentally pasted into secrets."""
+        if value is None:
+            return None
+        return "".join(ch for ch in value if unicodedata.category(ch) != "Cf").strip()
 
 
 settings = Settings()
