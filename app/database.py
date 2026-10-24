@@ -1,4 +1,4 @@
-"""PostgreSQL connection and persistence layer for product intake."""
+"""PostgreSQL connection and persistence layer for Model 1."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -94,6 +94,43 @@ def get_product(product_id: int) -> dict | None:
             (product_id,),
         ).fetchone()
         return dict(row) if row else None
+
+
+def create_content_version(
+    *,
+    product_id: int,
+    provider: str,
+    model_id: str,
+    prompt_version: str,
+    pin_idea: str,
+    title: str,
+    description: str,
+    alt_text: str,
+) -> dict:
+    """Persist generated content as an auditable version for the supplied product."""
+    with connection() as conn:
+        version_number = conn.execute(
+            """
+            SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version
+            FROM content_versions WHERE product_id = %s
+            """,
+            (product_id,),
+        ).fetchone()["next_version"]
+        row = conn.execute(
+            """
+            INSERT INTO content_versions
+                (product_id, version_number, provider, model_id, prompt_version,
+                 pin_idea, title, description, alt_text)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, product_id, version_number, provider, model_id, prompt_version,
+                      pin_idea, title, description, alt_text, created_at
+            """,
+            (
+                product_id, version_number, provider, model_id, prompt_version,
+                pin_idea, title, description, alt_text,
+            ),
+        ).fetchone()
+        return dict(row)
 
 
 def close_pool() -> None:
