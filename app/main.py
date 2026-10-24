@@ -182,6 +182,29 @@ def generate_product_content(product_id: int) -> dict[str, object]:
         ) from exc
 
 
+@app.get("/products/{product_id}/content")
+def list_product_content(product_id: int) -> dict[str, object]:
+    """List historical generated-content versions for a product."""
+    if product_id <= 0:
+        raise HTTPException(status_code=422, detail="product_id must be a positive integer")
+    try:
+        from app.database import get_product as fetch_product, list_content_versions
+        product = fetch_product(product_id)
+        if product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        rows = list_content_versions(product_id)
+        return {"product_id": product_id, "versions": [_serialize_row(row) for row in rows]}
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Content history is unavailable. Check database migrations and connectivity.",
+        ) from exc
+
+
 @app.post("/publish")
 def publish_unavailable() -> None:
     """Publishing remains unavailable until a real authorized Pinterest client is implemented."""
