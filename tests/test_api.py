@@ -1,9 +1,14 @@
+import json
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
 from app.config import settings
-from app.content_generation import AFFILIATE_DISCLOSURE, GeneratedContent
+from app.content_generation import (
+    AFFILIATE_DISCLOSURE,
+    GeneratedContent,
+    generate_pin_content,
+)
 from app.main import app
 
 client = TestClient(app)
@@ -96,6 +101,57 @@ def test_product_not_found_when_database_returns_none(monkeypatch):
     assert response.status_code == 404
 
 
+def test_deepseek_client_uses_flash_model_and_image_and_adds_disclosure(monkeypatch):
+    monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
+    monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
+    calls = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "pin_idea": "Style the rack on an organized counter.",
+                            "title": "Organized Spice Rack",
+                            "description": "A tidy way to arrange everyday spices.",
+                            "alt_text": "Wooden rack holding spice jars on a kitchen wall.",
+                        })
+                    }
+                }]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            calls["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, headers, json):
+            calls.update(endpoint=endpoint, headers=headers, payload=json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.content_generation.httpx.Client", FakeClient)
+    content, model = generate_pin_content(
+        product_name=VALID_PRODUCT["product_name"],
+        product_details=VALID_PRODUCT["product_details"],
+        image_url=VALID_PRODUCT["image_url"],
+    )
+    assert model == "deepseek-flash"
+    assert calls["endpoint"] == "https://api.deepseek.com/chat/completions"
+    assert calls["headers"]["Authorization"] == "Bearer unit-test-secret"
+    assert calls["payload"]["messages"][1]["content"][1]["image_url"]["url"] == VALID_PRODUCT["image_url"]
+    assert AFFILIATE_DISCLOSURE in content.description
+
+
 def test_content_generation_requires_real_credentials(monkeypatch):
     from app import database
 
@@ -159,6 +215,25 @@ def test_content_generation_saves_real_provider_result(monkeypatch):
     assert response.json()["description"] == AFFILIATE_DISCLOSURE
     assert saved_rows[0]["product_id"] == 5
     assert saved_rows[0]["prompt_version"] == "pin-content-v1"
+
+
+def test_content_history_returns_saved_versions(monkeypatch):
+    from app import database
+
+    monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
+    monkeypatch.setattr(database, "get_product", lambda product_id: {"id": product_id})
+    monkeypatch.setattr(database, "list_content_versions", lambda product_id: [
+        {
+            "id": 22, "product_id": product_id, "version_number": 2,
+            "provider": "deepseek", "model_id": "deepseek-flash",
+            "prompt_version": "pin-content-v1", "pin_idea": "A kitchen pin",
+            "title": "Tidy Kitchen", "description": AFFILIATE_DISCLOSURE,
+            "alt_text": "A spice rack", "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        }
+    ])
+    response = client.get("/products/5/content")
+    assert response.status_code == 200
+    assert response.json()["versions"][0]["version_number"] == 2
 
 
 def test_publish_is_not_faked():
