@@ -134,6 +134,22 @@ def create_content_version(
         return dict(row)
 
 
+def list_content_versions(product_id: int) -> list[dict]:
+    """List saved content versions for a product in newest-first order."""
+    with connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, product_id, version_number, provider, model_id, prompt_version,
+                   pin_idea, title, description, alt_text, created_at
+            FROM content_versions
+            WHERE product_id = %s
+            ORDER BY version_number DESC
+            """,
+            (product_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def close_pool() -> None:
     """Close the connection pool during application shutdown."""
     global _pool
