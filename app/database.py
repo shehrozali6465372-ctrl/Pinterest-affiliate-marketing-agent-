@@ -1,11 +1,8 @@
-"""Small PostgreSQL persistence layer for product intake.
-
-Connection is optional during local startup. Persistence methods fail explicitly if
-DATABASE_URL is absent; the API must not claim data was saved when it was not.
-"""
+"""PostgreSQL connection and persistence layer for product intake."""
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
 import psycopg
@@ -15,10 +12,11 @@ from psycopg_pool import ConnectionPool
 from app.main import settings
 
 _pool: ConnectionPool | None = None
+_MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
 
 def get_pool() -> ConnectionPool:
-    """Create the pool lazily so health checks work without a database configured."""
+    """Create the pool lazily so liveness checks work without a DB connection."""
     global _pool
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured; product persistence is unavailable.")
@@ -36,26 +34,33 @@ def get_pool() -> ConnectionPool:
 @contextmanager
 def connection() -> Iterator[psycopg.Connection]:
     """Yield a pooled PostgreSQL connection."""
-    pool = get_pool()
-    with pool.connection() as conn:
+    with get_pool().connection() as conn:
         yield conn
 
 
-def initialize_schema() -> None:
-    """Apply the initial idempotent schema. Production migrations will version changes."""
+def run_migrations() -> None:
+    """Apply each numbered SQL migration once, in lexical order."""
     with connection() as conn:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS products (
-                id BIGSERIAL PRIMARY KEY,
-                product_name TEXT NOT NULL CHECK (char_length(product_name) BETWEEN 1 AND 300),
-                product_details TEXT NOT NULL CHECK (char_length(product_details) BETWEEN 1 AND 10000),
-                image_url TEXT NOT NULL,
-                affiliate_url TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
+        conn.execute("SELECT pg_advisory_xact_lock(73219021)")
+        for migration in sorted(_MIGRATIONS_DIR.glob("[0-9]*.sql")):
+            version = migration.name
+            existing = conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = %s", (version,)
+            ).fetchone()
+            if existing:
+                continue
+            conn.execute(migration.read_text(encoding="utf-8"))
+            conn.execute(
+                "INSERT INTO schema_migrations (version) VALUES (%s)", (version,)
+            )
 
 
 def create_product(
@@ -92,7 +97,7 @@ def get_product(product_id: int) -> dict | None:
 
 
 def close_pool() -> None:
-    """Close the connection pool, primarily useful for clean shutdowns and tests."""
+    """Close the connection pool during application shutdown."""
     global _pool
     if _pool is not None:
         _pool.close()
