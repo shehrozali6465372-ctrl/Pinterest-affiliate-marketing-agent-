@@ -2,7 +2,9 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
-from app.main import app, settings
+from app.config import settings
+from app.content_generation import AFFILIATE_DISCLOSURE, GeneratedContent
+from app.main import app
 
 client = TestClient(app)
 
@@ -92,6 +94,71 @@ def test_product_not_found_when_database_returns_none(monkeypatch):
     monkeypatch.setattr(database, "get_product", lambda product_id: None)
     response = client.get("/products/12345")
     assert response.status_code == 404
+
+
+def test_content_generation_requires_real_credentials(monkeypatch):
+    from app import database
+
+    monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
+    monkeypatch.setattr(settings, "llm_api_key", None)
+    monkeypatch.setattr(database, "get_product", lambda product_id: {
+        "id": product_id,
+        "product_name": VALID_PRODUCT["product_name"],
+        "product_details": VALID_PRODUCT["product_details"],
+        "image_url": VALID_PRODUCT["image_url"],
+        "affiliate_url": VALID_PRODUCT["affiliate_url"],
+    })
+    response = client.post("/products/1/content")
+    assert response.status_code == 503
+    assert "LLM_API_KEY is not configured" in response.json()["detail"]
+
+
+def test_content_generation_saves_real_provider_result(monkeypatch):
+    from app import database
+    import app.main as main_module
+
+    saved_rows = []
+    product = {
+        "id": 5,
+        "product_name": VALID_PRODUCT["product_name"],
+        "product_details": VALID_PRODUCT["product_details"],
+        "image_url": VALID_PRODUCT["image_url"],
+        "affiliate_url": VALID_PRODUCT["affiliate_url"],
+    }
+
+    def save_version(**kwargs):
+        saved_rows.append(kwargs)
+        return {
+            "id": 12,
+            "product_id": kwargs["product_id"],
+            "version_number": 1,
+            **kwargs,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        }
+
+    monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
+    monkeypatch.setattr(settings, "llm_api_key", "test-only-key")
+    monkeypatch.setattr(database, "get_product", lambda product_id: product)
+    monkeypatch.setattr(database, "create_content_version", save_version)
+    monkeypatch.setattr(
+        main_module,
+        "generate_pin_content",
+        lambda **kwargs: (
+            GeneratedContent(
+                pin_idea="Show the spice rack beside a neatly arranged kitchen counter.",
+                title="A Tidy Kitchen Spice Rack",
+                description=AFFILIATE_DISCLOSURE,
+                alt_text="A wooden spice rack with jars mounted on a kitchen wall.",
+            ),
+            "deepseek-flash",
+        ),
+    )
+    response = client.post("/products/5/content")
+    assert response.status_code == 200
+    assert response.json()["model_id"] == "deepseek-flash"
+    assert response.json()["description"] == AFFILIATE_DISCLOSURE
+    assert saved_rows[0]["product_id"] == 5
+    assert saved_rows[0]["prompt_version"] == "pin-content-v1"
 
 
 def test_publish_is_not_faked():
