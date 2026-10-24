@@ -1,5 +1,6 @@
 """Server-side environment settings for the Pinterest agent."""
-from pydantic_settings import BaseSettings, SettingsConfigDict, field_validator
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 import unicodedata
 
 
