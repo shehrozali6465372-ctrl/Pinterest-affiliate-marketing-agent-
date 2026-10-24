@@ -64,22 +64,36 @@ def run_migrations() -> None:
             )
 
 
+def get_product_by_idempotency_key(idempotency_key: str) -> dict | None:
+    """Return a previously accepted product for a client retry key."""
+    with connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, product_name, product_details, image_url, affiliate_url, created_at
+            FROM products WHERE idempotency_key = %s
+            """,
+            (idempotency_key,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def create_product(
     *,
     product_name: str,
     product_details: str,
     image_url: str,
     affiliate_url: str,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Persist user-supplied product data and return the stored row."""
     with connection() as conn:
         row = conn.execute(
             """
-            INSERT INTO products (product_name, product_details, image_url, affiliate_url)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, product_name, product_details, image_url, affiliate_url, created_at
+            INSERT INTO products (product_name, product_details, image_url, affiliate_url, idempotency_key)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, product_name, product_details, image_url, affiliate_url, created_at, idempotency_key
             """,
-            (product_name, product_details, image_url, affiliate_url),
+            (product_name, product_details, image_url, affiliate_url, idempotency_key),
         ).fetchone()
         return dict(row)
 
