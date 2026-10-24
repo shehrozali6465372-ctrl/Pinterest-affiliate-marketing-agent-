@@ -149,6 +149,53 @@ def create_content_version(
         return dict(row)
 
 
+
+def create_product_with_content_version(
+    *,
+    product_name: str,
+    product_details: str,
+    image_url: str,
+    affiliate_url: str,
+    idempotency_key: str,
+    provider: str,
+    model_id: str,
+    prompt_version: str,
+    pin_idea: str,
+    title: str,
+    description: str,
+    alt_text: str,
+) -> tuple[dict, dict]:
+    """Atomically persist a product and its first content version.
+
+    Both inserts share one pooled connection/transaction so a failed content
+    insert cannot leave an idempotency key attached to a half-created product.
+    """
+    with connection() as conn:
+        product = conn.execute(
+            """
+            INSERT INTO products (product_name, product_details, image_url, affiliate_url, idempotency_key)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, product_name, product_details, image_url, affiliate_url, created_at, idempotency_key
+            """,
+            (product_name, product_details, image_url, affiliate_url, idempotency_key),
+        ).fetchone()
+        content = conn.execute(
+            """
+            INSERT INTO content_versions
+                (product_id, version_number, provider, model_id, prompt_version,
+                 pin_idea, title, description, alt_text)
+            VALUES (%s, 1, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, product_id, version_number, provider, model_id, prompt_version,
+                      pin_idea, title, description, alt_text, created_at
+            """,
+            (
+                product["id"], provider, model_id, prompt_version,
+                pin_idea, title, description, alt_text,
+            ),
+        ).fetchone()
+        return dict(product), dict(content)
+
+
 def get_content_version(product_id: int, content_version_id: int) -> dict | None:
     """Fetch one generated content version belonging to a product."""
     with connection() as conn:
