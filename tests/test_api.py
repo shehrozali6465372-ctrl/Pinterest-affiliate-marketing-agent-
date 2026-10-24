@@ -402,3 +402,51 @@ def test_learning_is_not_faked():
     response = client.post("/learning-loop")
     assert response.status_code == 501
     assert "no model was trained" in response.json()["detail"]
+
+
+
+def test_end_to_end_publish_requires_idempotency_key(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    payload = {
+        "product_name": "Copco 3-Tier Spice Rack Organizer",
+        "product_details": "Three-tier spice rack organizer.",
+        "affiliate_url": "https://example.com/affiliate",
+        "account_id": "pinterest:test-account",
+    }
+    headers = {"X-API-Key": "private-test-api-key"}
+    missing_key = client.post("/workflow/publish-product", json=payload, headers=headers)
+    assert missing_key.status_code == 422
+
+    short_key = client.post(
+        "/workflow/publish-product",
+        json=payload,
+        headers={**headers, "Idempotency-Key": "short"},
+    )
+    assert short_key.status_code == 422
+
+
+def test_end_to_end_publish_rejects_reused_idempotency_key(monkeypatch):
+    from app import database
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(
+        database,
+        "get_product_by_idempotency_key",
+        lambda key: {"id": 123, "product_name": "Previously accepted"},
+    )
+    payload = {
+        "product_name": "Copco 3-Tier Spice Rack Organizer",
+        "product_details": "Three-tier spice rack organizer.",
+        "affiliate_url": "https://example.com/affiliate",
+        "account_id": "pinterest:test-account",
+    }
+    response = client.post(
+        "/workflow/publish-product",
+        json=payload,
+        headers={
+            "X-API-Key": "private-test-api-key",
+            "Idempotency-Key": "request-key-12345",
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "idempotency_key_reused"
