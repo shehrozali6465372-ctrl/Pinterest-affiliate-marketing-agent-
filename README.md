@@ -58,7 +58,7 @@ Use only server-side environment secrets in Render. Never commit API keys or tok
 
 ## Important limits
 - LLM output is content generation, not a prediction of Pin performance.
-- Alt Text is generated using product details and the supplied image URL; verify live provider/image-fetch behaviour before relying on it.
+- DeepSeek receives text-only input; generated Alt Text is a cautious draft based on supplied product facts and intended composition, not visual inspection. Verify it against the final image before publication.
 - No real Pinterest API call was made in CI; publish tests use mocked responses.
 - Learning Loop remains disabled. Do not train or promote ML without enough suitable real analytics history.
 - Passing CI proves tested software contracts, not live database/provider access.
