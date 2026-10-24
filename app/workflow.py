@@ -13,7 +13,7 @@ from app.content_generation import ContentGenerationError, generate_pin_content
 from app.credential_vault import get_pinterest_credential
 from app.database import (
     begin_publish_attempt, create_content_version, create_product,
-    finish_publish_attempt,
+    finish_publish_attempt, get_product_by_idempotency_key,
 )
 from app.media_generation import ImageGenerationError, generate_and_host_pin_image
 
@@ -79,8 +79,24 @@ def _ensure_board(token: str, name: str, description: str) -> str:
 
 
 @router.post("/publish-product", dependencies=[Depends(_require_api_key)])
-def publish_product_end_to_end(payload: ProductWorkflowInput) -> dict[str, object]:
+def publish_product_end_to_end(
+    payload: ProductWorkflowInput,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+) -> dict[str, object]:
     """Generate image, persist product, generate DeepSeek copy, ensure board, and publish one Pin."""
+    try:
+        existing = get_product_by_idempotency_key(idempotency_key)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not verify idempotency state; refusing to start a potentially duplicate workflow.") from exc
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "idempotency_key_reused",
+                "message": "This Idempotency-Key has already been accepted. Check the existing product/publication record; use a new key only for a genuinely new Pin.",
+                "product_id": existing["id"],
+            },
+        )
     try:
         credential = get_pinterest_credential(payload.account_id)
     except LookupError as exc:
@@ -100,6 +116,7 @@ def publish_product_end_to_end(payload: ProductWorkflowInput) -> dict[str, objec
             product_details=payload.product_details,
             image_url=media["image_url"],
             affiliate_url=payload.affiliate_url,
+            idempotency_key=idempotency_key,
         )
         generated, model_id = generate_pin_content(
             product_name=payload.product_name,
