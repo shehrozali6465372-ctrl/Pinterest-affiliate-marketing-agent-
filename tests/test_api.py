@@ -161,7 +161,9 @@ def test_deepseek_client_uses_flash_model_and_image_and_adds_disclosure(monkeypa
     assert model == "deepseek-flash"
     assert calls["endpoint"] == "https://api.deepseek.com/chat/completions"
     assert calls["headers"]["Authorization"] == "Bearer unit-test-secret"
-    assert calls["payload"]["messages"][1]["content"][1]["image_url"]["url"] == VALID_PRODUCT["image_url"]
+    assert isinstance(calls["payload"]["messages"][1]["content"], str)
+    assert "text only, not the image itself" in calls["payload"]["messages"][1]["content"]
+    assert "verify" in calls["payload"]["messages"][1]["content"].lower()
     assert AFFILIATE_DISCLOSURE in content.description
 
 
