@@ -114,7 +114,7 @@ def test_product_not_found_when_database_returns_none(monkeypatch):
     assert response.status_code == 404
 
 
-def test_deepseek_client_uses_text_only_and_adds_disclosure(monkeypatch):
+def test_deepseek_client_uses_image_and_adds_disclosure(monkeypatch):
     monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
     monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
     monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
@@ -161,9 +161,12 @@ def test_deepseek_client_uses_text_only_and_adds_disclosure(monkeypatch):
     assert model == "deepseek-flash"
     assert calls["endpoint"] == "https://api.deepseek.com/chat/completions"
     assert calls["headers"]["Authorization"] == "Bearer unit-test-secret"
-    assert isinstance(calls["payload"]["messages"][1]["content"], str)
-    assert "text only, not the image itself" in calls["payload"]["messages"][1]["content"]
-    assert "checked against the final image" in calls["payload"]["messages"][1]["content"].lower()
+    message_content = calls["payload"]["messages"][1]["content"]
+    assert isinstance(message_content, list)
+    assert message_content[0]["type"] == "text"
+    assert "visible image content" in message_content[0]["text"]
+    assert message_content[1]["type"] == "image_url"
+    assert message_content[1]["image_url"]["url"] == VALID_PRODUCT["image_url"]
     assert AFFILIATE_DISCLOSURE in content.description
 
 
