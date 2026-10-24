@@ -134,6 +134,21 @@ def create_content_version(
         return dict(row)
 
 
+def get_content_version(product_id: int, content_version_id: int) -> dict | None:
+    """Fetch one generated content version belonging to a product."""
+    with connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, product_id, version_number, provider, model_id, prompt_version,
+                   pin_idea, title, description, alt_text, created_at
+            FROM content_versions
+            WHERE product_id = %s AND id = %s
+            """,
+            (product_id, content_version_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def list_content_versions(product_id: int) -> list[dict]:
     """List saved content versions for a product in newest-first order."""
     with connection() as conn:
@@ -148,6 +163,82 @@ def list_content_versions(product_id: int) -> list[dict]:
             (product_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+def begin_publish_attempt(*, product_id: int, content_version_id: int, board_id: str) -> dict:
+    """Reserve one publish attempt per version/board, preventing blind duplicates."""
+    with connection() as conn:
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(%s)",
+            (int.from_bytes(f"{content_version_id}:{board_id}".encode()[:8].ljust(8, b"0"), "big"),),
+        )
+        row = conn.execute(
+            """
+            SELECT * FROM pin_publications
+            WHERE content_version_id = %s AND board_id = %s
+            FOR UPDATE
+            """,
+            (content_version_id, board_id),
+        ).fetchone()
+        if row:
+            state = row["status"]
+            if state in {"succeeded", "pending", "unknown"}:
+                return {"blocked": True, **dict(row)}
+            row = conn.execute(
+                """
+                UPDATE pin_publications
+                SET status = 'pending', attempt_count = attempt_count + 1,
+                    http_status = NULL, error_code = NULL, response_metadata = NULL,
+                    last_attempt_at = now(), updated_at = now()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (row["id"],),
+            ).fetchone()
+            return {"blocked": False, **dict(row)}
+        row = conn.execute(
+            """
+            INSERT INTO pin_publications
+                (product_id, content_version_id, board_id, status)
+            VALUES (%s, %s, %s, 'pending')
+            RETURNING *
+            """,
+            (product_id, content_version_id, board_id),
+        ).fetchone()
+        return {"blocked": False, **dict(row)}
+
+
+def finish_publish_attempt(
+    publication_id: int,
+    *,
+    status: str,
+    pinterest_pin_id: str | None = None,
+    http_status: int | None = None,
+    error_code: str | None = None,
+    response_metadata: dict | None = None,
+) -> dict:
+    """Persist the outcome of a real Pinterest request without storing access tokens."""
+    if status not in {"succeeded", "failed", "unknown"}:
+        raise ValueError("unsupported publication status")
+    if status == "succeeded" and not pinterest_pin_id:
+        raise ValueError("successful publication requires a confirmed Pinterest Pin ID")
+    with connection() as conn:
+        row = conn.execute(
+            """
+            UPDATE pin_publications
+            SET status = %s, pinterest_pin_id = %s, http_status = %s,
+                error_code = %s, response_metadata = %s::jsonb, updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                status, pinterest_pin_id, http_status, error_code,
+                __import__("json").dumps(response_metadata or {}), publication_id,
+            ),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("publish attempt was not found")
+        return dict(row)
 
 
 def close_pool() -> None:
