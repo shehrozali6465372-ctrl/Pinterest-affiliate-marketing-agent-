@@ -426,11 +426,11 @@ def test_end_to_end_publish_requires_idempotency_key(monkeypatch):
 
 
 def test_end_to_end_publish_rejects_reused_idempotency_key(monkeypatch):
-    from app import database
+    import app.workflow as workflow
 
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     monkeypatch.setattr(
-        database,
+        workflow,
         "get_product_by_idempotency_key",
         lambda key: {"id": 123, "product_name": "Previously accepted"},
     )
