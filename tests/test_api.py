@@ -10,6 +10,7 @@ from app.content_generation import (
     generate_pin_content,
 )
 from app.main import app
+from app.pinterest import PinterestPublishError, publish_image_pin
 
 client = TestClient(app)
 
@@ -236,10 +237,93 @@ def test_content_history_returns_saved_versions(monkeypatch):
     assert response.json()["versions"][0]["version_number"] == 2
 
 
+def test_pinterest_client_uses_real_v5_contract_and_preserves_affiliate_url(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_access_token", "unit-test-token")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    affiliate_url = "https://EXAMPLE.com/item?tag=abc%2D20&campaign=kitchen"
+    calls = {}
+
+    class FakeResponse:
+        status_code = 201
+
+        def json(self):
+            return {"id": "pin-123", "board_id": "board-7", "created_at": "2026-10-24T00:00:00Z"}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, headers, json):
+            calls.update(endpoint=endpoint, headers=headers, payload=json)
+            return FakeResponse()
+
+    monkeypatch.setattr("app.pinterest.httpx.Client", FakeClient)
+    result = publish_image_pin(
+        board_id="board-7",
+        title="A Tidy Kitchen",
+        description=AFFILIATE_DISCLOSURE,
+        alt_text="Wooden spice rack fixed to a kitchen wall.",
+        image_url=VALID_PRODUCT["image_url"],
+        affiliate_url=affiliate_url,
+    )
+    assert calls["endpoint"] == "https://api.pinterest.com/v5/pins"
+    assert calls["headers"]["Authorization"] == "Bearer unit-test-token"
+    assert calls["payload"]["media_source"]["url"] == VALID_PRODUCT["image_url"]
+    assert calls["payload"]["link"] == affiliate_url
+    assert result["pin_id"] == "pin-123"
+
+
+def test_pinterest_client_marks_5xx_as_uncertain(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_access_token", "unit-test-token")
+
+    class FakeResponse:
+        status_code = 500
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.pinterest.httpx.Client", FakeClient)
+    try:
+        publish_image_pin(
+            board_id="board-7", title="Title", description="Description",
+            alt_text="Alt text", image_url=VALID_PRODUCT["image_url"],
+            affiliate_url=VALID_PRODUCT["affiliate_url"],
+        )
+    except PinterestPublishError as exc:
+        assert exc.outcome_uncertain is True
+        assert exc.http_status == 500
+    else:
+        raise AssertionError("Expected PinterestPublishError")
+
+
+def test_publish_route_needs_real_credentials(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_access_token", None)
+    monkeypatch.setattr(settings, "pinterest_board_id", None)
+    response = client.post("/products/5/content/12/publish")
+    assert response.status_code == 503
+    assert "must be configured" in response.json()["detail"]
+
+
 def test_publish_is_not_faked():
     response = client.post("/publish")
-    assert response.status_code == 501
-    assert "No Pin was published" in response.json()["detail"]
+    assert response.status_code == 422
+    assert "content_version_id" in response.json()["detail"]
 
 
 def test_learning_is_not_faked():
