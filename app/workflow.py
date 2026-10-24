@@ -102,6 +102,16 @@ def publish_product_end_to_end(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Pinterest account is not connected in the credential vault.") from exc
 
+    # Validate the stored OAuth token before invoking billable image/LLM providers.
+    # Pinterest v5 user_account requires the user_accounts:read scope.
+    try:
+        _pinterest_request("GET", "/user_account", credential["access_token"])
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=503 if exc.status_code >= 500 else 401,
+            detail="Stored Pinterest credential could not be verified. Reconnect the account before publishing.",
+        ) from exc
+
     try:
         media = generate_and_host_pin_image(
             product_name=payload.product_name,
