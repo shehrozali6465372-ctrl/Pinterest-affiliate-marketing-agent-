@@ -2,18 +2,15 @@
 
 External integrations only report success after real operations complete.
 """
+import hmac
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
-from app.content_generation import (
-    ContentGenerationError,
-    PROMPT_VERSION,
-    generate_pin_content,
-)
+from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
 from app.pinterest import PinterestPublishError, publish_image_pin
 
 
@@ -29,10 +26,17 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Pinterest Affiliate Marketing Agent",
-    version="1.4.0",
+    version="1.4.1",
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
-    lifespan=lifespan,
 )
+
+
+def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+    """Protect operational endpoints when APP_API_KEY is configured."""
+    if not settings.app_api_key:
+        return
+    if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
+        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
 
 class ProductInput(BaseModel):
@@ -69,7 +73,6 @@ class PublishRequest(BaseModel):
 
 
 def _serialize_row(row: dict) -> dict[str, object]:
-    """Convert DB rows to JSON-safe responses."""
     result = dict(row)
     created_at = result.get("created_at")
     if created_at:
@@ -79,26 +82,24 @@ def _serialize_row(row: dict) -> dict[str, object]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    """Liveness check only; does not prove integrations are ready."""
     return {"status": "ok", "service": "pinterest-affiliate-model-1"}
 
 
-@app.get("/readiness")
+@app.get("/readiness", dependencies=[Depends(require_api_key)])
 def readiness() -> dict[str, object]:
-    """Report configuration presence without exposing secrets or asserting validity."""
     return {
         "database_configured": bool(settings.database_url),
         "pinterest_configured": bool(settings.pinterest_access_token and settings.pinterest_board_id),
         "image_generation_configured": bool(settings.cloudflare_api_token and settings.cloudflare_account_id),
         "llm_configured": bool(settings.llm_api_key),
         "llm_model": settings.llm_model if settings.llm_api_key else None,
+        "api_key_configured": bool(settings.app_api_key),
         "note": "Configuration presence does not prove credentials, access, or permissions are valid.",
     }
 
 
-@app.post("/products/validate")
+@app.post("/products/validate", dependencies=[Depends(require_api_key)])
 def validate_product(product: ProductInput) -> dict[str, object]:
-    """Validate input without persisting it or pretending to generate content."""
     return {
         "valid": True,
         "product_name": product.product_name,
@@ -108,9 +109,8 @@ def validate_product(product: ProductInput) -> dict[str, object]:
     }
 
 
-@app.post("/products", status_code=status.HTTP_201_CREATED)
+@app.post("/products", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_api_key)])
 def create_product(product: ProductInput) -> dict[str, object]:
-    """Persist supplied product information in PostgreSQL."""
     try:
         from app.database import create_product as save_product
         row = save_product(
@@ -123,15 +123,11 @@ def create_product(product: ProductInput) -> dict[str, object]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Product persistence is unavailable. Apply database migrations and check database connectivity.",
-        ) from exc
+        raise HTTPException(status_code=503, detail="Product persistence is unavailable. Apply database migrations and check database connectivity.") from exc
 
 
-@app.get("/products/{product_id}")
+@app.get("/products/{product_id}", dependencies=[Depends(require_api_key)])
 def read_product(product_id: int) -> dict[str, object]:
-    """Retrieve persisted product intake."""
     if product_id <= 0:
         raise HTTPException(status_code=422, detail="product_id must be a positive integer")
     try:
@@ -140,18 +136,14 @@ def read_product(product_id: int) -> dict[str, object]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Product persistence is unavailable. Check database connectivity and schema setup.",
-        ) from exc
+        raise HTTPException(status_code=503, detail="Product persistence is unavailable. Check database connectivity and schema setup.") from exc
     if row is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return _serialize_row(row)
 
 
-@app.post("/products/{product_id}/content")
+@app.post("/products/{product_id}/content", dependencies=[Depends(require_api_key)])
 def generate_product_content(product_id: int) -> dict[str, object]:
-    """Generate and persist a content version through the real configured DeepSeek Flash API."""
     if product_id <= 0:
         raise HTTPException(status_code=422, detail="product_id must be a positive integer")
     try:
@@ -182,21 +174,16 @@ def generate_product_content(product_id: int) -> dict[str, object]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Content generation or persistence failed. Check database and provider configuration.",
-        ) from exc
+        raise HTTPException(status_code=503, detail="Content generation or persistence failed. Check database and provider configuration.") from exc
 
 
-@app.get("/products/{product_id}/content")
+@app.get("/products/{product_id}/content", dependencies=[Depends(require_api_key)])
 def list_product_content(product_id: int) -> dict[str, object]:
-    """List historical generated-content versions for a product."""
     if product_id <= 0:
         raise HTTPException(status_code=422, detail="product_id must be a positive integer")
     try:
         from app.database import get_product as fetch_product, list_content_versions
-        product = fetch_product(product_id)
-        if product is None:
+        if fetch_product(product_id) is None:
             raise HTTPException(status_code=404, detail="Product not found")
         rows = list_content_versions(product_id)
         return {"product_id": product_id, "versions": [_serialize_row(row) for row in rows]}
@@ -205,29 +192,17 @@ def list_product_content(product_id: int) -> dict[str, object]:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Content history is unavailable. Check database migrations and connectivity.",
-        ) from exc
+        raise HTTPException(status_code=503, detail="Content history is unavailable. Check database migrations and connectivity.") from exc
 
 
-@app.post("/products/{product_id}/content/{content_version_id}/publish")
+@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_api_key)])
 def publish_product_content(product_id: int, content_version_id: int) -> dict[str, object]:
-    """Publish a saved content version and record only verified Pinterest results."""
     if product_id <= 0 or content_version_id <= 0:
         raise HTTPException(status_code=422, detail="product_id and content_version_id must be positive integers")
     if not settings.pinterest_access_token or not settings.pinterest_board_id:
-        raise HTTPException(
-            status_code=503,
-            detail="Pinterest access token and board ID must be configured before publishing.",
-        )
+        raise HTTPException(status_code=503, detail="Pinterest access token and board ID must be configured before publishing.")
 
-    from app.database import (
-        begin_publish_attempt,
-        finish_publish_attempt,
-        get_content_version,
-        get_product as fetch_product,
-    )
+    from app.database import begin_publish_attempt, finish_publish_attempt, get_content_version, get_product as fetch_product
     try:
         product = fetch_product(product_id)
         if product is None:
@@ -236,23 +211,11 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
         if content is None:
             raise HTTPException(status_code=404, detail="Content version not found")
 
-        attempt = begin_publish_attempt(
-            product_id=product_id,
-            content_version_id=content_version_id,
-            board_id=settings.pinterest_board_id,
-        )
+        attempt = begin_publish_attempt(product_id=product_id, content_version_id=content_version_id, board_id=settings.pinterest_board_id)
         if attempt.get("blocked"):
             if attempt["status"] == "succeeded":
-                return {
-                    "published": True,
-                    "already_published": True,
-                    "pin_id": attempt["pinterest_pin_id"],
-                    "publication_id": attempt["id"],
-                }
-            raise HTTPException(
-                status_code=409,
-                detail="A previous publish attempt is pending or has an uncertain outcome. Check Pinterest before retrying.",
-            )
+                return {"published": True, "already_published": True, "pin_id": attempt["pinterest_pin_id"], "publication_id": attempt["id"]}
+            raise HTTPException(status_code=409, detail="Previous publish attempt is pending or uncertain. Check Pinterest before retrying.")
 
         try:
             actual = publish_image_pin(
@@ -265,22 +228,10 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
             )
         except PinterestPublishError as exc:
             outcome = "unknown" if exc.outcome_uncertain else "failed"
-            finish_publish_attempt(
-                attempt["id"],
-                status=outcome,
-                http_status=exc.http_status,
-                error_code=exc.error_code,
-                response_metadata={},
-            )
+            finish_publish_attempt(attempt["id"], status=outcome, http_status=exc.http_status, error_code=exc.error_code, response_metadata={})
             if exc.outcome_uncertain:
-                raise HTTPException(
-                    status_code=502,
-                    detail="Pinterest publish outcome is uncertain. Automatic retry is blocked; verify the board before retrying.",
-                ) from exc
-            raise HTTPException(
-                status_code=502,
-                detail="Pinterest rejected the request. No successful Pin creation was confirmed.",
-            ) from exc
+                raise HTTPException(status_code=502, detail="Pinterest publish outcome is uncertain. Automatic retry is blocked; verify the board before retrying.") from exc
+            raise HTTPException(status_code=502, detail="Pinterest rejected the request. No successful Pin creation was confirmed.") from exc
 
         saved = finish_publish_attempt(
             attempt["id"],
@@ -289,34 +240,20 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
             http_status=int(actual["http_status"]),
             response_metadata=actual["metadata"],
         )
-        return {
-            "published": True,
-            "already_published": False,
-            "pin_id": saved["pinterest_pin_id"],
-            "publication_id": saved["id"],
-            "http_status": saved["http_status"],
-        }
+        return {"published": True, "already_published": False, "pin_id": saved["pinterest_pin_id"], "publication_id": saved["id"], "http_status": saved["http_status"]}
     except HTTPException:
         raise
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Publish request could not be fully recorded. Inspect the publication record and Pinterest board before retrying.",
-        ) from exc
+        raise HTTPException(status_code=503, detail="Publish request could not be fully recorded. Inspect publication record and Pinterest board before retrying.") from exc
 
 
-@app.post("/publish")
+@app.post("/publish", dependencies=[Depends(require_api_key)])
 def publish(payload: PublishRequest) -> dict[str, object]:
-    """Convenience entry point for the locked Publish capability."""
     return publish_product_content(payload.product_id, payload.content_version_id)
 
 
-@app.post("/learning-loop")
+@app.post("/learning-loop", dependencies=[Depends(require_api_key)])
 def learning_loop_unavailable() -> None:
-    """Learning remains unavailable until real analytics ingestion and evaluation exist."""
-    raise HTTPException(
-        status_code=501,
-        detail="Learning Loop is not implemented. No analytics were ingested and no model was trained.",
-    )
+    raise HTTPException(status_code=501, detail="Learning Loop is not implemented. No analytics were ingested and no model was trained.")
