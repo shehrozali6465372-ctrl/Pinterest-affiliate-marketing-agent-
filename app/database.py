@@ -9,7 +9,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from app.main import settings
+from app.config import settings
 
 _pool: ConnectionPool | None = None
 _MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
@@ -109,6 +109,7 @@ def create_content_version(
 ) -> dict:
     """Persist generated content as an auditable version for the supplied product."""
     with connection() as conn:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (product_id,))
         version_number = conn.execute(
             """
             SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version
