@@ -67,6 +67,18 @@ class ProductInput(BaseModel):
         return value
 
 
+class PinterestCredentialInput(BaseModel):
+    account_id: str = Field(min_length=1, max_length=200)
+    pinterest_user_id: str = Field(min_length=1, max_length=200)
+    username: str = Field(default="", max_length=200)
+    access_token: str = Field(min_length=1, max_length=10000)
+    refresh_token: str = Field(default="", max_length=10000)
+    token_type: str = Field(default="bearer", max_length=100)
+    scope: str = Field(default="", max_length=2000)
+    expires_at: str | None = None
+    refresh_token_expires_at: str | None = None
+
+
 class PublishRequest(BaseModel):
     product_id: int = Field(gt=0)
     content_version_id: int = Field(gt=0)
@@ -159,6 +171,33 @@ def provider_diagnostics() -> dict[str, object]:
             }
 
     return result
+
+
+@app.post("/integrations/pinterest/credentials", status_code=status.HTTP_201_CREATED)
+def ingest_pinterest_credential(
+    payload: PinterestCredentialInput,
+    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
+) -> dict[str, object]:
+    """Accept Pinterest OAuth credentials from the trusted Modern Living Hub backend only."""
+    expected = settings.pinterest_credential_ingest_key
+    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
+        raise HTTPException(status_code=401, detail="Valid service credential required.")
+    if not settings.pinterest_token_encryption_key:
+        raise HTTPException(status_code=503, detail="Pinterest credential encryption is not configured.")
+    try:
+        from app.credential_vault import store_pinterest_credential
+        saved = store_pinterest_credential(payload.model_dump())
+        return {
+            "stored": True,
+            "account_id": saved["account_id"],
+            "pinterest_user_id": saved["pinterest_user_id"],
+            "status": saved["status"],
+            "updated_at": saved["updated_at"].isoformat() if saved.get("updated_at") else None,
+        }
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Credential storage failed; no token values were returned.") from exc
 
 
 @app.post("/products/validate", dependencies=[Depends(require_api_key)])
