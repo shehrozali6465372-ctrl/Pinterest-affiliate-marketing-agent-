@@ -6,7 +6,7 @@ import json
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from app.main import settings
+from app.config import settings
 
 PROMPT_VERSION = "pin-content-v1"
 AFFILIATE_DISCLOSURE = (
@@ -36,8 +36,7 @@ def generate_pin_content(
     if not settings.llm_api_key:
         raise ContentGenerationError("LLM_API_KEY is not configured; content generation is unavailable.")
 
-    base_url = settings.llm_base_url.rstrip("/")
-    endpoint = f"{base_url}/chat/completions"
+    endpoint = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
     prompt = (
         "Create Pinterest affiliate Pin content for a USA audience in the Home Decor & Kitchen niche. "
         "Use only product facts in the supplied text and visual facts visible in the supplied image. "
@@ -87,17 +86,19 @@ def generate_pin_content(
         raw_content = body["choices"][0]["message"]["content"]
         if not isinstance(raw_content, str):
             raise ContentGenerationError("LLM returned an unsupported response format.")
-        parsed = json.loads(raw_content)
-        content = GeneratedContent.model_validate(parsed)
+        content = GeneratedContent.model_validate(json.loads(raw_content))
     except ContentGenerationError:
         raise
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, ValidationError) as exc:
-        # Provider error bodies can contain sensitive internals; do not relay them to API callers.
-        raise ContentGenerationError("DeepSeek content generation failed or returned invalid content.") from exc
+        raise ContentGenerationError(
+            "DeepSeek content generation failed or returned invalid content."
+        ) from exc
 
     if AFFILIATE_DISCLOSURE.lower() not in content.description.lower():
         content.description = f"{content.description.rstrip()}\n\n{AFFILIATE_DISCLOSURE}"
     if len(content.description) > 2000:
-        content.description = content.description[: 2000 - len(AFFILIATE_DISCLOSURE) - 2].rstrip()
-        content.description = f"{content.description}\n\n{AFFILIATE_DISCLOSURE}"
+        content.description = (
+            f"{content.description[: 2000 - len(AFFILIATE_DISCLOSURE) - 2].rstrip()}\n\n"
+            f"{AFFILIATE_DISCLOSURE}"
+        )
     return content, settings.llm_model
