@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    app_api_key: str | None = None
     database_url: str | None = None
     pinterest_access_token: str | None = None
     pinterest_board_id: str | None = None
