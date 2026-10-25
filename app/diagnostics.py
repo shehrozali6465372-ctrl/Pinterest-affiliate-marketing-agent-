@@ -54,6 +54,7 @@ def pinterest_read_only_diagnostic(
     silently check a hard-coded user's credential.
     """
     from app.credential_vault import TokenEncryptionConfigurationError, get_pinterest_credential
+    from app.database import DatabaseConfigurationError
 
     side_effects = {
         "database_modified": False,
@@ -83,6 +84,11 @@ def pinterest_read_only_diagnostic(
         raise HTTPException(
             status_code=503,
             detail={"stage": "credential_configuration", "error": "token_encryption_key_missing_or_invalid"},
+        ) from None
+    except DatabaseConfigurationError:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "database_configuration", "error": "database_url_missing_or_invalid"},
         ) from None
     except psycopg.Error:
         raise HTTPException(
