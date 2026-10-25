@@ -101,6 +101,27 @@ def test_pinterest_diagnostic_distinguishes_invalid_encryption_key(monkeypatch):
     assert "32 bytes" not in response.text
 
 
+def test_pinterest_diagnostic_distinguishes_missing_database_configuration(monkeypatch):
+    _auth(monkeypatch)
+    from app.database import DatabaseConfigurationError
+
+    def missing_database(_account_id):
+        raise DatabaseConfigurationError("DATABASE_URL is not configured")
+
+    monkeypatch.setattr("app.credential_vault.get_pinterest_credential", missing_database)
+    response = client.get(
+        "/diagnostics/pinterest?account_id=pinterest:123",
+        headers=API_HEADERS,
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "stage": "database_configuration",
+        "error": "database_url_missing_or_invalid",
+    }
+    assert "DATABASE_URL" not in response.text
+
+
 def test_pinterest_diagnostic_sanitizes_upstream_rejection(monkeypatch):
     _auth(monkeypatch)
     monkeypatch.setattr(
