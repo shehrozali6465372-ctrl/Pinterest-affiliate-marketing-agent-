@@ -53,7 +53,7 @@ def pinterest_read_only_diagnostic(
     The account ID must come from the authorized caller; this endpoint must not
     silently check a hard-coded user's credential.
     """
-    from app.credential_vault import get_pinterest_credential
+    from app.credential_vault import TokenEncryptionConfigurationError, get_pinterest_credential
 
     side_effects = {
         "database_modified": False,
@@ -79,7 +79,7 @@ def pinterest_read_only_diagnostic(
             status_code=503,
             detail={"stage": "credential_decryption", "error": "credential_decryption_failed"},
         ) from None
-    except RuntimeError:
+    except TokenEncryptionConfigurationError:
         raise HTTPException(
             status_code=503,
             detail={"stage": "credential_configuration", "error": "token_encryption_key_missing_or_invalid"},
