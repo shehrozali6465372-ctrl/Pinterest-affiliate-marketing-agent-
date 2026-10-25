@@ -12,6 +12,10 @@ from psycopg_pool import ConnectionPool
 
 from app.config import settings
 
+class DatabaseConfigurationError(RuntimeError):
+    """Raised when the database connection cannot be configured."""
+
+
 _pool: ConnectionPool | None = None
 _MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
@@ -20,7 +24,7 @@ def get_pool() -> ConnectionPool:
     """Create the pool lazily so liveness checks work without a DB connection."""
     global _pool
     if not settings.database_url:
-        raise RuntimeError("DATABASE_URL is not configured; product persistence is unavailable.")
+        raise DatabaseConfigurationError("DATABASE_URL is not configured; product persistence is unavailable.")
     if _pool is None:
         _pool = ConnectionPool(
             conninfo=settings.database_url,
