@@ -31,6 +31,9 @@ def get_pool() -> ConnectionPool:
             kwargs={"row_factory": dict_row},
             min_size=1,
             max_size=5,
+            # Validate idle connections on checkout so Neon/server-side idle
+            # disconnects are discarded and replaced instead of handed to a query.
+            check=ConnectionPool.check_connection,
             open=True,
         )
     return _pool
