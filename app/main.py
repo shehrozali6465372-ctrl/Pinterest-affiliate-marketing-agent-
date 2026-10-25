@@ -36,6 +36,9 @@ app.include_router(workflow_router)
 from app.diagnostics import router as diagnostics_router
 app.include_router(diagnostics_router)
 
+from app.pinterest_diagnostics import router as pinterest_diagnostics_router
+app.include_router(pinterest_diagnostics_router)
+
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
     """Protect operational endpoints when APP_API_KEY is configured."""
