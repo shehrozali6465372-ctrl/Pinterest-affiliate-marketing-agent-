@@ -16,6 +16,32 @@ def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-K
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
 
+@router.get("/database", dependencies=[Depends(_require_api_key)])
+def database_diagnostic() -> dict[str, object]:
+    """Verify the application's configured database connection using a read-only query only."""
+    try:
+        from app.database import connection
+
+        with connection() as conn:
+            row = conn.execute("SELECT 1 AS connection_test, current_database() AS database_name").fetchone()
+        if not row or row.get("connection_test") != 1:
+            raise RuntimeError("Database probe returned an unexpected result.")
+        return {
+            "ok": True,
+            "database": "connected",
+            "query": "read_only_select_1",
+            "database_name": row["database_name"],
+            "side_effects": {"data_modified": False, "pinterest_called": False, "ai_generation_called": False},
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection check failed. Verify DATABASE_URL and Neon availability.",
+        ) from None
+
+
 class DiagnosticRunInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
     product_name: str = Field(default="Kitchen spice rack organizer", min_length=1, max_length=300)
