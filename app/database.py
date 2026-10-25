@@ -234,8 +234,10 @@ def list_content_versions(product_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
-def begin_publish_attempt(*, product_id: int, content_version_id: int, board_id: str) -> dict:
-    """Reserve one publish attempt per version/board, preventing blind duplicates."""
+def begin_publish_attempt(
+    *, product_id: int, content_version_id: int, board_id: str, account_id: str | None = None
+) -> dict:
+    """Reserve one publish attempt per version/board, and retain its owning account."""
     with connection() as conn:
         lock_key = f"{content_version_id}:{board_id}"
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
@@ -255,22 +257,23 @@ def begin_publish_attempt(*, product_id: int, content_version_id: int, board_id:
                 """
                 UPDATE pin_publications
                 SET status = 'pending', attempt_count = attempt_count + 1,
+                    account_id = COALESCE(account_id, %s),
                     http_status = NULL, error_code = NULL, response_metadata = NULL,
                     last_attempt_at = now(), updated_at = now()
                 WHERE id = %s
                 RETURNING *
                 """,
-                (row["id"],),
+                (account_id, row["id"]),
             ).fetchone()
             return {"blocked": False, **dict(row)}
         row = conn.execute(
             """
             INSERT INTO pin_publications
-                (product_id, content_version_id, board_id, status)
-            VALUES (%s, %s, %s, 'pending')
+                (product_id, content_version_id, board_id, account_id, status)
+            VALUES (%s, %s, %s, %s, 'pending')
             RETURNING *
             """,
-            (product_id, content_version_id, board_id),
+            (product_id, content_version_id, board_id, account_id),
         ).fetchone()
         return {"blocked": False, **dict(row)}
 
