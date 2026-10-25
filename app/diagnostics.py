@@ -1,4 +1,4 @@
-""""Authenticated live integration diagnostics; never publishes a Pinterest Pin."""
+"""Authenticated live integration diagnostics; never publishes a Pinterest Pin."""
 from __future__ import annotations
 
 import hmac
