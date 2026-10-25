@@ -711,3 +711,70 @@ def test_live_diagnostics_does_not_call_image_generator_if_db_or_pinterest_fails
     assert result["side_effects"]["cloudflare_test_image_uploaded"] is False
 
 
+
+
+def test_pinterest_read_only_diagnostic_requires_api_key(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    response = client.get("/diagnostics/pinterest")
+    assert response.status_code == 401
+
+
+def test_pinterest_read_only_diagnostic_checks_account_without_generation(monkeypatch):
+    from app import pinterest_diagnostics
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    monkeypatch.setattr(
+        "app.credential_vault.get_pinterest_credential",
+        lambda account_id: {"access_token": "test-token"},
+    )
+
+    class FakeResponse:
+        is_success = True
+        status_code = 200
+
+    calls = []
+
+    class FakeHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def get(self, url, *, headers):
+            calls.append((url, headers))
+            return FakeResponse()
+
+    monkeypatch.setattr(pinterest_diagnostics.httpx, "Client", FakeHttpClient)
+    response = client.get(
+        "/diagnostics/pinterest",
+        headers={"X-API-Key": "private-test-api-key"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["http_status"] == 200
+    assert body["side_effects"]["pinterest_pin_created"] is False
+    assert body["side_effects"]["ai_generation_called"] is False
+    assert body["side_effects"]["image_generation_called"] is False
+    assert len(calls) == 1
+    assert calls[0][0] == "https://api.pinterest.com/v5/user_account"
+    assert calls[0][1]["Authorization"] == "Bearer test-token"
+
+
+def test_pinterest_read_only_diagnostic_handles_missing_credential(monkeypatch):
+    from app import pinterest_diagnostics
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(
+        "app.credential_vault.get_pinterest_credential",
+        lambda account_id: (_ for _ in ()).throw(LookupError("no credential")),
+    )
+    response = client.get(
+        "/diagnostics/pinterest",
+        headers={"X-API-Key": "private-test-api-key"},
+    )
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["error"] == "credential_not_connected"
