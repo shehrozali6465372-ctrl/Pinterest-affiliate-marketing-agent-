@@ -772,7 +772,7 @@ def test_pinterest_read_only_diagnostic_handles_missing_credential(monkeypatch):
         lambda account_id: (_ for _ in ()).throw(LookupError("no credential")),
     )
     response = client.get(
-        "/diagnostics/pinterest",
+        "/diagnostics/pinterest?account_id=pinterest:missing",
         headers={"X-API-Key": "private-test-api-key"},
     )
     assert response.status_code == 200
