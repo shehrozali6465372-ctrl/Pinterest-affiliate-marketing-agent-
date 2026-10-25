@@ -151,7 +151,10 @@ def publish_product_end_to_end(
 
     token = credential["access_token"]
     board_id = _ensure_board(token, payload.board_name, payload.board_description)
-    attempt = begin_publish_attempt(product_id=product["id"], content_version_id=content["id"], board_id=board_id)
+    attempt = begin_publish_attempt(
+        product_id=product["id"], content_version_id=content["id"],
+        board_id=board_id, account_id=payload.account_id,
+    )
     if attempt.get("blocked"):
         if attempt.get("status") == "succeeded":
             return {
