@@ -133,3 +133,15 @@ def test_pinterest_diagnostic_sanitizes_upstream_rejection(monkeypatch):
     assert response.json()["detail"]["stage"] == "pinterest_api"
     assert response.json()["detail"]["upstream_http_status"] == 401
     assert "private-token" not in response.text
+
+
+def test_app_lifespan_closes_database_pool(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    calls = []
+    monkeypatch.setattr("app.database.close_pool", lambda: calls.append("closed"))
+
+    with TestClient(app) as test_client:
+        assert test_client.get("/health").status_code == 200
+
+    assert calls == ["closed"]
