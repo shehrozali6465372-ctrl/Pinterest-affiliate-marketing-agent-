@@ -720,7 +720,7 @@ def test_pinterest_read_only_diagnostic_requires_api_key(monkeypatch):
 
 
 def test_pinterest_read_only_diagnostic_checks_account_without_generation(monkeypatch):
-    from app import pinterest_diagnostics
+    from app import diagnostics
 
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
@@ -746,7 +746,7 @@ def test_pinterest_read_only_diagnostic_checks_account_without_generation(monkey
             calls.append((url, headers))
             return FakeResponse()
 
-    monkeypatch.setattr(pinterest_diagnostics.httpx, "Client", FakeHttpClient)
+    monkeypatch.setattr(diagnostics.httpx, "Client", FakeHttpClient)
     response = client.get(
         "/diagnostics/pinterest",
         headers={"X-API-Key": "private-test-api-key"},
@@ -764,7 +764,7 @@ def test_pinterest_read_only_diagnostic_checks_account_without_generation(monkey
 
 
 def test_pinterest_read_only_diagnostic_handles_missing_credential(monkeypatch):
-    from app import pinterest_diagnostics
+    from app import diagnostics
 
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     monkeypatch.setattr(
