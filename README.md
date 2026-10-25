@@ -60,7 +60,7 @@ Use only server-side environment secrets in Render. Never commit API keys or tok
 - LLM output is content generation, not a prediction of Pin performance.
 - DeepSeek receives text-only input; generated Alt Text is a cautious draft based on supplied product facts and intended composition, not visual inspection. Verify it against the final image before publication.
 - No real Pinterest API call was made in CI; publish tests use mocked responses.
-- Learning Loop remains disabled. Do not train or promote ML without enough suitable real analytics history.
+- Learning Loop records real Pinterest analytics and descriptive summaries; it does not train a predictive ML model. Do not claim predictive learning until enough suitable real analytics history and a validated model/evaluation pipeline exist.
 - Passing CI proves tested software contracts, not live database/provider access.
 
 ## End-to-end workflow (new, requires live verification)
