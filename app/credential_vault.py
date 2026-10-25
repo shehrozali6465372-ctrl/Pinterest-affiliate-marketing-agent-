@@ -11,16 +11,20 @@ from app.config import settings
 from app.database import connection
 
 
+class TokenEncryptionConfigurationError(RuntimeError):
+    """Raised only when the token-encryption key is missing or invalid."""
+
+
 def _cipher() -> AESGCM:
     encoded = settings.pinterest_token_encryption_key
     if not encoded:
-        raise RuntimeError("PINTEREST_TOKEN_ENCRYPTION_KEY is not configured")
+        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY is not configured")
     try:
         key = base64.b64decode(encoded, validate=True)
     except Exception as exc:
-        raise RuntimeError("PINTEREST_TOKEN_ENCRYPTION_KEY must be base64-encoded 32-byte key") from exc
+        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY must be base64-encoded 32-byte key") from exc
     if len(key) != 32:
-        raise RuntimeError("PINTEREST_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes")
+        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes")
     return AESGCM(key)
 
 
