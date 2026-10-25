@@ -82,8 +82,10 @@ def test_pinterest_diagnostic_reports_missing_credential_without_calling_api(mon
 def test_pinterest_diagnostic_distinguishes_invalid_encryption_key(monkeypatch):
     _auth(monkeypatch)
 
+    from app.credential_vault import TokenEncryptionConfigurationError
+
     def invalid_key(_account_id):
-        raise RuntimeError("PINTEREST_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes")
+        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes")
 
     monkeypatch.setattr("app.credential_vault.get_pinterest_credential", invalid_key)
     response = client.get(
