@@ -42,6 +42,50 @@ def database_diagnostic() -> dict[str, object]:
         ) from None
 
 
+@router.get("/pinterest", dependencies=[Depends(_require_api_key)])
+def pinterest_read_only_diagnostic() -> dict[str, object]:
+    """Verify the stored Pinterest credential using a read-only account lookup; no generation or publishing."""
+    try:
+        from app.credential_vault import get_pinterest_credential
+
+        account_id = "pinterest:1069323642682526567"
+        credential = get_pinterest_credential(account_id)
+        with httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+            response = client.get(
+                f"{settings.pinterest_api_base_url.rstrip('/')}/user_account",
+                headers={"Authorization": f"Bearer {credential['access_token']}"},
+            )
+        return {
+            "ok": response.is_success,
+            "check": "stored_credential_user_account_read",
+            "http_status": response.status_code,
+            "side_effects": {
+                "database_modified": False,
+                "pinterest_pin_created": False,
+                "pinterest_board_created": False,
+                "ai_generation_called": False,
+                "image_generation_called": False,
+            },
+        }
+    except LookupError:
+        return {
+            "ok": False,
+            "error": "credential_not_connected",
+            "side_effects": {
+                "database_modified": False,
+                "pinterest_pin_created": False,
+                "pinterest_board_created": False,
+                "ai_generation_called": False,
+                "image_generation_called": False,
+            },
+        }
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Pinterest read-only credential check failed. Verify the stored credential and API access.",
+        ) from None
+
+
 class DiagnosticRunInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
     product_name: str = Field(default="Kitchen spice rack organizer", min_length=1, max_length=300)
