@@ -25,10 +25,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    lifespan=lifespan,
     title="Pinterest Affiliate Marketing Agent",
     version="1.4.1",
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
+    lifespan=lifespan,
 )
 
 from app.workflow import router as workflow_router
@@ -37,6 +37,8 @@ app.include_router(workflow_router)
 from app.diagnostics import router as diagnostics_router
 app.include_router(diagnostics_router)
 
+from app.learning import router as learning_router
+app.include_router(learning_router)
 
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
@@ -208,10 +210,112 @@ def ingest_pinterest_credential(
         raise HTTPException(status_code=503, detail="Credential storage failed; no token values were returned.") from exc
 
 
+class PinterestRefreshInput(BaseModel):
+    account_id: str = Field(min_length=1, max_length=200)
+    client_id: str = Field(min_length=1, max_length=500)
+    client_secret: str = Field(min_length=1, max_length=2000)
+
+
 class PinterestOperationInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
     operation: str = Field(min_length=1, max_length=50)
     payload: dict[str, object] = Field(default_factory=dict)
+
+
+@app.post("/integrations/pinterest/refresh")
+def refresh_pinterest_credential(
+    payload: PinterestRefreshInput,
+    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
+) -> dict[str, object]:
+    """Refresh an expired Pinterest access token using server-to-server app credentials."""
+    expected = settings.pinterest_credential_ingest_key
+    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
+        raise HTTPException(status_code=401, detail="Valid service credential required.")
+
+    from datetime import datetime, timedelta, timezone
+    import httpx
+    from cryptography.exceptions import InvalidTag
+    from app.credential_vault import (
+        TokenEncryptionConfigurationError,
+        get_pinterest_refresh_credential,
+        store_pinterest_credential,
+    )
+    from app.database import DatabaseConfigurationError
+
+    try:
+        stored = get_pinterest_refresh_credential(payload.account_id)
+    except LookupError:
+        raise HTTPException(status_code=409, detail="No usable Pinterest refresh token is stored; reconnect Pinterest.") from None
+    except InvalidTag:
+        raise HTTPException(status_code=503, detail="Stored Pinterest refresh token failed authenticated decryption.") from None
+    except TokenEncryptionConfigurationError:
+        raise HTTPException(status_code=503, detail="Pinterest token encryption is not configured correctly.") from None
+    except DatabaseConfigurationError:
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured correctly.") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="Pinterest refresh credential lookup failed.") from None
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+            response = client.post(
+                f"{settings.pinterest_api_base_url.rstrip('/')}/oauth/token",
+                auth=(payload.client_id, payload.client_secret),
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": stored["refresh_token"],
+                    "continuous_refresh": "true",
+                },
+            )
+        token_data = response.json() if response.content else {}
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(status_code=502, detail="Pinterest OAuth token refresh request failed.") from None
+
+    if not response.is_success or not isinstance(token_data, dict) or not token_data.get("access_token"):
+        status_code = 401 if response.status_code in (400, 401, 403) else 502
+        raise HTTPException(
+            status_code=status_code,
+            detail="Pinterest rejected token refresh. Reconnect the account if the refresh token is invalid or expired.",
+        )
+
+    now = datetime.now(timezone.utc)
+    expires_at = (
+        (now + timedelta(seconds=int(token_data["expires_in"]))).isoformat()
+        if token_data.get("expires_in") is not None else None
+    )
+    refresh_expiry = token_data.get("refresh_token_expires_at")
+    if refresh_expiry is not None:
+        try:
+            refresh_token_expires_at = datetime.fromtimestamp(float(refresh_expiry), timezone.utc).isoformat()
+        except (TypeError, ValueError, OverflowError):
+            refresh_token_expires_at = None
+    elif token_data.get("refresh_token_expires_in") is not None:
+        refresh_token_expires_at = (
+            now + timedelta(seconds=int(token_data["refresh_token_expires_in"]))
+        ).isoformat()
+    else:
+        refresh_token_expires_at = None
+
+    try:
+        saved = store_pinterest_credential({
+            "account_id": stored["account_id"],
+            "pinterest_user_id": stored["pinterest_user_id"],
+            "username": stored.get("username") or "",
+            "access_token": str(token_data["access_token"]),
+            "refresh_token": str(token_data.get("refresh_token") or ""),
+            "token_type": str(token_data.get("token_type") or "bearer"),
+            "scope": str(token_data.get("scope") or stored.get("scope") or ""),
+            "expires_at": expires_at,
+            "refresh_token_expires_at": refresh_token_expires_at,
+        })
+    except Exception:
+        raise HTTPException(status_code=503, detail="Pinterest refreshed a token but encrypted persistence could not be confirmed.") from None
+
+    return {
+        "refreshed": True,
+        "account_id": saved["account_id"],
+        "expires_at": saved.get("expires_at").isoformat() if saved.get("expires_at") else expires_at,
+        "refresh_token_expires_at": saved.get("refresh_token_expires_at").isoformat() if saved.get("refresh_token_expires_at") else refresh_token_expires_at,
+    }
 
 
 @app.post("/integrations/pinterest/operation")

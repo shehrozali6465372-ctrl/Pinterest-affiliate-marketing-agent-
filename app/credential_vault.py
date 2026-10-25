@@ -90,6 +90,30 @@ def get_pinterest_credential(account_id: str) -> dict[str, Any]:
     return {"account_id": row["account_id"], "pinterest_user_id": row["pinterest_user_id"], "username": row["username"], "access_token": token, "token_type": row["token_type"], "scope": row["scope"], "expires_at": row["expires_at"]}
 
 
+def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
+    """Decrypt the refresh token only for a trusted server-side token refresh."""
+    cipher = _cipher()
+    with connection() as conn:
+        row = conn.execute(
+            """SELECT account_id, pinterest_user_id, username, refresh_token_ciphertext,
+                      scope, refresh_token_expires_at, status
+               FROM pinterest_credentials WHERE account_id = %s""",
+            (account_id,),
+        ).fetchone()
+    if not row or row["status"] != "connected" or not row["refresh_token_ciphertext"]:
+        raise LookupError("Pinterest refresh credential is not available")
+    blob = bytes(row["refresh_token_ciphertext"])
+    refresh_token = cipher.decrypt(blob[:12], blob[12:], f"{account_id}:refresh".encode()).decode("utf-8")
+    return {
+        "account_id": row["account_id"],
+        "pinterest_user_id": row["pinterest_user_id"],
+        "username": row["username"],
+        "refresh_token": refresh_token,
+        "scope": row["scope"],
+        "refresh_token_expires_at": row["refresh_token_expires_at"],
+    }
+
+
 def revoke_pinterest_credential(account_id: str) -> None:
     """Disable an account in the Agent database without exposing its token."""
     with connection() as conn:

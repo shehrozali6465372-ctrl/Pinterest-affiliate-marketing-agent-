@@ -14,7 +14,7 @@ Target audience: USA. Niche: Home Decor & Kitchen.
 Do not add product capabilities outside this scope without explicit approval.
 
 ## Engineering status
-Product intake/persistence, versioned content history, and DeepSeek Flash content generation are implemented as code and covered by CI tests. The Pinterest v5 publishing client and API route are also implemented and tested with mocked responses. Real Neon connectivity, live DeepSeek credentials/calls, and real Pinterest publishing have not been verified. Cloudflare image generation, real Pinterest analytics ingestion, and predictive ML remain pending. No mock publishing, fake analytics, or pretend learning is allowed.
+Product intake/persistence, versioned content history, DeepSeek Flash content generation, Cloudflare image generation, Pinterest v5 publishing, encrypted OAuth credential storage/refresh, and account-scoped Pinterest analytics ingestion are implemented as code and covered by CI tests. Real Neon connectivity, live DeepSeek/Cloudflare credentials and calls, OAuth refresh against Pinterest, production migration execution, and real Pinterest publishing have not been verified. Predictive ML remains intentionally deferred until sufficient real longitudinal data exists. No mock publishing, fake analytics, or pretend learning is allowed.
 
 ## Local setup
 1. Use Python 3.11 or newer.
@@ -60,7 +60,7 @@ Use only server-side environment secrets in Render. Never commit API keys or tok
 - LLM output is content generation, not a prediction of Pin performance.
 - DeepSeek receives text-only input; generated Alt Text is a cautious draft based on supplied product facts and intended composition, not visual inspection. Verify it against the final image before publication.
 - No real Pinterest API call was made in CI; publish tests use mocked responses.
-- Learning Loop remains disabled. Do not train or promote ML without enough suitable real analytics history.
+- Learning Loop records real Pinterest analytics and descriptive summaries; it does not train a predictive ML model. Do not claim predictive learning until enough suitable real analytics history and a validated model/evaluation pipeline exist.
 - Passing CI proves tested software contracts, not live database/provider access.
 
 ## End-to-end workflow (new, requires live verification)
