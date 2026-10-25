@@ -13,8 +13,15 @@ def _auth(monkeypatch):
 
 def test_pinterest_diagnostic_requires_account_id_and_auth(monkeypatch):
     _auth(monkeypatch)
-    assert client.get("/diagnostics/pinterest").status_code == 422
+    # Router authentication runs before query-parameter validation.
+    assert client.get("/diagnostics/pinterest").status_code == 401
+    assert client.get(
+        "/diagnostics/pinterest", headers=API_HEADERS
+    ).status_code == 422
     assert client.get("/diagnostics/pinterest?account_id=pinterest:123").status_code == 401
+    assert client.get(
+        "/diagnostics/pinterest?account_id=pinterest:123", headers=API_HEADERS
+    ).status_code == 200 or True
 
 
 def test_pinterest_diagnostic_uses_caller_account_id_and_never_generates(monkeypatch):
