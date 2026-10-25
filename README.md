@@ -38,7 +38,10 @@ Set a strong random `APP_API_KEY` in Render environment variables before exposin
 - `GET /products/{product_id}/content`: returns version history for the product.
 - `POST /publish` with JSON `{"product_id": 123, "content_version_id": 456}`: publishes an existing content version using the Pinterest v5 API. The original product image URL and exact affiliate destination link are used. Success requires a returned Pin ID, and successful duplicate attempts are blocked.
 - `POST /products/{product_id}/content/{content_version_id}/publish`: version-specific publishing endpoint.
-- `POST /learning-loop`: intentionally returns 501 until real analytics ingestion and evaluation are implemented.
+- `POST /learning-loop/run`: authenticated real Pinterest analytics ingestion for confirmed Pins belonging to the supplied `account_id`; saves snapshots and returns descriptive metrics. Requires `X-API-Key` and JSON such as `{"account_id":"<connected-account-id>","period_days":30}`. With no confirmed Pins, returns `waiting_for_published_pins`; it does not fabricate data or train a model.
+- `GET /diagnostics/database`: authenticated, read-only database connectivity check.
+- `GET /diagnostics/pinterest?account_id=<connected-account-id>`: authenticated, read-only test of the stored, decryptable Pinterest credential against Pinterest account lookup.
+- `POST /workflow/publish-product`: authenticated end-to-end workflow that generates/hosts an image, generates content, stores product/content, and publishes a real Pin. **This endpoint has external side effects and can create a public Pin; call it only after explicit publication approval.** Requires `X-API-Key` and a unique `Idempotency-Key`.
 
 A timed-out Pinterest request or ambiguous server error is recorded as uncertain; automatic retry is blocked. Check the Pinterest board before attempting a retry to avoid accidental duplicate Pins.
 
@@ -48,8 +51,10 @@ Migrations are in `migrations/` and tracked in `schema_migrations`. Run them exp
 ## Configuration
 - `APP_API_KEY`: protect operational endpoints.
 - `DATABASE_URL`: Neon PostgreSQL connection string.
-- `PINTEREST_ACCESS_TOKEN`, `PINTEREST_BOARD_ID`: authorized Pinterest API access.
-- `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`: server-side Cloudflare Workers AI access; image-generation service is pending.
+- `PINTEREST_TOKEN_ENCRYPTION_KEY`: base64-encoded 32-byte key used by the credential vault to decrypt stored OAuth credentials; it must match the key used when the credential was stored.
+- `PINTEREST_CREDENTIAL_INGEST_KEY`: shared secret required for the Hub-to-Agent credential handoff; configure the matching `PINTEREST_AGENT_INGEST_KEY` in Modern Living Hub.
+- Pinterest credentials are account-scoped and stored in Neon through the credential handoff; do not substitute a hard-coded access token or board ID for the connected account.
+- `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`: server-side Cloudflare Workers AI and Cloudflare Images access for image generation/hosting.
 - `LLM_API_KEY`: DeepSeek API key.
 - `LLM_BASE_URL`: defaults to `https://api.deepseek.com`.
 - `LLM_MODEL`: defaults to `deepseek-flash`.
@@ -65,14 +70,14 @@ Use only server-side environment secrets in Render. Never commit API keys or tok
 
 ## End-to-end workflow (new, requires live verification)
 
-A new authenticated endpoint is available on branch `feature/e2e-production-workflow`:
+The authenticated end-to-end endpoint in the current application is:
 
 `POST /workflow/publish-product`
 
 It generates a product lifestyle image with Cloudflare Workers AI, uploads the image to Cloudflare Images, generates Pin Idea/title/description/alt text with DeepSeek, stores the product and content version, finds or creates the requested Pinterest board using the encrypted OAuth credential in Neon, publishes through Pinterest API v5, and records the returned Pin ID.
 
 Required server-side Render environment:
-- `APP_API_KEY`: required by the new workflow endpoint.
+- `APP_API_KEY`: required by the workflow, diagnostics, and Learning Loop endpoints.
 - `DATABASE_URL`: Neon database URL containing the existing credential vault and publication tables.
 - `PINTEREST_TOKEN_ENCRYPTION_KEY`: same base64-encoded 32-byte key used to encrypt the already-stored Pinterest credential.
 - `CLOUDFLARE_API_TOKEN`: token with Workers AI Run and Cloudflare Images Write permissions.
