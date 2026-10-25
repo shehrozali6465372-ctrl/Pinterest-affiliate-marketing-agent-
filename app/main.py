@@ -301,7 +301,8 @@ def refresh_pinterest_credential(
             "pinterest_user_id": stored["pinterest_user_id"],
             "username": stored.get("username") or "",
             "access_token": str(token_data["access_token"]),
-            "refresh_token": str(token_data.get("refresh_token") or ""),
+            # Pinterest may omit a rotated refresh token; never erase the still-valid stored one.
+            "refresh_token": str(token_data.get("refresh_token") or stored.get("refresh_token") or ""),
             "token_type": str(token_data.get("token_type") or "bearer"),
             "scope": str(token_data.get("scope") or stored.get("scope") or ""),
             "expires_at": expires_at,

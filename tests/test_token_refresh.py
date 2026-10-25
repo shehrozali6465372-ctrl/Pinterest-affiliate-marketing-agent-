@@ -87,3 +87,65 @@ def test_refresh_endpoint_rotates_and_persists_tokens_without_returning_secrets(
     assert saved_payloads[0]["access_token"] == "new-access-secret"
     assert saved_payloads[0]["refresh_token"] == "new-refresh-secret"
     assert saved_payloads[0]["pinterest_user_id"] == "123"
+
+
+
+def test_refresh_preserves_existing_refresh_token_when_provider_omits_rotation(monkeypatch):
+    import httpx
+    from app import credential_vault
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    monkeypatch.setattr(
+        credential_vault,
+        "get_pinterest_refresh_credential",
+        lambda account_id: {
+            "account_id": account_id,
+            "pinterest_user_id": "123",
+            "username": "test-user",
+            "refresh_token": "still-valid-refresh-secret",
+            "scope": "pins:read,pins:write",
+        },
+    )
+    saved_payloads = []
+
+    def store(payload):
+        saved_payloads.append(payload)
+        return {"account_id": payload["account_id"], "updated_at": datetime.now(timezone.utc)}
+
+    monkeypatch.setattr(credential_vault, "store_pinterest_credential", store)
+
+    class FakeResponse:
+        content = b'{"access_token":"rotated-access-secret"}'
+        is_success = True
+        status_code = 200
+
+        def json(self):
+            # Provider returned a new access token but no rotated refresh token.
+            return {"access_token": "rotated-access-secret", "expires_in": 1800}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, url, *, auth, data):
+            assert data["refresh_token"] == "still-valid-refresh-secret"
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    response = client.post(
+        "/integrations/pinterest/refresh",
+        headers=HEADERS,
+        json={"account_id": "pinterest:123", "client_id": "client-id", "client_secret": "client-secret"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert saved_payloads[0]["access_token"] == "rotated-access-secret"
+    assert saved_payloads[0]["refresh_token"] == "still-valid-refresh-secret"
+    assert "still-valid-refresh-secret" not in response.text
