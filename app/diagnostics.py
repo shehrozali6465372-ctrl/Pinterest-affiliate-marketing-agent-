@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hmac
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from cryptography.exceptions import InvalidTag
+import psycopg
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -43,47 +45,93 @@ def database_diagnostic() -> dict[str, object]:
 
 
 @router.get("/pinterest", dependencies=[Depends(_require_api_key)])
-def pinterest_read_only_diagnostic() -> dict[str, object]:
-    """Verify the stored Pinterest credential using a read-only account lookup; no generation or publishing."""
-    try:
-        from app.credential_vault import get_pinterest_credential
+def pinterest_read_only_diagnostic(
+    account_id: str = Query(..., min_length=1, max_length=200),
+) -> dict[str, object]:
+    """Verify one stored Pinterest credential with a read-only account lookup.
 
-        account_id = "pinterest:1069323642682526567"
+    The account ID must come from the authorized caller; this endpoint must not
+    silently check a hard-coded user's credential.
+    """
+    from app.credential_vault import TokenEncryptionConfigurationError, get_pinterest_credential
+    from app.database import DatabaseConfigurationError
+
+    side_effects = {
+        "database_modified": False,
+        "pinterest_pin_created": False,
+        "pinterest_board_created": False,
+        "ai_generation_called": False,
+        "image_generation_called": False,
+    }
+
+    # Separate vault failures from Pinterest HTTP failures without returning
+    # exception text, token material, or other secrets.
+    try:
         credential = get_pinterest_credential(account_id)
+    except LookupError:
+        return {
+            "ok": False,
+            "stage": "credential_vault",
+            "error": "credential_not_connected",
+            "side_effects": side_effects,
+        }
+    except InvalidTag:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "credential_decryption", "error": "credential_decryption_failed"},
+        ) from None
+    except TokenEncryptionConfigurationError:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "credential_configuration", "error": "token_encryption_key_missing_or_invalid"},
+        ) from None
+    except DatabaseConfigurationError:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "database_configuration", "error": "database_url_missing_or_invalid"},
+        ) from None
+    except psycopg.Error:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "database", "error": "credential_database_query_failed"},
+        ) from None
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "credential_vault", "error": "credential_lookup_or_decryption_failed"},
+        ) from None
+
+    try:
         with httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
             response = client.get(
                 f"{settings.pinterest_api_base_url.rstrip('/')}/user_account",
                 headers={"Authorization": f"Bearer {credential['access_token']}"},
             )
-        return {
-            "ok": response.is_success,
-            "check": "stored_credential_user_account_read",
-            "http_status": response.status_code,
-            "side_effects": {
-                "database_modified": False,
-                "pinterest_pin_created": False,
-                "pinterest_board_created": False,
-                "ai_generation_called": False,
-                "image_generation_called": False,
-            },
-        }
-    except LookupError:
-        return {
-            "ok": False,
-            "error": "credential_not_connected",
-            "side_effects": {
-                "database_modified": False,
-                "pinterest_pin_created": False,
-                "pinterest_board_created": False,
-                "ai_generation_called": False,
-                "image_generation_called": False,
-            },
-        }
-    except Exception:
+    except httpx.HTTPError:
         raise HTTPException(
             status_code=503,
-            detail="Pinterest read-only credential check failed. Verify the stored credential and API access.",
+            detail={"stage": "pinterest_request", "error": "pinterest_api_unreachable"},
         ) from None
+
+    if not response.is_success:
+        status_code = 401 if response.status_code in (401, 403) else 502
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "stage": "pinterest_api",
+                "error": "pinterest_api_rejected_credential_or_request",
+                "upstream_http_status": response.status_code,
+            },
+        )
+
+    return {
+        "ok": True,
+        "stage": "pinterest_api",
+        "check": "stored_credential_user_account_read",
+        "http_status": response.status_code,
+        "account_id": account_id,
+        "side_effects": side_effects,
+    }
 
 
 class DiagnosticRunInput(BaseModel):

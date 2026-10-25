@@ -25,6 +25,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
+    lifespan=lifespan,
     title="Pinterest Affiliate Marketing Agent",
     version="1.4.1",
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
