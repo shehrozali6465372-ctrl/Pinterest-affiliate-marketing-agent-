@@ -14,7 +14,7 @@ Target audience: USA. Niche: Home Decor & Kitchen.
 Do not add product capabilities outside this scope without explicit approval.
 
 ## Engineering status
-Product intake/persistence, versioned content history, and DeepSeek Flash content generation are implemented as code and covered by CI tests. The Pinterest v5 publishing client and API route are also implemented and tested with mocked responses. Real Neon connectivity, live DeepSeek credentials/calls, and real Pinterest publishing have not been verified. Cloudflare image generation, real Pinterest analytics ingestion, and predictive ML remain pending. No mock publishing, fake analytics, or pretend learning is allowed.
+Product intake/persistence, versioned content history, DeepSeek Flash content generation, Cloudflare image generation, Pinterest v5 publishing, encrypted OAuth credential storage/refresh, and account-scoped Pinterest analytics ingestion are implemented as code and covered by CI tests. Real Neon connectivity, live DeepSeek/Cloudflare credentials and calls, OAuth refresh against Pinterest, production migration execution, and real Pinterest publishing have not been verified. Predictive ML remains intentionally deferred until sufficient real longitudinal data exists. No mock publishing, fake analytics, or pretend learning is allowed.
 
 ## Local setup
 1. Use Python 3.11 or newer.
