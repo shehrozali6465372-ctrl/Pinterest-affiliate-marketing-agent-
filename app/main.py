@@ -25,10 +25,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    lifespan=lifespan,
     title="Pinterest Affiliate Marketing Agent",
     version="1.4.1",
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
+    lifespan=lifespan,
 )
 
 from app.workflow import router as workflow_router
@@ -37,6 +37,8 @@ app.include_router(workflow_router)
 from app.diagnostics import router as diagnostics_router
 app.include_router(diagnostics_router)
 
+from app.learning import router as learning_router
+app.include_router(learning_router)
 
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
