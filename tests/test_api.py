@@ -748,7 +748,7 @@ def test_pinterest_read_only_diagnostic_checks_account_without_generation(monkey
 
     monkeypatch.setattr(diagnostics.httpx, "Client", FakeHttpClient)
     response = client.get(
-        "/diagnostics/pinterest",
+        "/diagnostics/pinterest?account_id=pinterest:test-account",
         headers={"X-API-Key": "private-test-api-key"},
     )
     assert response.status_code == 200
