@@ -15,8 +15,11 @@ class PinterestPublishError(RuntimeError):
 
 def image_media_source(image_url: str) -> dict[str, object]:
     """Use image_base64 for a data URL, otherwise preserve legacy public image URLs."""
-    match = re.fullmatch(r"data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)", image_url)
-    if not match:
+    if image_url.startswith("data:"):
+        match = re.fullmatch(r"data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)", image_url)
+        if not match:
+            raise PinterestPublishError("Generated image data URL is malformed; no Pinterest request was sent.", outcome_uncertain=False, error_code="invalid_image_data")
+    else:
         return {"source_type": "image_url", "url": image_url, "is_standard": True}
     mime, encoded = match.groups()
     try:
