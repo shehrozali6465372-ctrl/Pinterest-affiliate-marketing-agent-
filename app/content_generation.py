@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "pin-content-v1"
 AFFILIATE_DISCLOSURE = (
@@ -92,7 +95,29 @@ def generate_pin_content(
         content = GeneratedContent.model_validate(json.loads(raw_content))
     except ContentGenerationError:
         raise
+    except httpx.HTTPStatusError as exc:
+        # Log status and a bounded provider error code/message only; never log request headers,
+        # API keys, prompt contents, or the full response body.
+        provider_code = "unknown"
+        try:
+            error_body = exc.response.json()
+            error_obj = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+            if isinstance(error_obj, dict):
+                candidate = error_obj.get("type") or error_obj.get("code")
+                if isinstance(candidate, (str, int)):
+                    provider_code = str(candidate)[:80]
+        except (ValueError, TypeError):
+            pass
+        logger.error(
+            "DeepSeek HTTP failure: status=%s provider_code=%s",
+            exc.response.status_code,
+            provider_code,
+        )
+        raise ContentGenerationError(
+            f"DeepSeek request rejected (HTTP {exc.response.status_code}; provider_code={provider_code})."
+        ) from exc
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, ValidationError) as exc:
+        logger.error("DeepSeek generation/response parsing failure: exception_type=%s", type(exc).__name__)
         raise ContentGenerationError(
             "DeepSeek content generation failed or returned invalid content."
         ) from exc
