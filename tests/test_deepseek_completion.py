@@ -80,7 +80,7 @@ def test_deepseek_request_disables_thinking_for_structured_output(monkeypatch):
     assert generated.title == "Organized Spice Rack"
     assert calls["payload"]["response_format"] == {"type": "json_object"}
     assert calls["payload"]["thinking"] == {"type": "disabled"}
-    assert calls["payload"]["max_tokens"] == 1800
+    assert calls["payload"]["max_tokens"] == 2400
     assert calls["payload"]["stream"] is False
     assert calls["payload"]["messages"][1]["content"][1]["type"] == "image_url"
 

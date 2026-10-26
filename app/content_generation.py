@@ -34,6 +34,7 @@ def generate_pin_content(
     product_name: str,
     product_details: str,
     image_url: str,
+    _retry_attempt: int = 0,
 ) -> tuple[GeneratedContent, str]:
     """Generate content with DeepSeek Flash using supplied text and image evidence."""
     if not settings.llm_api_key:
@@ -78,11 +79,11 @@ def generate_pin_content(
         # the output budget and truncate the required JSON object.
         "thinking": {"type": "disabled"},
         "temperature": 0.4,
-        "max_tokens": 1800,
+        "max_tokens": 2400,
         "stream": False,
     }
     try:
-        with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
             response = client.post(
                 endpoint,
                 headers={
@@ -93,6 +94,12 @@ def generate_pin_content(
             )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        if _retry_attempt == 0 and (exc.response.status_code == 429 or exc.response.status_code >= 500):
+            logger.warning("DeepSeek transient HTTP failure; retrying once: status=%s", exc.response.status_code)
+            return generate_pin_content(
+                product_name=product_name, product_details=product_details,
+                image_url=image_url, _retry_attempt=1,
+            )
         # Log status and a bounded provider error code/message only; never log request headers,
         # API keys, prompt contents, or the full response body.
         provider_code = "unknown"
@@ -114,12 +121,24 @@ def generate_pin_content(
             f"DeepSeek request rejected (HTTP {exc.response.status_code}; provider_code={provider_code})."
         ) from exc
     except httpx.HTTPError as exc:
+        if _retry_attempt == 0:
+            logger.warning("DeepSeek transport failure; retrying once: exception_type=%s", type(exc).__name__)
+            return generate_pin_content(
+                product_name=product_name, product_details=product_details,
+                image_url=image_url, _retry_attempt=1,
+            )
         logger.error("DeepSeek request transport failure: exception_type=%s", type(exc).__name__)
         raise ContentGenerationError("DeepSeek content generation request failed.") from exc
 
     try:
         body = response.json()
     except (ValueError, TypeError) as exc:
+        if _retry_attempt == 0:
+            logger.warning("DeepSeek invalid response envelope; retrying once")
+            return generate_pin_content(
+                product_name=product_name, product_details=product_details,
+                image_url=image_url, _retry_attempt=1,
+            )
         headers = getattr(response, "headers", {})
         content_type = headers.get("content-type", "unknown") if hasattr(headers, "get") else "unknown"
         response_bytes = len(getattr(response, "content", b"") or b"")
@@ -138,6 +157,12 @@ def generate_pin_content(
     finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
 
     if not isinstance(raw_content, str):
+        if _retry_attempt == 0:
+            logger.warning("DeepSeek returned missing/non-text content; retrying once")
+            return generate_pin_content(
+                product_name=product_name, product_details=product_details,
+                image_url=image_url, _retry_attempt=1,
+            )
         logger.error(
             "DeepSeek content type failure: value_type=%s finish_reason=%s",
             type(raw_content).__name__,
@@ -148,6 +173,12 @@ def generate_pin_content(
     try:
         parsed_content = json.loads(raw_content)
     except json.JSONDecodeError as exc:
+        if _retry_attempt == 0:
+            logger.warning("DeepSeek content JSON invalid; retrying once: finish_reason=%s", finish_reason or "unknown")
+            return generate_pin_content(
+                product_name=product_name, product_details=product_details,
+                image_url=image_url, _retry_attempt=1,
+            )
         if finish_reason == "length":
             logger.error(
                 "DeepSeek content truncated: finish_reason=length max_tokens=%s content_chars=%s",
@@ -167,6 +198,12 @@ def generate_pin_content(
     try:
         content = GeneratedContent.model_validate(parsed_content)
     except ValidationError as exc:
+        if _retry_attempt == 0:
+            logger.warning("DeepSeek content schema invalid; retrying once")
+            return generate_pin_content(
+                product_name=product_name, product_details=product_details,
+                image_url=image_url, _retry_attempt=1,
+            )
         logger.error(
             "DeepSeek content schema validation failure: finish_reason=%s exception_type=%s",
             finish_reason or "unknown",
