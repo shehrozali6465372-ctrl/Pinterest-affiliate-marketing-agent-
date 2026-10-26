@@ -131,6 +131,12 @@ def publish_product_end_to_end(
     except ContentGenerationError as exc:
         raise HTTPException(status_code=503, detail="Content generation failed before product persistence; retry with the same Idempotency-Key.") from exc
 
+    # Resolve the destination board before consuming the idempotency key in Neon.
+    # If Pinterest board listing/creation fails, no product row is left behind and
+    # the caller can safely retry with the same key.
+    token = credential["access_token"]
+    board_id = _ensure_board(token, payload.board_name, payload.board_description)
+
     try:
         product, content = create_product_with_content_version(
             product_name=payload.product_name,
@@ -148,9 +154,6 @@ def publish_product_end_to_end(
         )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. If the transaction rolled back, retry with the same Idempotency-Key; otherwise inspect the stored product before retrying.") from exc
-
-    token = credential["access_token"]
-    board_id = _ensure_board(token, payload.board_name, payload.board_description)
     attempt = begin_publish_attempt(
         product_id=product["id"], content_version_id=content["id"],
         board_id=board_id, account_id=payload.account_id,
