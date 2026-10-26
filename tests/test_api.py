@@ -778,3 +778,51 @@ def test_pinterest_read_only_diagnostic_handles_missing_credential(monkeypatch):
     assert response.status_code == 200
     assert response.json()["ok"] is False
     assert response.json()["error"] == "credential_not_connected"
+
+
+def test_end_to_end_board_failure_does_not_consume_idempotency_key(monkeypatch):
+    from types import SimpleNamespace
+    import app.workflow as workflow
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    monkeypatch.setattr(workflow, "get_pinterest_credential", lambda account_id: {"access_token": "test-token"})
+    monkeypatch.setattr(workflow, "generate_and_host_pin_image", lambda **kwargs: {
+        "image_url": "https://cdn.example.com/pin.png", "model": "test-image-model",
+    })
+    monkeypatch.setattr(workflow, "generate_pin_content", lambda **kwargs: (
+        SimpleNamespace(
+            pin_idea="Organized kitchen shelf", title="Kitchen Spice Rack Organization",
+            description="Affiliate disclosure: This post contains affiliate links.",
+            alt_text="A spice rack organizer.",
+        ),
+        "deepseek-test-model",
+    ))
+
+    persistence = []
+    monkeypatch.setattr(
+        workflow, "create_product_with_content_version",
+        lambda **kwargs: persistence.append(kwargs) or (
+            {"id": 101, "product_name": kwargs["product_name"]},
+            {"id": 202, "product_id": 101},
+        ),
+    )
+    monkeypatch.setattr(workflow, "_pinterest_request", lambda method, path, token, **kwargs: (
+        (200, {"id": "test-user"}) if path == "/user_account" else
+        (_ for _ in ()).throw(HTTPException(status_code=502, detail="board lookup failed"))
+    ))
+
+    payload = {
+        "product_name": "Copco 3-Tier Spice Rack Organizer",
+        "product_details": "Three-tier spice rack organizer.",
+        "affiliate_url": "https://example.com/affiliate",
+        "account_id": "pinterest:test-account",
+    }
+    headers = {
+        "X-API-Key": "private-test-api-key",
+        "Idempotency-Key": "retry-board-failure-123",
+    }
+    response = client.post("/workflow/publish-product", json=payload, headers=headers)
+
+    assert response.status_code == 502
+    assert persistence == []
