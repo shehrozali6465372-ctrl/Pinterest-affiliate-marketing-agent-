@@ -73,8 +73,12 @@ def generate_pin_content(
             },
         ],
         "response_format": {"type": "json_object"},
+        # Thinking is enabled by default on DeepSeek Flash. For this short,
+        # schema-constrained task, disable it so reasoning tokens cannot consume
+        # the output budget and truncate the required JSON object.
+        "thinking": {"type": "disabled"},
         "temperature": 0.4,
-        "max_tokens": 1200,
+        "max_tokens": 1800,
         "stream": False,
     }
     try:
@@ -88,13 +92,6 @@ def generate_pin_content(
                 json=payload,
             )
         response.raise_for_status()
-        body = response.json()
-        raw_content = body["choices"][0]["message"]["content"]
-        if not isinstance(raw_content, str):
-            raise ContentGenerationError("LLM returned an unsupported response format.")
-        content = GeneratedContent.model_validate(json.loads(raw_content))
-    except ContentGenerationError:
-        raise
     except httpx.HTTPStatusError as exc:
         # Log status and a bounded provider error code/message only; never log request headers,
         # API keys, prompt contents, or the full response body.
@@ -116,11 +113,66 @@ def generate_pin_content(
         raise ContentGenerationError(
             f"DeepSeek request rejected (HTTP {exc.response.status_code}; provider_code={provider_code})."
         ) from exc
-    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, ValidationError) as exc:
-        logger.error("DeepSeek generation/response parsing failure: exception_type=%s", type(exc).__name__)
-        raise ContentGenerationError(
-            "DeepSeek content generation failed or returned invalid content."
-        ) from exc
+    except httpx.HTTPError as exc:
+        logger.error("DeepSeek request transport failure: exception_type=%s", type(exc).__name__)
+        raise ContentGenerationError("DeepSeek content generation request failed.") from exc
+
+    try:
+        body = response.json()
+    except (ValueError, TypeError) as exc:
+        headers = getattr(response, "headers", {})
+        content_type = headers.get("content-type", "unknown") if hasattr(headers, "get") else "unknown"
+        response_bytes = len(getattr(response, "content", b"") or b"")
+        logger.error(
+            "DeepSeek API response JSON failure: status=%s content_type=%s response_bytes=%s",
+            response.status_code,
+            content_type,
+            response_bytes,
+        )
+        raise ContentGenerationError("DeepSeek API returned an invalid JSON response envelope.") from exc
+
+    choices = body.get("choices") if isinstance(body, dict) else None
+    choice = choices[0] if isinstance(choices, list) and choices else None
+    message = choice.get("message") if isinstance(choice, dict) else None
+    raw_content = message.get("content") if isinstance(message, dict) else None
+    finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+
+    if not isinstance(raw_content, str):
+        logger.error(
+            "DeepSeek content type failure: value_type=%s finish_reason=%s",
+            type(raw_content).__name__,
+            finish_reason or "unknown",
+        )
+        raise ContentGenerationError("DeepSeek returned an unsupported response format.")
+
+    try:
+        parsed_content = json.loads(raw_content)
+    except json.JSONDecodeError as exc:
+        if finish_reason == "length":
+            logger.error(
+                "DeepSeek content truncated: finish_reason=length max_tokens=%s content_chars=%s",
+                payload["max_tokens"],
+                len(raw_content),
+            )
+            raise ContentGenerationError(
+                "DeepSeek output reached its token limit before completing valid JSON; retry the request."
+            ) from exc
+        logger.error(
+            "DeepSeek model JSON parse failure: finish_reason=%s content_chars=%s",
+            finish_reason or "unknown",
+            len(raw_content),
+        )
+        raise ContentGenerationError("DeepSeek returned invalid JSON content.") from exc
+
+    try:
+        content = GeneratedContent.model_validate(parsed_content)
+    except ValidationError as exc:
+        logger.error(
+            "DeepSeek content schema validation failure: finish_reason=%s exception_type=%s",
+            finish_reason or "unknown",
+            type(exc).__name__,
+        )
+        raise ContentGenerationError("DeepSeek JSON did not match the required content schema.") from exc
 
     if AFFILIATE_DISCLOSURE.lower() not in content.description.lower():
         content.description = f"{content.description.rstrip()}\n\n{AFFILIATE_DISCLOSURE}"
