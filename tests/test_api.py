@@ -819,3 +819,60 @@ def test_pinterest_read_only_diagnostic_handles_missing_credential(monkeypatch):
     assert response.status_code == 200
     assert response.json()["ok"] is False
     assert response.json()["error"] == "credential_not_connected"
+
+
+
+def test_deepseek_invalid_json_retries_once_and_returns_real_valid_content(monkeypatch):
+    monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
+    monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def __init__(self, content):
+            self._content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"finish_reason": "stop", "message": {"content": self._content}}]}
+
+    responses = [
+        FakeResponse('{"pin_idea":"truncated'),
+        FakeResponse(json.dumps({
+            "pin_idea": "Arrange the spice rack beside a clear prep area.",
+            "title": "Organized Spice Rack",
+            "description": "A practical kitchen organization idea.",
+            "alt_text": "A wooden spice rack holding jars on a kitchen wall.",
+        })),
+    ]
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, headers, json):
+            calls.append(endpoint)
+            return responses.pop(0)
+
+    monkeypatch.setattr("app.content_generation.httpx.Client", FakeClient)
+    content, model = generate_pin_content(
+        product_name=VALID_PRODUCT["product_name"],
+        product_details=VALID_PRODUCT["product_details"],
+        image_url=VALID_PRODUCT["image_url"],
+    )
+
+    assert len(calls) == 2
+    assert model == "deepseek-flash"
+    assert content.title == "Organized Spice Rack"
+    assert AFFILIATE_DISCLOSURE in content.description
