@@ -3,8 +3,11 @@ Generated images are returned as data URLs and sent to Pinterest using image_bas
 """
 from __future__ import annotations
 import base64
+import logging
 import httpx
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 class ImageGenerationError(RuntimeError):
     """Raised when image generation fails or returns unusable data."""
@@ -21,6 +24,7 @@ def _safe_cloudflare_error(stage: str, response: httpx.Response) -> ImageGenerat
     except ValueError:
         pass
     suffix = f"; provider_codes={codes}" if codes else ""
+    logger.error("image_generation stage=cloudflare outcome=failed http_status=%s provider_codes=%s", response.status_code, codes)
     return ImageGenerationError(f"Cloudflare {stage} failed (HTTP {response.status_code}{suffix}).")
 
 def generate_and_host_pin_image(*, product_name: str, product_details: str) -> dict[str, str]:
@@ -67,8 +71,11 @@ def generate_and_host_pin_image(*, product_name: str, product_details: str) -> d
     except ImageGenerationError:
         raise
     except httpx.TimeoutException as exc:
+        logger.error("image_generation stage=cloudflare outcome=failed exception_type=%s", type(exc).__name__)
         raise ImageGenerationError("Cloudflare image generation timed out; check provider latency and retry budget.") from exc
     except httpx.HTTPError as exc:
+        logger.error("image_generation stage=cloudflare outcome=failed exception_type=%s", type(exc).__name__)
         raise ImageGenerationError(f"Cloudflare image generation request failed ({type(exc).__name__}).") from exc
     except (ValueError, KeyError, TypeError) as exc:
+        logger.error("image_generation stage=cloudflare_response outcome=failed exception_type=%s", type(exc).__name__)
         raise ImageGenerationError(f"Cloudflare returned an invalid image response ({type(exc).__name__}).") from exc
