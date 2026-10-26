@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,6 +19,7 @@ from app.database import (
 from app.media_generation import ImageGenerationError, generate_and_host_pin_image
 from app.pinterest import image_media_source
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflow", tags=["end-to-end"])
 
 def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
@@ -120,6 +122,7 @@ def publish_product_end_to_end(
             product_details=payload.product_details,
         )
     except ImageGenerationError as exc:
+        logger.error("workflow stage=image_generation outcome=failed detail=%s", str(exc)[:180])
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     try:
@@ -129,6 +132,7 @@ def publish_product_end_to_end(
             image_url=media["image_url"],
         )
     except ContentGenerationError as exc:
+        logger.error("workflow stage=content_generation outcome=failed detail=%s", str(exc)[:180])
         raise HTTPException(status_code=503, detail="Content generation failed before product persistence; retry with the same Idempotency-Key.") from exc
 
     try:
@@ -147,10 +151,18 @@ def publish_product_end_to_end(
             alt_text=generated.alt_text,
         )
     except Exception as exc:
+        logger.error("workflow stage=product_content_persistence outcome=failed exception_type=%s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. If the transaction rolled back, retry with the same Idempotency-Key; otherwise inspect the stored product before retrying.") from exc
 
     token = credential["access_token"]
-    board_id = _ensure_board(token, payload.board_name, payload.board_description)
+    try:
+        board_id = _ensure_board(token, payload.board_name, payload.board_description)
+    except HTTPException as exc:
+        logger.error("workflow stage=board_resolution outcome=failed http_status=%s", exc.status_code)
+        raise
+    except Exception as exc:
+        logger.error("workflow stage=board_resolution outcome=failed exception_type=%s", type(exc).__name__)
+        raise
     attempt = begin_publish_attempt(
         product_id=product["id"], content_version_id=content["id"],
         board_id=board_id, account_id=payload.account_id,
