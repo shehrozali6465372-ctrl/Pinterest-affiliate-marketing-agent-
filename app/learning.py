@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 import hmac
 import json
+import math
 
 import httpx
 import psycopg
@@ -39,7 +40,7 @@ def _number(value: object) -> float:
         number = float(value)
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("Pinterest analytics metric is missing or invalid") from exc
-    if not __import__("math").isfinite(number) or number < 0:
+    if not math.isfinite(number) or number < 0:
         raise ValueError("Pinterest analytics metric is outside the valid range")
     return number
 
