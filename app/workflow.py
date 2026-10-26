@@ -16,9 +16,9 @@ from app.database import (
     finish_publish_attempt, get_product_by_idempotency_key,
 )
 from app.media_generation import ImageGenerationError, generate_and_host_pin_image
+from app.pinterest import image_media_source
 
 router = APIRouter(prefix="/workflow", tags=["end-to-end"])
-
 
 def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
     if not settings.app_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
@@ -135,7 +135,7 @@ def publish_product_end_to_end(
         product, content = create_product_with_content_version(
             product_name=payload.product_name,
             product_details=payload.product_details,
-            image_url=media["image_url"],
+            image_url=None,
             affiliate_url=payload.affiliate_url,
             idempotency_key=idempotency_key,
             provider="deepseek",
@@ -161,14 +161,14 @@ def publish_product_end_to_end(
                 "published": True, "already_published": True,
                 "pin_id": attempt.get("pinterest_pin_id"), "board_id": board_id,
                 "product_id": product["id"], "content_version_id": content["id"],
-                "image_url": media["image_url"],
+                "image_source": "pinterest_base64" if media["image_url"].startswith("data:") else "image_url",
             }
         raise HTTPException(status_code=409, detail="A previous publish attempt is pending or uncertain. Check the Pinterest board before retrying.")
 
     body = {
         "board_id": board_id, "title": generated.title, "description": generated.description,
         "alt_text": generated.alt_text,
-        "media_source": {"source_type": "image_url", "url": media["image_url"], "is_standard": True},
+        "media_source": image_media_source(media["image_url"]),
         "link": payload.affiliate_url,
     }
     try:
@@ -202,7 +202,7 @@ def publish_product_end_to_end(
         "published": True, "already_published": False, "pin_id": saved["pinterest_pin_id"],
         "board_id": board_id, "product_id": product["id"], "content_version_id": content["id"],
         "title": generated.title, "description": generated.description, "alt_text": generated.alt_text,
-        "image_url": media["image_url"], "affiliate_url": payload.affiliate_url,
+        "image_source": "pinterest_base64" if media["image_url"].startswith("data:") else "image_url", "affiliate_url": payload.affiliate_url,
         "provider": "DeepSeek", "model": model_id, "image_model": media["model"],
         "http_status": saved["http_status"],
     }

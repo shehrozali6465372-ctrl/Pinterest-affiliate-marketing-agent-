@@ -161,7 +161,7 @@ def create_product_with_content_version(
     *,
     product_name: str,
     product_details: str,
-    image_url: str,
+    image_url: str | None,
     affiliate_url: str,
     idempotency_key: str,
     provider: str,

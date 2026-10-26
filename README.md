@@ -69,7 +69,7 @@ A new authenticated endpoint is available on branch `feature/e2e-production-work
 
 `POST /workflow/publish-product`
 
-It generates a product lifestyle image with Cloudflare Workers AI, uploads the image to Cloudflare Images, generates Pin Idea/title/description/alt text with DeepSeek, stores the product and content version, finds or creates the requested Pinterest board using the encrypted OAuth credential in Neon, publishes through Pinterest API v5, and records the returned Pin ID.
+It generates a product lifestyle image with Cloudflare Workers AI, converts the generated image to a data URL and sends it directly to Pinterest using image_base64 (no separate image-hosting service), then generates Pin Idea/title/description/alt text with DeepSeek, stores the product and content version, finds or creates the requested Pinterest board using the encrypted OAuth credential in Neon, publishes through Pinterest API v5, and records the returned Pin ID.
 
 Required server-side Render environment:
 - `APP_API_KEY`: required by the new workflow endpoint.
@@ -94,4 +94,8 @@ Example request (send `X-API-Key` securely; include a unique `Idempotency-Key` f
 
 Idempotency: `Idempotency-Key` is required (8–200 characters). A key already accepted for a product is rejected with HTTP 409 to prevent accidentally starting a duplicate workflow. Reuse the original key on retry. Because this endpoint fails closed with HTTP 409 rather than replaying a stored response, reconcile the existing product/publication record before taking any further action; never use a new key merely to bypass a 409.
 
-Important: this endpoint must be deployed only after confirming the database URL points at the intended Neon database and the encryption key matches the existing stored credential. The Cloudflare token needs both Workers AI and Images permissions. Cloudflare Images must return an accessible HTTPS variant URL. The endpoint has not yet been live-tested against the real Cloudflare, DeepSeek, or Pinterest providers; a successful response with a real `pin_id` is the acceptance criterion. Check the board and publication record before retrying any request with an uncertain outcome.
+Important: this endpoint must be deployed only after confirming the database URL points at the intended Neon database and the encryption key matches the existing stored credential. The Cloudflare token needs both Workers AI and Images permissions. Pinterest receives generated image bytes using its documented image_base64 media source; no public image URL is required for newly generated images. Note: this implementation currently stores the data URL in the existing image_url text field, increasing Neon storage and request sizes. The endpoint has not yet been live-tested against the real Cloudflare, DeepSeek, or Pinterest providers; a successful response with a real `pin_id` is the acceptance criterion. Check the board and publication record before retrying any request with an uncertain outcome.
+
+
+### Generated image storage
+Generated image bytes are kept in process memory only and sent to Pinterest through `media_source.source_type=image_base64`. The workflow stores product/content/publication metadata in Neon, not the Base64 image payload. The legacy `products.image_url` column remains nullable for compatibility with older product records; new workflow-created products leave it NULL. This avoids Base64 bloat in PostgreSQL and API responses and removes the Cloudflare Images hosting dependency. Pinterest's `image_base64` source is documented in the official [Create Boards and Pins API](https://developers.pinterest.com/docs/work-with-organic-content-and-users/create-boards-and-pins/).
