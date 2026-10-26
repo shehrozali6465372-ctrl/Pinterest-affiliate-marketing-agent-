@@ -781,6 +781,7 @@ def test_pinterest_read_only_diagnostic_handles_missing_credential(monkeypatch):
 
 
 def test_end_to_end_board_failure_does_not_consume_idempotency_key(monkeypatch):
+    from fastapi import HTTPException
     from types import SimpleNamespace
     import app.workflow as workflow
 
