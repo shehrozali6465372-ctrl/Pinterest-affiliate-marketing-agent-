@@ -142,10 +142,11 @@ class DiagnosticRunInput(BaseModel):
 
 @router.post("/run", dependencies=[Depends(_require_api_key)])
 def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
-    """Verify live dependencies. Image test uploads one public Cloudflare image and may incur provider usage."""
+    """Verify live dependencies without hosting an image or publishing a Pin; provider usage may be billable."""
     from app.database import connection
     from app.credential_vault import get_pinterest_credential
     from app.media_generation import ImageGenerationError, generate_and_host_pin_image
+    from app.pinterest import image_media_source
     from app.content_generation import generate_pin_content
 
     checks: dict[str, object] = {}
@@ -182,22 +183,24 @@ def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
     if prerequisites_ok:
         try:
             media = generate_and_host_pin_image(product_name=payload.product_name, product_details=payload.product_details)
-            checks["cloudflare_image_generation_and_upload"] = {
-                "ok": bool(media.get("image_url")),
+            media_source = image_media_source(media["image_url"])
+            checks["cloudflare_image_generation"] = {
+                "ok": bool(media.get("image_url")) and media_source.get("source_type") == "image_base64",
                 "model": media.get("model"),
-                "uploaded": True,
-                "image_id_returned": bool(media.get("image_id")),
+                "media_source_type": media_source.get("source_type"),
+                "image_bytes_persisted": False,
+                "uploaded_to_cloudflare_images": False,
             }
-            if not media.get("image_url"):
+            if not checks["cloudflare_image_generation"]["ok"]:
                 overall_ok = False
         except ImageGenerationError as exc:
-            checks["cloudflare_image_generation_and_upload"] = {"ok": False, "error": str(exc)[:180]}
+            checks["cloudflare_image_generation"] = {"ok": False, "error": str(exc)[:180]}
             overall_ok = False
         except Exception:
-            checks["cloudflare_image_generation_and_upload"] = {"ok": False, "error": "image_generation_or_upload_failed"}
+            checks["cloudflare_image_generation"] = {"ok": False, "error": "image_generation_or_media_validation_failed"}
             overall_ok = False
     else:
-        checks["cloudflare_image_generation_and_upload"] = {
+        checks["cloudflare_image_generation"] = {
             "ok": False, "skipped": True, "error": "database_or_pinterest_check_failed",
         }
 
@@ -230,8 +233,9 @@ def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
             "pinterest_pin_created": False,
             "pinterest_board_created": False,
             "product_persisted": False,
-            "cloudflare_test_image_uploaded": bool(media),
-            "provider_usage_may_be_billable": True,
+            "cloudflare_test_image_uploaded": False,
+            "generated_image_persisted": False,
+            "provider_usage_may_be_billable": bool(prerequisites_ok),
         },
         "secrets_returned": False,
     }
