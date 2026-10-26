@@ -827,3 +827,65 @@ def test_end_to_end_board_failure_does_not_consume_idempotency_key(monkeypatch):
 
     assert response.status_code == 502
     assert persistence == []
+
+
+def test_end_to_end_missing_pin_id_is_marked_uncertain(monkeypatch):
+    from types import SimpleNamespace
+    import app.workflow as workflow
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    monkeypatch.setattr(workflow, "get_pinterest_credential", lambda account_id: {"access_token": "test-token"})
+    monkeypatch.setattr(workflow, "generate_and_host_pin_image", lambda **kwargs: {
+        "image_url": "https://cdn.example.com/pin.png", "model": "test-image-model",
+    })
+    monkeypatch.setattr(workflow, "generate_pin_content", lambda **kwargs: (
+        SimpleNamespace(
+            pin_idea="Organized kitchen shelf", title="Kitchen Spice Rack Organization",
+            description="Affiliate disclosure: This post contains affiliate links.",
+            alt_text="A spice rack organizer.",
+        ),
+        "deepseek-test-model",
+    ))
+    monkeypatch.setattr(workflow, "create_product_with_content_version", lambda **kwargs: (
+        {"id": 101, "product_name": kwargs["product_name"]},
+        {"id": 202, "product_id": 101},
+    ))
+    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {
+        "blocked": False, "id": 303, "status": "pending",
+    })
+    finishes = []
+    monkeypatch.setattr(workflow, "finish_publish_attempt", lambda attempt_id, **kwargs: (
+        finishes.append({"attempt_id": attempt_id, **kwargs}) or {
+            "id": attempt_id, "status": kwargs["status"],
+            "pinterest_pin_id": kwargs.get("pinterest_pin_id"),
+        }
+    ))
+
+    def pinterest_request(method, path, token, *, body=None):
+        if path == "/user_account":
+            return 200, {"id": "test-user"}
+        if path == "/boards?page_size=100":
+            return 200, {"items": [{"id": "board-7", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
+        if path == "/pins":
+            return 201, {"created_at": "2026-10-26T00:00:00Z"}
+        raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
+
+    monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
+    response = client.post(
+        "/workflow/publish-product",
+        json={
+            "product_name": "Copco 3-Tier Spice Rack Organizer",
+            "product_details": "Three-tier spice rack organizer.",
+            "affiliate_url": "https://example.com/affiliate",
+            "account_id": "pinterest:test-account",
+        },
+        headers={
+            "X-API-Key": "private-test-api-key",
+            "Idempotency-Key": "missing-pin-id-uncertain-123",
+        },
+    )
+
+    assert response.status_code == 502
+    assert "outcome is uncertain" in response.json()["detail"]
+    assert any(item["status"] == "unknown" and item.get("error_code") == "missing_pin_id" for item in finishes)
