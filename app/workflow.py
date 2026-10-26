@@ -113,6 +113,19 @@ def publish_product_end_to_end(
             detail="Stored Pinterest credential could not be verified. Reconnect the account before publishing.",
         ) from exc
 
+    token = credential["access_token"]
+    # Resolve the destination before invoking billable providers or consuming the
+    # idempotency key. A board/API failure must not leave an orphaned product row
+    # that makes a safe retry impossible.
+    try:
+        board_id = _ensure_board(token, payload.board_name, payload.board_description)
+    except HTTPException as exc:
+        logger.error("workflow stage=board_resolution outcome=failed http_status=%s", exc.status_code)
+        raise
+    except Exception as exc:
+        logger.error("workflow stage=board_resolution outcome=failed exception_type=%s", type(exc).__name__)
+        raise
+
     # Generate both external-provider outputs before consuming the persisted key.
     # A transient DeepSeek failure therefore leaves no product row behind and the
     # same Idempotency-Key remains retryable.
@@ -154,15 +167,6 @@ def publish_product_end_to_end(
         logger.error("workflow stage=product_content_persistence outcome=failed exception_type=%s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. If the transaction rolled back, retry with the same Idempotency-Key; otherwise inspect the stored product before retrying.") from exc
 
-    token = credential["access_token"]
-    try:
-        board_id = _ensure_board(token, payload.board_name, payload.board_description)
-    except HTTPException as exc:
-        logger.error("workflow stage=board_resolution outcome=failed http_status=%s", exc.status_code)
-        raise
-    except Exception as exc:
-        logger.error("workflow stage=board_resolution outcome=failed exception_type=%s", type(exc).__name__)
-        raise
     attempt = begin_publish_attempt(
         product_id=product["id"], content_version_id=content["id"],
         board_id=board_id, account_id=payload.account_id,
