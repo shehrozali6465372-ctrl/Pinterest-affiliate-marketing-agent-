@@ -1,3 +1,5 @@
+[Reading 129 lines from start (total: 129 lines, 0 remaining)]
+
 """Encrypted at-rest storage for OAuth credentials received server-to-server."""
 from __future__ import annotations
 
@@ -127,3 +129,5 @@ def revoke_pinterest_credential(account_id: str) -> None:
     """Disable an account in the Agent database without exposing its token."""
     with connection() as conn:
         conn.execute("UPDATE pinterest_credentials SET status = 'revoked', updated_at = now() WHERE account_id = %s", (account_id,))
+
+[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
