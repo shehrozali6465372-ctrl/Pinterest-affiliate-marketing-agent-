@@ -28,6 +28,15 @@ def _cipher() -> AESGCM:
     return AESGCM(key)
 
 
+def token_encryption_key_is_valid() -> bool:
+    """Validate the configured AES-256-GCM key format without reading or exposing secret material."""
+    try:
+        _cipher()
+    except TokenEncryptionConfigurationError:
+        return False
+    return True
+
+
 def _encrypt(cipher: AESGCM, value: str, aad: bytes) -> bytes:
     nonce = os.urandom(12)
     return nonce + cipher.encrypt(nonce, value.encode("utf-8"), aad)
@@ -118,3 +127,5 @@ def revoke_pinterest_credential(account_id: str) -> None:
     """Disable an account in the Agent database without exposing its token."""
     with connection() as conn:
         conn.execute("UPDATE pinterest_credentials SET status = 'revoked', updated_at = now() WHERE account_id = %s", (account_id,))
+
+[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

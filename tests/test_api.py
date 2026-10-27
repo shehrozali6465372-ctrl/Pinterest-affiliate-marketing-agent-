@@ -34,9 +34,54 @@ def test_readiness_does_not_expose_secrets():
     body = response.json()
     assert "database_configured" in body
     assert "pinterest_configured" in body
+    assert "pinterest_legacy_direct_configured" in body
+    assert "pinterest_account_workflow_configured" in body
+    assert "pinterest_token_encryption_key_valid" in body
+    assert "pinterest_credential_ingest_configured" in body
     assert "image_generation_configured" in body
     assert "llm_configured" in body
     assert "access_token" not in str(body).lower()
+
+
+def test_readiness_distinguishes_legacy_and_account_workflow(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_access_token", None)
+    monkeypatch.setattr(settings, "pinterest_board_id", None)
+    monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_key", "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=")
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "configured-ingest-key")
+
+    body = client.get("/readiness").json()
+
+    assert body["pinterest_configured"] is False
+    assert body["pinterest_legacy_direct_configured"] is False
+    assert body["pinterest_account_workflow_configured"] is True
+    assert body["pinterest_token_encryption_key_valid"] is True
+    assert body["pinterest_credential_ingest_configured"] is True
+    assert "account connection" in body["note"]
+
+
+def test_readiness_account_publish_does_not_require_ingest_key(monkeypatch):
+    monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_key", "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=")
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", None)
+
+    body = client.get("/readiness").json()
+
+    assert body["pinterest_account_workflow_configured"] is True
+    assert body["pinterest_token_encryption_key_valid"] is True
+    assert body["pinterest_credential_ingest_configured"] is False
+
+
+def test_readiness_account_publish_requires_database_and_encryption(monkeypatch):
+    monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_key", None)
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "configured-ingest-key")
+
+    body = client.get("/readiness").json()
+
+    assert body["pinterest_account_workflow_configured"] is False
+    assert body["pinterest_token_encryption_key_valid"] is False
+    assert body["pinterest_credential_ingest_configured"] is True
 
 
 def test_operational_routes_require_api_key_when_configured(monkeypatch):
@@ -876,3 +921,159 @@ def test_deepseek_invalid_json_retries_once_and_returns_real_valid_content(monke
     assert model == "deepseek-flash"
     assert content.title == "Organized Spice Rack"
     assert AFFILIATE_DISCLOSURE in content.description
+def test_end_to_end_board_failure_allows_same_idempotency_key_retry(monkeypatch):
+    from fastapi import HTTPException
+    from types import SimpleNamespace
+    import app.workflow as workflow
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    monkeypatch.setattr(workflow, "get_pinterest_credential", lambda account_id: {"access_token": "test-token"})
+
+    provider_calls = []
+    persistence = []
+    board_lookups = []
+    monkeypatch.setattr(workflow, "generate_and_host_pin_image", lambda **kwargs: (
+        provider_calls.append("image") or {"image_url": "https://cdn.example.com/pin.png", "model": "test-image-model"}
+    ))
+    monkeypatch.setattr(workflow, "generate_pin_content", lambda **kwargs: (
+        provider_calls.append("content") or (
+            SimpleNamespace(
+                pin_idea="Organized kitchen shelf", title="Kitchen Spice Rack Organization",
+                description="Affiliate disclosure: This post contains affiliate links.",
+                alt_text="A spice rack organizer.",
+            ),
+            "deepseek-test-model",
+        )
+    ))
+    monkeypatch.setattr(
+        workflow, "create_product_with_content_version",
+        lambda **kwargs: persistence.append(kwargs) or (
+            {"id": 101, "product_name": kwargs["product_name"]},
+            {"id": 202, "product_id": 101},
+        ),
+    )
+    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {
+        "blocked": False, "id": 303, "status": "pending",
+    })
+    monkeypatch.setattr(workflow, "finish_publish_attempt", lambda attempt_id, **kwargs: {
+        "id": attempt_id, "status": kwargs["status"],
+        "pinterest_pin_id": kwargs.get("pinterest_pin_id"), "http_status": kwargs.get("http_status"),
+    })
+
+    def pinterest_request(method, path, token, *, body=None):
+        if path == "/user_account":
+            return 200, {"id": "test-user"}
+        if path == "/boards?page_size=100":
+            board_lookups.append(path)
+            if len(board_lookups) == 1:
+                raise HTTPException(status_code=502, detail="board lookup failed")
+            return 200, {"items": [{"id": "board-7", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
+        if path == "/pins":
+            return 201, {"id": "pin-created-after-retry", "created_at": "2026-10-27T00:00:00Z"}
+        raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
+
+    monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
+    payload = {
+        "product_name": "Copco 3-Tier Spice Rack Organizer",
+        "product_details": "Three-tier spice rack organizer.",
+        "affiliate_url": "https://example.com/affiliate?tag=home-20",
+        "account_id": "pinterest:test-account",
+    }
+    headers = {
+        "X-API-Key": "private-test-api-key",
+        "Idempotency-Key": "retry-board-failure-123",
+    }
+
+    first = client.post("/workflow/publish-product", json=payload, headers=headers)
+    assert first.status_code == 502
+    assert persistence == []
+    assert provider_calls == []
+    assert len(board_lookups) == 1
+
+    # The exact same idempotency key remains safe after a pre-persistence board failure.
+    retry = client.post("/workflow/publish-product", json=payload, headers=headers)
+    assert retry.status_code == 200, retry.text
+    body = retry.json()
+    assert body["published"] is True
+    assert body["pin_id"] == "pin-created-after-retry"
+    assert body["affiliate_url"] == payload["affiliate_url"]
+    assert len(board_lookups) == 2
+    assert len(persistence) == 1
+    assert provider_calls == ["image", "content"]
+
+
+def test_end_to_end_missing_pin_id_is_marked_uncertain(monkeypatch):
+    from types import SimpleNamespace
+    import app.workflow as workflow
+
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    monkeypatch.setattr(workflow, "get_pinterest_credential", lambda account_id: {"access_token": "test-token"})
+    monkeypatch.setattr(workflow, "generate_and_host_pin_image", lambda **kwargs: {
+        "image_url": "https://cdn.example.com/pin.png", "model": "test-image-model",
+    })
+    monkeypatch.setattr(workflow, "generate_pin_content", lambda **kwargs: (
+        SimpleNamespace(
+            pin_idea="Organized kitchen shelf", title="Kitchen Spice Rack Organization",
+            description="Affiliate disclosure: This post contains affiliate links.",
+            alt_text="A spice rack organizer.",
+        ),
+        "deepseek-test-model",
+    ))
+    monkeypatch.setattr(workflow, "create_product_with_content_version", lambda **kwargs: (
+        {"id": 101, "product_name": kwargs["product_name"]},
+        {"id": 202, "product_id": 101},
+    ))
+    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {
+        "blocked": False, "id": 303, "status": "pending",
+    })
+    finishes = []
+    monkeypatch.setattr(workflow, "finish_publish_attempt", lambda attempt_id, **kwargs: (
+        finishes.append({"attempt_id": attempt_id, **kwargs}) or {
+            "id": attempt_id, "status": kwargs["status"],
+            "pinterest_pin_id": kwargs.get("pinterest_pin_id"),
+        }
+    ))
+
+    def pinterest_request(method, path, token, *, body=None):
+        if path == "/user_account":
+            return 200, {"id": "test-user"}
+        if path == "/boards?page_size=100":
+            return 200, {"items": [{"id": "board-7", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
+        if path == "/pins":
+            return 201, {"created_at": "2026-10-26T00:00:00Z"}
+        raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
+
+    monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
+    response = client.post(
+        "/workflow/publish-product",
+        json={
+            "product_name": "Copco 3-Tier Spice Rack Organizer",
+            "product_details": "Three-tier spice rack organizer.",
+            "affiliate_url": "https://example.com/affiliate",
+            "account_id": "pinterest:test-account",
+        },
+        headers={
+            "X-API-Key": "private-test-api-key",
+            "Idempotency-Key": "missing-pin-id-uncertain-123",
+        },
+    )
+
+    assert response.status_code == 502
+    assert "outcome is uncertain" in response.json()["detail"]
+    assert any(item["status"] == "unknown" and item.get("error_code") == "missing_pin_id" for item in finishes)
+
+
+
+def test_readiness_rejects_present_but_invalid_encryption_key(monkeypatch):
+    monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_key", "present-but-not-valid-base64")
+
+    body = client.get("/readiness").json()
+
+    assert body["pinterest_token_encryption_key_valid"] is False
+    assert body["pinterest_account_workflow_configured"] is False
+    assert "present-but-not-valid-base64" not in str(body)
+
+[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

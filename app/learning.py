@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 import hmac
 import json
+import math
 
 import httpx
 import psycopg
@@ -30,12 +31,18 @@ class LearningRequest(BaseModel):
 
 
 def _number(value: object) -> float:
+    """Parse an explicitly returned metric; never turn missing/invalid data into fake zeroes."""
     if isinstance(value, dict):
-        value = value.get("value", value.get("count", 0))
+        value = value.get("value", value.get("count"))
+    if value is None or isinstance(value, bool):
+        raise ValueError("Pinterest analytics metric is missing or invalid")
     try:
-        return max(0.0, float(value))
-    except (TypeError, ValueError):
-        return 0.0
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Pinterest analytics metric is missing or invalid") from exc
+    if not math.isfinite(number) or number < 0:
+        raise ValueError("Pinterest analytics metric is outside the valid range")
+    return number
 
 
 @router.post("/run", dependencies=[Depends(_require_api_key)])
@@ -110,13 +117,18 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                 body = response.json()
                 raw = body.get("all", body) if isinstance(body, dict) else {}
                 metrics: dict[str, float] = {}
+                if not isinstance(raw, dict):
+                    raise ValueError("Pinterest analytics response has an unexpected shape")
                 for metric in METRICS:
-                    value = raw.get(metric, raw.get(metric.lower(), 0)) if isinstance(raw, dict) else 0
+                    value = raw.get(metric, raw.get(metric.lower()))
+                    if value is None:
+                        raise ValueError("Pinterest analytics response omitted a requested metric")
                     # Pinterest PinAnalyticsResponse nests period totals in summary_metrics.
                     if isinstance(value, dict):
                         summary = value.get("summary_metrics")
-                        if isinstance(summary, dict):
-                            value = summary.get(metric.lower(), summary.get(metric, 0))
+                        if not isinstance(summary, dict):
+                            raise ValueError("Pinterest analytics response omitted summary metrics")
+                        value = summary.get(metric.lower(), summary.get(metric))
                     metrics[metric.lower()] = _number(value)
 
                 with connection() as conn:
@@ -167,3 +179,5 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
         "model_trained": False,
         "note": "Uses live Pinterest API responses only. Predictive ML remains deferred until sufficient longitudinal data is available.",
     }
+
+[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

@@ -83,3 +83,43 @@ def test_learning_loop_parses_documented_pinterest_summary_metrics(monkeypatch):
     assert result["pin_results"][0]["outbound_click_rate"] == 0.05
     assert len(writes) == 1
     assert result["model_trained"] is False
+
+
+def test_missing_requested_metric_is_not_persisted(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    monkeypatch.setattr(learning, "get_pinterest_credential", lambda account_id: {"access_token": "unit-test"})
+    writes = []
+
+    class Conn:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, query, params=None):
+            if "SELECT id AS publication_id" in query:
+                return type("Rows", (), {"fetchall": lambda self: [{
+                    "publication_id": 7, "product_id": 2, "content_version_id": 3,
+                    "pinterest_pin_id": "pin-incomplete",
+                }]})()
+            writes.append(query)
+            return type("Result", (), {})()
+
+    class Response:
+        is_success = True
+        status_code = 200
+        def json(self):
+            return {"IMPRESSION": {"summary_metrics": {"impression": 100}}}
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def get(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(database, "connection", lambda: Conn())
+    monkeypatch.setattr(learning.httpx, "Client", Client)
+    result = learning.run_learning_loop(learning.LearningRequest(account_id="pinterest:account-a"))
+    assert result["ok"] is False
+    assert result["snapshots_saved"] == 0
+    assert result["pin_results"][0]["ok"] is False
+    assert writes == []
+
+[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
