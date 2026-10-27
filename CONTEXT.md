@@ -44,7 +44,7 @@ Stack: FastAPI, Render, Neon PostgreSQL, Pinterest API, Cloudflare Workers AI / 
 - Verified GitHub Actions for PR #15 latest head `c121376e4d8adf58d4a22078352ec1a04e0008dd`: Python tests run #35 and Python CI #120 both passed at 2026-10-26 10:31:49Z. Earlier transient failure on intermediate commit `c1be0ea...` was superseded by passing latest runs.
 - Those PR #15 GitHub CI results validate the PR head only; a local integration against the currently deployed `main` was separately conflict-resolved and tested on Debian.
 - No new Pin or board was created, no public image was uploaded, and no production configuration was changed during subsequent validation.
-- PB-01 is locally integrated with recovery tests but not merged/deployed. Current Render deployment remains `b93edff0ef8fdbc9d21f5b32cc36a89c22e3632f`; PB-03 through PB-07 changes below remain local until the approved GitHub release path is restored.
+- Historical note at time of writing: PB-01/PB-03 through PB-07 changes were still local and Render ran `b93edff...`. This was superseded by the Release status update appended below.
 - PR: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/15
 
 
@@ -86,3 +86,25 @@ Stack: FastAPI, Render, Neon PostgreSQL, Pinterest API, Cloudflare Workers AI / 
 - PB-04 Hub integration test is added in `/root/modern-living-hub/server/test-pinterest-agent-handoff.mjs`. It mocks Pinterest and the Agent and tests identity mapping, authenticated credential ingestion, expiry fields, stored-confirmation requirement, one-time handoff and account lookup. It passes. Hub `npm ci` now works after fixing the lockfile and upgrading multer/transitive packages; `npm audit` reports 0 vulnerabilities. Hub credential-security CI is locally updated to run this test. No real OAuth authorization was initiated.
 - PB-06 live analytics snapshot and PB-05 real refresh lifecycle are still unverified against production; PB-07 production fault recovery is locally covered but not live fault-injected. No new Pin, public image, production DB mutation, Render variable change, or deployment occurred during this continuation.
 - Release blocker: GitHub CLI on the new device is unauthenticated; GitHub connector branch-write was safety-blocked earlier, and PR #15 merge conflicts. Do not bypass that control. Render still runs the old commit.
+
+
+## Release status update — 2026-10-27 (supersedes earlier deployment notes)
+
+### Merged and deployed
+- Agent PR #21: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/21 — merged to `main` as `ed56c0300922684ed4d2ca65f80d76dcdd4fe63f`.
+- Agent GitHub Actions on the merged commit: Python CI passed; the PR-head Python tests also passed. Local integrated suite was 65 passed, 1 Starlette/httpx deprecation warning.
+- Render Agent deployment `dep-dbg5sasipgvc73ek69c0` is `live` at SHA `ed56c0300922684ed4d2ca65f80d76dcdd4fe63f`. Public `/health` returned HTTP 200. `/readiness` returned HTTP 401 without its required API key, as expected.
+- Hub PR #6: https://github.com/shehrozali6465372-ctrl/modern-living-hub/pull/6 — merged to `main` as `42b8b50f666e63c207f34b769cef32da022f2239`.
+- Hub credential-security workflow on that exact main SHA passed, including `npm ci`, `npm audit --audit-level=moderate`, syntax checks, mocked OAuth handoff tests, and credential-custody assertions.
+- Render Hub deployment `dep-dbg5rno473hc73fdo380` is `live` at SHA `42b8b50f666e63c207f34b769cef32da022f2239`. `https://modern-living-hub.onrender.com/api/health` returned HTTP 200 with Agent, Pinterest client ID, and redirect URI configuration reported present. `/auth/pinterest` returns a 302 redirect to Pinterest OAuth. The real user authorization has not been completed.
+- Production frontend `https://modernlivinghub.vercel.app/` and `/pinterest.html` return HTTP 200; the live Pinterest page points to the Render Hub backend.
+- PB-01 PR #15 was closed as superseded by merged PR #21. No extra Pin was created during release/deployment verification.
+
+### Live verification still required
+- Neon currently has 1 connected Pinterest credential, 1 confirmed published Pin, and 0 rows in `pin_analytics_snapshots`. A real analytics snapshot is not yet verified.
+- The protected `/learning-loop/run` route requires `X-API-Key`. That key is not available in the currently connected Debian shell; the earlier device containing the safe authenticated diagnostic setup is offline. Do not paste any API key or Pinterest tokens into chat. Reconnect that device or restore approved local secret access, then run the protected analytics request and verify the resulting Neon snapshot.
+- PB-04 still needs a human to complete Pinterest login/consent in a browser, then verify the Agent confirms encrypted credential storage and account lookup in Neon. The CI handoff test is mocked and is not evidence of a real OAuth grant.
+- PB-05 real provider refresh is not exercised because existing access/refresh credentials have not reached expiry. PB-07 production fault injection was intentionally not performed to avoid disrupting live service; automated regression coverage passed.
+- Vercel's private deployment API requested team authorization. Public frontend routes are reachable; direct Vercel deployment metadata can be rechecked after team access is approved.
+
+No token values, API keys, client secrets, encryption keys, or credential-ingest secret values are stored in this report.
