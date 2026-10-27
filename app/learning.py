@@ -122,14 +122,17 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                 if not isinstance(raw, dict):
                     raise ValueError("Pinterest analytics response has an unexpected shape")
 
-                # Support both top-level summary_metrics and per-metric wrappers.
+                # Support top-level summary_metrics and per-metric wrappers.
+                # Pinterest's PinAnalyticsResponse normally places period totals in
+                # raw['summary_metrics']; some responses expose per-metric wrappers.
                 summary = raw.get("summary_metrics")
                 if summary is not None and not isinstance(summary, dict):
                     raise ValueError("Pinterest analytics summary_metrics has an unexpected shape")
                 metrics: dict[str, float] = {}
                 for metric in METRICS:
                     if isinstance(summary, dict):
-                        # An omitted metric inside a valid summary is treated as zero.
+                        # Pinterest may omit metrics with no returned data; a valid
+                        # summary object with an absent requested metric means zero.
                         value = summary.get(metric, summary.get(metric.lower(), 0))
                     else:
                         value = raw.get(metric, raw.get(metric.lower()))
