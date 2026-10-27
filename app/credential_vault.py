@@ -28,6 +28,15 @@ def _cipher() -> AESGCM:
     return AESGCM(key)
 
 
+def token_encryption_key_is_valid() -> bool:
+    """Validate the configured AES-256-GCM key format without reading or exposing secret material."""
+    try:
+        _cipher()
+    except TokenEncryptionConfigurationError:
+        return False
+    return True
+
+
 def _encrypt(cipher: AESGCM, value: str, aad: bytes) -> bytes:
     nonce = os.urandom(12)
     return nonce + cipher.encrypt(nonce, value.encode("utf-8"), aad)

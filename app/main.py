@@ -109,14 +109,29 @@ def health() -> dict[str, str]:
 
 @app.get("/readiness", dependencies=[Depends(require_api_key)])
 def readiness() -> dict[str, object]:
+    legacy_pinterest_configured = bool(
+        settings.pinterest_access_token and settings.pinterest_board_id
+    )
+    from app.credential_vault import token_encryption_key_is_valid
+
+    encryption_key_valid = token_encryption_key_is_valid()
+    account_workflow_configured = bool(settings.database_url and encryption_key_valid)
+    credential_ingest_configured = bool(settings.pinterest_credential_ingest_key)
     return {
         "database_configured": bool(settings.database_url),
-        "pinterest_configured": bool(settings.pinterest_access_token and settings.pinterest_board_id),
+        # Backwards-compatible field: this refers only to the legacy direct-token publish route.
+        "pinterest_configured": legacy_pinterest_configured,
+        "pinterest_legacy_direct_configured": legacy_pinterest_configured,
+        # Publishing from a stored OAuth credential needs DB + encryption; this does not prove account connection.
+        "pinterest_account_workflow_configured": account_workflow_configured,
+        "pinterest_token_encryption_key_valid": encryption_key_valid,
+        # Hub-to-agent OAuth credential ingestion is a separate service-to-service path.
+        "pinterest_credential_ingest_configured": credential_ingest_configured,
         "image_generation_configured": bool(settings.cloudflare_api_token and settings.cloudflare_account_id),
         "llm_configured": bool(settings.llm_api_key),
         "llm_model": settings.llm_model if settings.llm_api_key else None,
         "api_key_configured": bool(settings.app_api_key),
-        "note": "Configuration presence does not prove credentials, access, or permissions are valid.",
+        "note": "Configuration presence does not prove credentials, account connection, access, or permissions are valid.",
     }
 
 
@@ -254,6 +269,28 @@ def refresh_pinterest_credential(
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured correctly.") from None
     except Exception:
         raise HTTPException(status_code=503, detail="Pinterest refresh credential lookup failed.") from None
+
+    # Avoid sending a refresh token to Pinterest after its declared expiry.
+    # Null expiry remains supported for older stored credentials; malformed expiry fails closed.
+    stored_refresh_expiry = stored.get("refresh_token_expires_at")
+    if stored_refresh_expiry is not None:
+        try:
+            if not isinstance(stored_refresh_expiry, datetime):
+                stored_refresh_expiry = datetime.fromisoformat(
+                    str(stored_refresh_expiry).replace("Z", "+00:00")
+                )
+            if stored_refresh_expiry.tzinfo is None:
+                stored_refresh_expiry = stored_refresh_expiry.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(
+                status_code=503,
+                detail="Stored Pinterest refresh-token expiry is invalid; reconnect the account.",
+            ) from None
+        if stored_refresh_expiry <= datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=409,
+                detail="Stored Pinterest refresh token has expired; reconnect the account.",
+            )
 
     try:
         with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
