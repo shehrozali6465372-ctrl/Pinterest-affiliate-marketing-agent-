@@ -144,3 +144,9 @@ The following is the current source of truth for Model 1 blocker state. Older en
 - Overall release state: **AMBER / NO-GO for fully autonomous production** until the relevant gates have evidence-backed closure.
 
 [executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
+
+## PB-08 review decision — 2026-10-27 (latest user confirmation)
+
+- **PB-08 — CLOSED (review approved by user).** This status reflects the user's explicit confirmation that the PB-08 review is approved.
+- This approval is for the review gate only; it is **not** authorization to publish any additional Pin. Any new Pin still requires separate explicit approval.
+- Remaining active release items are PB-03, PB-04, PB-05, PB-06, PB-07, PB-10 and PB-13, with PB-03/PB-04/PB-05/PB-07/PB-10 partial and PB-06/PB-13 open. PB-12 remains deferred by design.
