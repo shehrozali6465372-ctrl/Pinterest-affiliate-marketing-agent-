@@ -47,3 +47,9 @@ Authority: this status section supersedes earlier PB closure claims in this file
 Close a blocker only after its specific live evidence is recorded. Keep PB-13 OPEN until the 503 root cause is evidence-backed and the current deployment passes a non-publishing DeepSeek generation test. Keep PB-06 OPEN until a real analytics snapshot is confirmed in Neon.
 
 [executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
+
+## PB-08 review decision — 2026-10-27
+
+- **PB-08 — CLOSED (review approved by user).** The user explicitly confirmed approval of the PB-08 review.
+- Scope: this closes the review gate only. It does not authorize a new Pinterest publication; separate explicit approval is still required.
+- The remaining unresolved items are PB-03, PB-04, PB-05, PB-06, PB-07, PB-10 and PB-13. PB-03/PB-04/PB-05/PB-07/PB-10 remain partial; PB-06 and PB-13 remain open. PB-12 is deferred by design.
