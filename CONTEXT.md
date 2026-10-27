@@ -110,17 +110,37 @@ Stack: FastAPI, Render, Neon PostgreSQL, Pinterest API, Cloudflare Workers AI / 
 No token values, API keys, client secrets, encryption keys, or credential-ingest secret values are stored in this report.
 
 
-## Authoritative status correction — 2026-10-27
+## Authoritative blocker correction — 2026-10-27 (supersedes earlier closure claims)
 
-This section supersedes any older conflicting blocker notes above.
+The following is the current source of truth for Model 1 blocker state. Older entries above are historical snapshots; if they conflict with this section, use this correction and `PB03-STATUS.md`.
 
-- **PB-03: CLOSED.** The readiness/configuration distinction and encryption-key validation fix is merged in Agent PR #21 (SHA ed56c0300922684ed4d2ca65f80d76dcdd4fe63f) and the release is documented in PR #22. Do not reopen PB-03 or repeat its fix unless new evidence shows a regression.
-- **Pinterest access/control and one successful real Pin publish: VERIFIED.** The approved Pin is https://www.pinterest.com/pin/1069323505300280780/ and the affiliate destination/tracking ID were checked. This proves the account's credential-based publishing path worked for that publish. Do not publish another Pin without separate explicit approval.
-- **PB-01: CLOSED in merged Agent PR #21.** Recovery behavior is included in deployed main; PR #15 was superseded.
-- **PB-02: CLOSED for the approved test Pin only.** No additional publish is authorized by that prior approval.
-- **PB-05: implementation safeguards merged; live refresh lifecycle remains unverified.** This is not a PB-03 blocker.
-- **PB-06: analytics code and fail-closed validation merged; a real production analytics snapshot remains unverified** (last recorded Neon snapshot count was 0). Keep this as a separate verification gate, not as a publishing blocker.
-- **PB-07: automated recovery coverage is present; production fault injection was intentionally not run.** Do not inject faults into production merely to close the checklist.
-- **PB-04: real Modern Living Hub OAuth consent/handoff remains a separate human verification gate** unless fresh production evidence proves it complete.
-- The active device's clean origin/main checkout passed **65 tests, 1 deprecation warning** on 2026-10-27. No Pin was published during that test run.
-- Do not claim all blockers are closed solely from the successful Pin. Close only the specific completed items above; keep unrelated OAuth/refresh/analytics gates accurately separated.
+### Current blocker status
+- **PB-03 — PARTIAL:** health checks are green, but the integrated readiness/account-workflow evidence is not complete enough to close the whole gate.
+- **PB-04 — PARTIAL:** one credential row exists in Neon; current Agent retrieval/decryption and end-to-end credential use still need proof.
+- **PB-05 — PARTIAL:** code-level expiry/rotation guards are covered, but live token refresh remains unverified.
+- **PB-06 — OPEN:** latest known Neon `pin_analytics_snapshots` count is 0; a real Learning Loop ingestion and persisted snapshot must be verified.
+- **PB-07 — PARTIAL:** automated recovery coverage exists; live/production recovery is not verified.
+- **PB-08 — HUMAN REVIEW PENDING:** human review of image and alt text/quality is required before any new publication.
+- **PB-10 — PARTIAL:** pool mitigation exists, but root cause and production-like recovery are not fully proven.
+- **PB-12 — DEFERRED BY DESIGN, NOT A CURRENT RELEASE BLOCKER:** predictive ML waits for sufficient longitudinal training data and a validated train/evaluate pipeline.
+- **PB-13 — OPEN:** DeepSeek content-generation 503 root cause is unresolved. A successful user-reported Pin does not prove the intermittent 503 issue is fixed. The latest session did not complete a fresh non-publishing DeepSeek smoke test because protected app credentials were unavailable in the connected shell.
+
+### Correct priority
+1. PB-13: diagnose the DeepSeek 503 from sanitized current-deployment logs, request duration, provider status/error category, and deployed SHA; then run an approved non-publishing generation test. Do not assume cold start without evidence.
+2. PB-06: real Pinterest analytics ingestion and Neon snapshot persistence.
+3. PB-04: existing stored credential retrieval/decryption and read-only API use.
+4. PB-05: safe live token-refresh verification.
+5. PB-07: recovery verification without risky production fault injection.
+6. PB-10: prove connection-pool root cause and recovery.
+7. PB-08: human quality review before any separately approved new Pin.
+8. PB-03: finish the integrated readiness/account-workflow evidence gap.
+
+### Latest known evidence and guardrails
+- Agent `/health` and Hub `/api/health` returned HTTP 200.
+- Neon latest known counts: 1 Pinterest credential row, 1 publication row, 0 analytics snapshots.
+- Render log search after 2026-10-27T12:02:00Z returned no matching DeepSeek/503/publish-product/error/traceback entries; this does not prove the 503 root cause is fixed.
+- The connected Debian shell lacked `APP_API_KEY`, so protected live diagnostics and the Learning Loop were not completed there. Restore access only through the authorized secure environment; never put secrets in chat or context files.
+- No new Pin was published by this update. **Never publish another Pin unless the user gives separate explicit approval.**
+- Overall release state: **AMBER / NO-GO for fully autonomous production** until the relevant gates have evidence-backed closure.
+
+[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
