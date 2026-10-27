@@ -95,6 +95,7 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
     with httpx.Client(timeout=httpx.Timeout(25.0, connect=8.0)) as client:
         for pin in pins:
             url = f"{settings.pinterest_api_base_url.rstrip('/')}/pins/{pin['pinterest_pin_id']}/analytics"
+            failure_stage = "pinterest_request"
             try:
                 response = client.get(
                     url,
@@ -111,9 +112,11 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                         "pin_id": pin["pinterest_pin_id"],
                         "ok": False,
                         "http_status": response.status_code,
+                        "failure_stage": "pinterest_http_error",
                     })
                     continue
 
+                failure_stage = "analytics_payload"
                 body = response.json()
                 raw = body.get("all", body) if isinstance(body, dict) else {}
                 metrics: dict[str, float] = {}
@@ -131,6 +134,7 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                         value = summary.get(metric.lower(), summary.get(metric))
                     metrics[metric.lower()] = _number(value)
 
+                failure_stage = "database_persistence"
                 with connection() as conn:
                     conn.execute(
                         """INSERT INTO pin_analytics_snapshots
@@ -150,12 +154,26 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                     "metrics": metrics,
                     "outbound_click_rate": round(metrics["outbound_click"] / impressions, 4) if impressions else None,
                 })
+            except httpx.TimeoutException:
+                failed += 1
+                results.append({
+                    "pin_id": pin["pinterest_pin_id"],
+                    "ok": False,
+                    "failure_stage": "pinterest_timeout",
+                })
+            except httpx.RequestError:
+                failed += 1
+                results.append({
+                    "pin_id": pin["pinterest_pin_id"],
+                    "ok": False,
+                    "failure_stage": "pinterest_transport_error",
+                })
             except Exception:
                 failed += 1
                 results.append({
                     "pin_id": pin["pinterest_pin_id"],
                     "ok": False,
-                    "error": "analytics_request_or_persistence_failed",
+                    "failure_stage": failure_stage,
                 })
 
     successful = [item for item in results if item.get("ok")]
