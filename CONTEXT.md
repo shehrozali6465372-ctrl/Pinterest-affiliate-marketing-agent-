@@ -108,3 +108,19 @@ Stack: FastAPI, Render, Neon PostgreSQL, Pinterest API, Cloudflare Workers AI / 
 - Vercel's private deployment API requested team authorization. Public frontend routes are reachable; direct Vercel deployment metadata can be rechecked after team access is approved.
 
 No token values, API keys, client secrets, encryption keys, or credential-ingest secret values are stored in this report.
+
+
+## Authoritative status correction — 2026-10-27
+
+This section supersedes any older conflicting blocker notes above.
+
+- **PB-03: CLOSED.** The readiness/configuration distinction and encryption-key validation fix is merged in Agent PR #21 (SHA ed56c0300922684ed4d2ca65f80d76dcdd4fe63f) and the release is documented in PR #22. Do not reopen PB-03 or repeat its fix unless new evidence shows a regression.
+- **Pinterest access/control and one successful real Pin publish: VERIFIED.** The approved Pin is https://www.pinterest.com/pin/1069323505300280780/ and the affiliate destination/tracking ID were checked. This proves the account's credential-based publishing path worked for that publish. Do not publish another Pin without separate explicit approval.
+- **PB-01: CLOSED in merged Agent PR #21.** Recovery behavior is included in deployed main; PR #15 was superseded.
+- **PB-02: CLOSED for the approved test Pin only.** No additional publish is authorized by that prior approval.
+- **PB-05: implementation safeguards merged; live refresh lifecycle remains unverified.** This is not a PB-03 blocker.
+- **PB-06: analytics code and fail-closed validation merged; a real production analytics snapshot remains unverified** (last recorded Neon snapshot count was 0). Keep this as a separate verification gate, not as a publishing blocker.
+- **PB-07: automated recovery coverage is present; production fault injection was intentionally not run.** Do not inject faults into production merely to close the checklist.
+- **PB-04: real Modern Living Hub OAuth consent/handoff remains a separate human verification gate** unless fresh production evidence proves it complete.
+- The active device's clean origin/main checkout passed **65 tests, 1 deprecation warning** on 2026-10-27. No Pin was published during that test run.
+- Do not claim all blockers are closed solely from the successful Pin. Close only the specific completed items above; keep unrelated OAuth/refresh/analytics gates accurately separated.

@@ -14,7 +14,7 @@ Target audience: USA. Niche: Home Decor & Kitchen.
 Do not add product capabilities outside this scope without explicit approval.
 
 ## Engineering status
-Product intake/persistence, versioned content history, DeepSeek Flash content generation, Cloudflare image generation, Pinterest v5 publishing, encrypted OAuth credential storage/refresh, and account-scoped Pinterest analytics ingestion are implemented as code and covered by CI tests. Real Neon connectivity, live DeepSeek/Cloudflare credentials and calls, OAuth refresh against Pinterest, production migration execution, and real Pinterest publishing have not been verified. Predictive ML remains intentionally deferred until sufficient real longitudinal data exists. No mock publishing, fake analytics, or pretend learning is allowed.
+Product intake/persistence, versioned content history, DeepSeek Flash content generation, Cloudflare image generation, Pinterest v5 publishing, encrypted OAuth credential storage/refresh, and account-scoped Pinterest analytics ingestion are implemented as code and covered by CI tests. A real Pinterest account authorization and one successful real Pin publish have been verified in the project history; broader repeatability, OAuth refresh lifecycle, production migration execution, and a persisted production analytics snapshot must be tracked as separate verification gates. Predictive ML remains intentionally deferred until sufficient real longitudinal data exists. No mock publishing, fake analytics, or pretend learning is allowed.
 
 ## Local setup
 1. Use Python 3.11 or newer.
@@ -99,3 +99,8 @@ Important: this endpoint must be deployed only after confirming the database URL
 
 ### Generated image storage
 Generated image bytes are kept in process memory only and sent to Pinterest through `media_source.source_type=image_base64`. The workflow stores product/content/publication metadata in Neon, not the Base64 image payload. The legacy `products.image_url` column remains nullable for compatibility with older product records; new workflow-created products leave it NULL. This avoids Base64 bloat in PostgreSQL and API responses and removes the Cloudflare Images hosting dependency. Pinterest's `image_base64` source is documented in the official [Create Boards and Pins API](https://developers.pinterest.com/docs/work-with-organic-content-and-users/create-boards-and-pins/).
+
+
+## Current verification note — 2026-10-27
+
+The earlier statement that real Pinterest publishing was wholly unverified is superseded: the project history records one approved real Pin published and verified at https://www.pinterest.com/pin/1069323505300280780/. Do not publish another Pin without separate explicit approval. PB-03 is closed by merged PR #21; do not reopen it. Real OAuth consent/handoff, real token-refresh lifecycle, and a persisted production analytics snapshot are separate gates and must not be conflated with the successful Pin.

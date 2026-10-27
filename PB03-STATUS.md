@@ -1,31 +1,27 @@
-# PB-03 / PB-01 / PB-05 / PB-06 / PB-07 release status
+# Model 1 blocker status — 2026-10-27
 
-**Current status: merged and deployed on 2026-10-27; real OAuth handoff and production analytics snapshot remain open verification gates.**
+## Closed
 
-## Release evidence
+- **PB-01 — CLOSED:** Idempotency/recovery changes are included in merged Agent PR #21 and deployed main. PR #15 was superseded.
+- **PB-02 — CLOSED for the specifically approved Pin:** Pinterest control and the real successful publish were verified. Pin: https://www.pinterest.com/pin/1069323505300280780/. Affiliate destination and tracking ID beautybloo0ff-20 were checked. This one-off approval does not authorize another publish.
+- **PB-03 — CLOSED:** Readiness now distinguishes legacy direct-token configuration from stored-OAuth workflow configuration and validates the AES-GCM encryption key format without exposing secret material. The fix is merged in PR #21 (SHA ed56c0300922684ed4d2ca65f80d76dcdd4fe63f) and release status was recorded in PR #22. Do not repeat PB-03 work unless a regression is found.
 
-- Agent PR #21: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/21 — merged as `ed56c0300922684ed4d2ca65f80d76dcdd4fe63f`.
-- GitHub Actions on the merged main SHA: Python CI **PASS**; Python tests on the PR head **PASS**. Local integrated test suite: **65 passed, 1 Starlette/httpx TestClient deprecation warning**. Compile and `git diff --check` passed.
-- Render Agent deployment `dep-dbg5sasipgvc73ek69c0`: **live**, SHA `ed56c0300922684ed4d2ca65f80d76dcdd4fe63f`.
-- Public `GET /health`: HTTP 200. Anonymous `GET /readiness`: HTTP 401, expected because this diagnostic endpoint requires `X-API-Key`.
-- Code includes PB-01 idempotency recovery, PB-03 separation of legacy/direct-token and stored-OAuth readiness, PB-05 refresh-expiry guards, PB-06 fail-closed metric validation, and PB-07 regression coverage for persistence/publish uncertainty.
-- PB-01 PR #15 was closed as superseded by PR #21; its board-before-persistence behavior and recovery cases are in the deployed main branch.
-- No new Pinterest Pin was created by the release or deployment verification.
+## Implemented / test-covered, but separate live verification remains
 
-## Production data check
+- **PB-04 — REAL OAuth handoff:** Hub PR #6 and mocked handoff tests are merged/deployed, but the last recorded status still requires a human Pinterest consent flow and verification of encrypted Neon storage/account lookup. Mocked tests alone do not prove real consent.
+- **PB-05 — Refresh lifecycle:** Expiry/malformed-expiry guards and refresh-token rotation/preservation tests are merged. A real provider refresh has not been forced because credentials were not near expiry. Do not risk a live account solely to force this test.
+- **PB-06 — Learning Loop:** Account-scoped analytics ingestion and fail-closed metric validation are implemented and tested. Last recorded production check found 0 rows in pin_analytics_snapshots; a real persisted snapshot is still unverified. This is not a PB-03 issue.
+- **PB-07 — Publish recovery:** Automated tests cover persistence failure and uncertain publish outcomes. Production fault injection was not run to avoid disrupting the live service.
 
-Read-only Neon query against `pinterest_affiliate` found:
-- Confirmed published Pin rows: **1**
-- Connected Pinterest credential rows: **1**
-- `pin_analytics_snapshots` rows: **0**
+## Current engineering baseline
 
-Therefore the real production analytics snapshot is **not yet verified**. This does not imply the analytics code is unimplemented; it means no live snapshot has been persisted/confirmed yet.
+- Repository: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-
+- Agent PR #21 merged to main; PR #22 documents release status.
+- Render Agent deployment was recorded live at SHA ed56c0300922684ed4d2ca65f80d76dcdd4fe63f; PR #22 documentation commit follows it on main, so verify current Render SHA before claiming it runs the latest docs commit.
+- A clean local checkout of current origin/main passed **65 tests, 1 Starlette/httpx deprecation warning** on 2026-10-27.
+- No new Pin was published during these verification steps.
+- Keep API keys, OAuth tokens, encryption keys, and credential-ingest secrets out of chat and documentation.
 
-## Remaining human / production gates
+## Next action
 
-1. **PB-04 real OAuth:** Hub PR #6 is merged and the backend is deployed. A human still needs to open `https://modern-living-hub.onrender.com/auth/pinterest`, sign in to Pinterest, and grant the requested access. After the callback, verify Hub confirms `stored === true`, Agent encrypted Neon storage, and account lookup. Do not paste tokens into chat.
-2. **PB-06 live snapshot:** `/learning-loop/run` is protected by `X-API-Key`. The key is not present in the currently connected Debian shell, and the older device that previously held the authenticated safe diagnostics setup is offline. Reconnect that device or restore authorized local secret access; never expose the key in chat. Then run the protected analytics request only after checking eligible Pinterest metrics and verify the resulting Neon row.
-3. **PB-05 refresh:** Automated tests cover expiry, rotation, and preservation when Pinterest omits a rotated refresh token. A live refresh was not forced because stored credentials are not near expiry.
-4. **PB-07:** Fault and ambiguous-publish recovery have automated coverage. No fault injection was run against production because it could disrupt the service.
-
-No credentials, token values, API keys, encryption keys, or ingest secrets are stored in this status file.
+Do not reopen PB-03. Continue with the next genuinely open verification item, prioritizing PB-04 only if the human is ready to complete Pinterest consent; otherwise proceed to safe read-only verification and PB-06 analytics prerequisites. Never publish a new Pin without separate explicit approval.
