@@ -120,4 +120,6 @@ def test_missing_requested_metric_is_not_persisted(monkeypatch):
     assert result["ok"] is False
     assert result["snapshots_saved"] == 0
     assert result["pin_results"][0]["ok"] is False
+    assert result["pin_results"][0]["failure_stage"] == "analytics_payload"
+    assert "private-token" not in str(result)
     assert writes == []
