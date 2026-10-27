@@ -121,5 +121,3 @@ def test_missing_requested_metric_is_not_persisted(monkeypatch):
     assert result["snapshots_saved"] == 0
     assert result["pin_results"][0]["ok"] is False
     assert writes == []
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

@@ -561,5 +561,3 @@ def publish(payload: PublishRequest) -> dict[str, object]:
 @app.post("/learning-loop", dependencies=[Depends(require_api_key)])
 def learning_loop_unavailable() -> None:
     raise HTTPException(status_code=501, detail="Learning Loop is not implemented. No analytics were ingested and no model was trained.")
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

@@ -228,5 +228,3 @@ def test_malformed_refresh_token_expiry_fails_closed(monkeypatch):
     assert "expiry is invalid" in response.json()["detail"]
     assert provider_calls == []
     assert "malformed-expiry-refresh-secret" not in response.text
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

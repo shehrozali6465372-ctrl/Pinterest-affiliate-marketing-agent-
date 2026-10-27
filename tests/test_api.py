@@ -1075,5 +1075,3 @@ def test_readiness_rejects_present_but_invalid_encryption_key(monkeypatch):
     assert body["pinterest_token_encryption_key_valid"] is False
     assert body["pinterest_account_workflow_configured"] is False
     assert "present-but-not-valid-base64" not in str(body)
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

@@ -179,5 +179,3 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
         "model_trained": False,
         "note": "Uses live Pinterest API responses only. Predictive ML remains deferred until sufficient longitudinal data is available.",
     }
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

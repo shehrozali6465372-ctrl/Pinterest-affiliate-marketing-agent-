@@ -58,5 +58,3 @@ def test_workflow_pinterest_5xx_is_normalized_to_gateway_error(monkeypatch):
 
     assert exc.value.status_code == 502
     assert "HTTP 503" in exc.value.detail
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

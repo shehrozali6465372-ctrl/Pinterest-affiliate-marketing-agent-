@@ -111,5 +111,3 @@ def test_ambiguous_pin_publish_marks_attempt_unknown_and_blocks_safe_retry(monke
 
     assert response.status_code == 502
     assert any(item.get("status") == "unknown" and item.get("error_code") == "pinterest_outcome_uncertain" for item in finished)
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]

@@ -29,5 +29,3 @@
 4. PB-05 real provider refresh and PB-06 a real persisted analytics snapshot remain unverified in production. PB-07 production fault behavior has automated local coverage but has not been fault-injected live.
 
 No access token, refresh token, API key, encryption key, or ingest secret is stored in this report.
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
