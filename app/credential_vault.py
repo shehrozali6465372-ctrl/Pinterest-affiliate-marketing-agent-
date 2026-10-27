@@ -1,5 +1,3 @@
-[Reading 129 lines from start (total: 129 lines, 0 remaining)]
-
 """Encrypted at-rest storage for OAuth credentials received server-to-server."""
 from __future__ import annotations
 

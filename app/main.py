@@ -1,5 +1,3 @@
-[Reading 563 lines from start (total: 563 lines, 0 remaining)]
-
 """Pinterest Affiliate Model 1 API.
 
 External integrations only report success after real operations complete.

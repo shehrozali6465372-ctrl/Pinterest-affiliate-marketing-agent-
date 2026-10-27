@@ -1,5 +1,3 @@
-[Reading 935 lines from start (total: 935 lines, 0 remaining)]
-
 import json
 from datetime import datetime, timezone
 

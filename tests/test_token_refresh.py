@@ -1,5 +1,3 @@
-[Reading 230 lines from start (total: 230 lines, 0 remaining)]
-
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
