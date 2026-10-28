@@ -1,0 +1,72 @@
+name: Safe production provider smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: safe-production-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  provider-smoke:
+    name: Verify live integrations without publishing
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      AGENT_BASE_URL: https://pinterest-affiliate-marketing-agent.onrender.com
+      APP_API_KEY: ${{ secrets.PINTEREST_AGENT_APP_API_KEY }}
+      PINTEREST_ACCOUNT_ID: ${{ vars.PINTEREST_ACCOUNT_ID || 'pinterest:1069323642682526567' }}
+    steps:
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APP_API_KEY" || { echo '::error::Missing PINTEREST_AGENT_APP_API_KEY secret.'; exit 1; }
+          [[ "$PINTEREST_ACCOUNT_ID" =~ ^pinterest:[A-Za-z0-9_-]+$ ]] || { echo '::error::Invalid Pinterest account ID format.'; exit 1; }
+
+      - name: Run authenticated, non-publishing provider diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --max-time 240 \
+            --request POST "$AGENT_BASE_URL/diagnostics/run" \
+            --header "X-API-Key: $APP_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data '{"account_id":"'"$PINTEREST_ACCOUNT_ID"'","product_name":"Production smoke test — kitchen organizer","product_details":"A practical kitchen organizer. Do not make unsupported product claims."}')"
+          python - "$response_file" "$status" <<'PY'
+          import json, sys
+          path, status = sys.argv[1], int(sys.argv[2])
+          try:
+              with open(path, encoding="utf-8") as f:
+                  body = json.load(f)
+          except Exception:
+              print(json.dumps({"http_status": status, "ok": False, "error": "non_json_response"}, separators=(",", ":")))
+              raise SystemExit(1)
+          checks = body.get("checks", {}) if isinstance(body, dict) else {}
+          summary = {
+              "http_status": status,
+              "ok": body.get("ok") is True and 200 <= status < 300,
+              "checks": {
+                  name: {k: v for k, v in item.items() if k in {"ok", "check", "http_status", "model", "media_source_type", "image_bytes_persisted", "uploaded_to_cloudflare_images", "title_returned", "description_returned", "alt_text_returned", "skipped", "error"}}
+                  for name, item in checks.items() if isinstance(item, dict)
+              },
+              "side_effects": {
+                  k: body.get("side_effects", {}).get(k)
+                  for k in ("pinterest_pin_created", "pinterest_board_created", "product_persisted", "cloudflare_test_image_uploaded", "generated_image_persisted", "provider_usage_may_be_billable")
+              } if isinstance(body, dict) else {},
+              "secrets_returned": body.get("secrets_returned") if isinstance(body, dict) else None,
+          }
+          print(json.dumps(summary, separators=(",", ":")))
+          if summary["ok"] is not True or any(v.get("ok") is not True for v in summary["checks"].values()):
+              raise SystemExit(1)
+          if summary["side_effects"].get("pinterest_pin_created") is not False or summary["side_effects"].get("pinterest_board_created") is not False:
+              raise SystemExit("Unsafe diagnostic side-effect contract.")
+          PY
