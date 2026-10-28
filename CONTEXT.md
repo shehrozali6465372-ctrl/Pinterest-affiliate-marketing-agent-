@@ -124,3 +124,18 @@ This section supersedes any older conflicting blocker notes above.
 - **PB-04: real Modern Living Hub OAuth consent/handoff remains a separate human verification gate** unless fresh production evidence proves it complete.
 - The active device's clean origin/main checkout passed **65 tests, 1 deprecation warning** on 2026-10-27. No Pin was published during that test run.
 - Do not claim all blockers are closed solely from the successful Pin. Close only the specific completed items above; keep unrelated OAuth/refresh/analytics gates accurately separated.
+
+## Production readiness continuation — 2026-10-28
+
+### Fresh verification
+- Active approved test device: Desktop Commander `bb54f029-ff20-4907-ad1f-8b963b1958c1`; agent repo local branch `fix/pb06-pinterest-analytics-shape` at `11d98768212812eda5e76c5b8cc592048f7fa2ff`.
+- Local full test suite on Python 3.11 / installed venv: **66 passed, 1 Starlette/httpx deprecation warning**.
+- Agent Render service `srv-dbe6psoae00c73c3nhgg`, branch `main`, current deployed commit `5c872aad029c93b1d967e7a1923eaa2c7dd9a678` and deploy `dep-dbgibuu1egvs73b0vclg` is LIVE. Public `/health` returns HTTP 200.
+- Neon project `dry-firefly-39925447` / database `pinterest_affiliate` was checked with read-only queries. Exactly one Pinterest credential row exists; access/refresh ciphertext are nonempty; identity is `pinterest:1069323642682526567` / `modernlivinghub6465372`; status connected. Token contents were not read.
+- Current counts: 1 encrypted credential, 1 successful publication record, 1 analytics snapshot (previous notes saying zero are stale and superseded). The latest observed credential update was `2026-10-28T00:32:36Z` and expiry was `2026-11-27T00:32:35Z`.
+- Modern Living Hub frontend now visibly lists real Pinterest boards after OAuth; user provided screenshot on 2026-10-28 confirming board names load. No new Pin or board was created during this verification.
+- Agent has the credential-based publishing route `/workflow/publish-product` with idempotency safeguards and real AI/media calls. It must not be invoked as a diagnostic because it publishes a real Pin and calls billable providers. The prior one-Pin approval does not authorize another publication.
+- Learning Loop parses real analytics and persists snapshots, but predictive ML is deferred until sufficient longitudinal data. The existing snapshot count of 1 shows ingestion has occurred at least once; confirm latest period/values before making performance claims.
+- Agent local branch name is not `main`; don't push it directly or assume local checkout mirrors deployed state. Keep all release changes on reviewed PR branches and require CI + Render deploy checks.
+- Remaining production hardening gates: verify real Cloudflare Images public URL path (current diagnostics intentionally confirms no upload), inspect and document secure credential/session retention, evaluate pagination limits on Pinterest boards/analytics, and ensure scheduled analytics/observability is wired before claiming autonomous operation. Keep real OAuth token refresh live test gated until expiry/controlled test; don't rotate or invalidate live credentials just for testing.
+
