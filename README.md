@@ -38,7 +38,7 @@ Set a strong random `APP_API_KEY` in Render environment variables before exposin
 - `GET /products/{product_id}/content`: returns version history for the product.
 - `POST /publish` with JSON `{"product_id": 123, "content_version_id": 456}`: publishes an existing content version using the Pinterest v5 API. The original product image URL and exact affiliate destination link are used. Success requires a returned Pin ID, and successful duplicate attempts are blocked.
 - `POST /products/{product_id}/content/{content_version_id}/publish`: version-specific publishing endpoint.
-- `POST /learning-loop`: intentionally returns 501 until real analytics ingestion and evaluation are implemented.
+- `POST /learning-loop/run`: protected, real account-scoped Pinterest analytics ingestion; persists snapshots and descriptive aggregates. It does not train predictive ML.\n- `POST /learning-loop` (legacy): returns 501; use `/learning-loop/run` for the real Learning Loop.
 
 A timed-out Pinterest request or ambiguous server error is recorded as uncertain; automatic retry is blocked. Check the Pinterest board before attempting a retry to avoid accidental duplicate Pins.
 
@@ -65,7 +65,7 @@ Use only server-side environment secrets in Render. Never commit API keys or tok
 
 ## End-to-end workflow (new, requires live verification)
 
-A new authenticated endpoint is available on branch `feature/e2e-production-workflow`:
+The authenticated endpoint is included in `main`:
 
 `POST /workflow/publish-product`
 
@@ -75,7 +75,7 @@ Required server-side Render environment:
 - `APP_API_KEY`: required by the new workflow endpoint.
 - `DATABASE_URL`: Neon database URL containing the existing credential vault and publication tables.
 - `PINTEREST_TOKEN_ENCRYPTION_KEY`: same base64-encoded 32-byte key used to encrypt the already-stored Pinterest credential.
-- `CLOUDFLARE_API_TOKEN`: token with Workers AI Run and Cloudflare Images Write permissions.
+- `CLOUDFLARE_API_TOKEN`: token with Workers AI Run permission. The current `image_base64` flow does not upload to Cloudflare Images.
 - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account that owns Workers AI and Images.
 - `LLM_API_KEY`: DeepSeek API key.
 - Optional: `CLOUDFLARE_IMAGE_MODEL` (default `@cf/black-forest-labs/flux-1-schnell`), `LLM_MODEL`, `LLM_BASE_URL`, `PINTEREST_API_BASE_URL`.
@@ -94,7 +94,7 @@ Example request (send `X-API-Key` securely; include a unique `Idempotency-Key` f
 
 Idempotency: `Idempotency-Key` is required (8–200 characters). A key already accepted for a product is rejected with HTTP 409 to prevent accidentally starting a duplicate workflow. Reuse the original key on retry. Because this endpoint fails closed with HTTP 409 rather than replaying a stored response, reconcile the existing product/publication record before taking any further action; never use a new key merely to bypass a 409.
 
-Important: this endpoint must be deployed only after confirming the database URL points at the intended Neon database and the encryption key matches the existing stored credential. The Cloudflare token needs both Workers AI and Images permissions. Pinterest receives generated image bytes using its documented image_base64 media source; no public image URL is required for newly generated images. Note: this implementation currently stores the data URL in the existing image_url text field, increasing Neon storage and request sizes. The endpoint has not yet been live-tested against the real Cloudflare, DeepSeek, or Pinterest providers; a successful response with a real `pin_id` is the acceptance criterion. Check the board and publication record before retrying any request with an uncertain outcome.
+Important: keep the `DATABASE_URL` pointed at the intended Neon database and keep `PINTEREST_TOKEN_ENCRYPTION_KEY` identical to the key used for existing credentials. Pinterest receives generated image bytes using its documented `image_base64` media source; no Cloudflare Images upload or public image URL is required. New workflow product rows store `image_url = NULL` to avoid persisting Base64 image payloads. Provider diagnostics have verified the live database and Pinterest account read, DeepSeek model access, and Cloudflare Workers AI API access; a prior real diagnostic also exercised image/content generation. The complete `/workflow/publish-product` route must still only be considered live-verified after a user-approved new publication returns a real Pin ID and the publication record is checked. Never call it as a diagnostic: it publishes a real Pin and provider usage may be billable. Check the board and publication record before retrying any request with an uncertain outcome.
 
 
 ### Generated image storage

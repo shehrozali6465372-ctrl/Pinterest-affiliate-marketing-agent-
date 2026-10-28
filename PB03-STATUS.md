@@ -16,7 +16,7 @@ Authority: this status section supersedes earlier PB closure claims in this file
 | PB-05 | **PARTIAL** | Expiry/rotation guards have automated coverage, but a live provider refresh lifecycle has not been proven. Verify refresh safely when a valid controlled test is possible; do not expose tokens or force risky changes. |
 | PB-06 | **OPEN** | Latest known Neon count is 0 rows in `pin_analytics_snapshots`. Run the protected Learning Loop with authorized secret access, then verify a real snapshot against eligible Pinterest metrics. |
 | PB-07 | **PARTIAL** | Automated recovery/uncertain-publish tests exist, but production/live recovery has not been verified. Do not fault-inject into production or blindly retry ambiguous publishing requests. |
-| PB-08 | **HUMAN REVIEW PENDING** | A human must review the image and generated alt text/quality before any new publication. |
+| PB-08 | **CLOSED — REVIEW GATE ONLY** | User approved the review gate. Per-Pin quality checks and separate explicit approval are still required before any new publication. |
 | PB-10 | **PARTIAL** | Pool-checkout validation/mitigation is deployed, but the connection-pool root cause and production-like recovery are not fully proven. Verify with safe evidence before closure. |
 | PB-12 | **DEFERRED BY DESIGN — NOT A CURRENT RELEASE BLOCKER** | Predictive ML training is deferred until enough longitudinal analytics data and a validated train/evaluate pipeline exist. Do not represent descriptive analytics as trained ML. |
 | PB-13 | **OPEN — DEEPSEEK 503 ROOT CAUSE UNRESOLVED** | Historical content-generation 503/JSON/schema failures were observed. A user-reported successful Pin does not prove the intermittent 503 root cause is fixed. A separate fresh non-publishing smoke test was not completed in the latest session because protected app credentials were unavailable in the connected shell. Diagnose from sanitized current-deployment logs and request/provider timing, then run an approved non-publishing generation test. Do not publish a Pin as a test. |
@@ -29,7 +29,7 @@ Authority: this status section supersedes earlier PB closure claims in this file
 4. **PB-05:** verify live token-refresh lifecycle safely.
 5. **PB-07:** verify recovery behavior without risky production fault injection.
 6. **PB-10:** establish connection-pool root cause and recovery evidence.
-7. **PB-08:** human quality review before any separately approved new Pin.
+7. **PB-08:** review gate closed; keep per-Pin quality checks and separate explicit publication approval.
 8. **PB-03:** close the remaining integrated readiness/account-workflow evidence gap.
 
 ## Latest known evidence (2026-10-27)

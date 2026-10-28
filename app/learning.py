@@ -95,6 +95,7 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
     with httpx.Client(timeout=httpx.Timeout(25.0, connect=8.0)) as client:
         for pin in pins:
             url = f"{settings.pinterest_api_base_url.rstrip('/')}/pins/{pin['pinterest_pin_id']}/analytics"
+            failure_stage = "pinterest_request"
             try:
                 response = client.get(
                     url,
@@ -111,26 +112,37 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                         "pin_id": pin["pinterest_pin_id"],
                         "ok": False,
                         "http_status": response.status_code,
+                        "failure_stage": "pinterest_http_error",
                     })
                     continue
 
+                failure_stage = "analytics_payload"
                 body = response.json()
                 raw = body.get("all", body) if isinstance(body, dict) else {}
-                metrics: dict[str, float] = {}
                 if not isinstance(raw, dict):
                     raise ValueError("Pinterest analytics response has an unexpected shape")
+
+                # Support both top-level summary_metrics and per-metric wrappers.
+                summary = raw.get("summary_metrics")
+                if summary is not None and not isinstance(summary, dict):
+                    raise ValueError("Pinterest analytics summary_metrics has an unexpected shape")
+                metrics: dict[str, float] = {}
                 for metric in METRICS:
-                    value = raw.get(metric, raw.get(metric.lower()))
-                    if value is None:
-                        raise ValueError("Pinterest analytics response omitted a requested metric")
-                    # Pinterest PinAnalyticsResponse nests period totals in summary_metrics.
-                    if isinstance(value, dict):
-                        summary = value.get("summary_metrics")
-                        if not isinstance(summary, dict):
-                            raise ValueError("Pinterest analytics response omitted summary metrics")
-                        value = summary.get(metric.lower(), summary.get(metric))
+                    if isinstance(summary, dict):
+                        # An omitted metric inside a valid summary is treated as zero.
+                        value = summary.get(metric, summary.get(metric.lower(), 0))
+                    else:
+                        value = raw.get(metric, raw.get(metric.lower()))
+                        if isinstance(value, dict):
+                            nested_summary = value.get("summary_metrics")
+                            if not isinstance(nested_summary, dict):
+                                raise ValueError("Pinterest analytics response omitted summary metrics")
+                            value = nested_summary.get(metric, nested_summary.get(metric.lower(), 0))
+                        elif value is None:
+                            raise ValueError("Pinterest analytics response omitted a requested metric")
                     metrics[metric.lower()] = _number(value)
 
+                failure_stage = "database_persistence"
                 with connection() as conn:
                     conn.execute(
                         """INSERT INTO pin_analytics_snapshots
@@ -150,12 +162,18 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                     "metrics": metrics,
                     "outbound_click_rate": round(metrics["outbound_click"] / impressions, 4) if impressions else None,
                 })
+            except httpx.TimeoutException:
+                failed += 1
+                results.append({"pin_id": pin["pinterest_pin_id"], "ok": False, "failure_stage": "pinterest_timeout"})
+            except httpx.RequestError:
+                failed += 1
+                results.append({"pin_id": pin["pinterest_pin_id"], "ok": False, "failure_stage": "pinterest_transport_error"})
             except Exception:
                 failed += 1
                 results.append({
                     "pin_id": pin["pinterest_pin_id"],
                     "ok": False,
-                    "error": "analytics_request_or_persistence_failed",
+                    "failure_stage": failure_stage,
                 })
 
     successful = [item for item in results if item.get("ok")]

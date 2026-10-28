@@ -1,4 +1,4 @@
-# CONTEXT — Pinterest Affiliate Marketing Agent
+# Context append — PB-05 Remote Desktop Commander continuation (2026-10-28)
 
 Last updated: 2026-10-27
 
@@ -120,7 +120,7 @@ The following is the current source of truth for Model 1 blocker state. Older en
 - **PB-05 — PARTIAL:** code-level expiry/rotation guards are covered, but live token refresh remains unverified.
 - **PB-06 — OPEN:** latest known Neon `pin_analytics_snapshots` count is 0; a real Learning Loop ingestion and persisted snapshot must be verified.
 - **PB-07 — PARTIAL:** automated recovery coverage exists; live/production recovery is not verified.
-- **PB-08 — HUMAN REVIEW PENDING:** human review of image and alt text/quality is required before any new publication.
+- **PB-08 — CLOSED (review gate only):** the user approved the PB-08 review. Each new Pin still requires separate explicit publication approval and appropriate per-Pin quality checks.
 - **PB-10 — PARTIAL:** pool mitigation exists, but root cause and production-like recovery are not fully proven.
 - **PB-12 — DEFERRED BY DESIGN, NOT A CURRENT RELEASE BLOCKER:** predictive ML waits for sufficient longitudinal training data and a validated train/evaluate pipeline.
 - **PB-13 — OPEN:** DeepSeek content-generation 503 root cause is unresolved. A successful user-reported Pin does not prove the intermittent 503 issue is fixed. The latest session did not complete a fresh non-publishing DeepSeek smoke test because protected app credentials were unavailable in the connected shell.
@@ -132,7 +132,7 @@ The following is the current source of truth for Model 1 blocker state. Older en
 4. PB-05: safe live token-refresh verification.
 5. PB-07: recovery verification without risky production fault injection.
 6. PB-10: prove connection-pool root cause and recovery.
-7. PB-08: human quality review before any separately approved new Pin.
+7. PB-08: maintain per-Pin quality checks; the review gate is closed, but no new Pin is authorized without separate explicit approval.
 8. PB-03: finish the integrated readiness/account-workflow evidence gap.
 
 ### Latest known evidence and guardrails
@@ -150,3 +150,11 @@ The following is the current source of truth for Model 1 blocker state. Older en
 - **PB-08 — CLOSED (review approved by user).** This status reflects the user's explicit confirmation that the PB-08 review is approved.
 - This approval is for the review gate only; it is **not** authorization to publish any additional Pin. Any new Pin still requires separate explicit approval.
 - Remaining active release items are PB-03, PB-04, PB-05, PB-06, PB-07, PB-10 and PB-13, with PB-03/PB-04/PB-05/PB-07/PB-10 partial and PB-06/PB-13 open. PB-12 remains deferred by design.
+## PB-05 Remote Desktop Commander continuation — 2026-10-28
+
+- Remote Desktop Commander device `bb54f029-ff20-4907-ad1f-8b963b1958c1` came online; local repo `/root/Pinterest-affiliate-marketing-agent` was inspected. Local branch is `fix/pb06-pinterest-analytics-shape`, not `main`; do not assume the working tree is the deployed version or push it directly.
+- Targeted refresh regression tests: **5 passed**, one existing Starlette/httpx deprecation warning. Combined API + token-refresh tests: **44 passed**, one same warning. Full current local suite: **66 passed**, one same warning.
+- Production Agent `/health`: HTTP 200. Protected `/readiness` and Pinterest diagnostics returned HTTP 401 when called without the API key, which confirms auth protection; no secret values were printed.
+- The device's local credential config contains an app API key only. No local `DATABASE_URL`, Pinterest OAuth client credentials, credential-ingest key, or token-encryption key are configured. Therefore this device cannot safely invoke the real refresh flow with the currently available credentials.
+- PB-05 remains **OPEN — production token refresh lifecycle not yet verified**. Do not expose or copy secrets, force expiry, alter production expiry metadata, or publish a Pin. Next safe route needs authenticated server-side execution with the existing configured Hub/Agent secrets, then verify rotation/persistence by metadata and account lookup.
+- No source code was changed by this check; no production tokens were rotated; no Pin or board was created.
