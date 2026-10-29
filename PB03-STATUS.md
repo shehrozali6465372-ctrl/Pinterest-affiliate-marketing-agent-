@@ -119,3 +119,11 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Corrected `tests/test_database_pool_recovery_integration.py` to reject keyword-format DSNs, require the exact dedicated Neon child-branch host and expected database path, reject host/hostaddr/port/dbname/service/servicefile/options query keys, and permit only a narrow query allowlist. Regression coverage includes `?host=prod.db.example` and `?dbname=production` bypass attempts.
 - Latest commit `6e5809825c47c0e6f5887ecc2f6173daaf5f4d7d`; Python Tests `40972143345` and Python CI `40972143050` both passed. Targeted local tests: 7 passed, 1 skipped (live fault test skips unless the dedicated test URI is supplied); compileall and diff checks passed.
 - Codex review of the corrected head is still reported as running. Prior review findings are outdated because the guard changed; keep PR #34 open until reviewer confirms the current head. No merge/deployment.
+
+
+### PB-10 final strict-targeting guard update — 2026-10-30
+
+- Updated PR #34 integration test to reject multi-host libpq URI authorities, in addition to keyword DSNs and host/database/service overrides in query parameters. This addresses the third review safety edge case: if multiple hosts were specified, libpq could fall back from the disposable host to a second target. Regression coverage now checks a comma-separated disposable + production host list.
+- Latest code head `19c2b0c74216470bd7a7ff203c9bddb7874d7b8e`; Python CI `40972632926` and Python Tests `40972633033` passed. Local focused test suite 7 passed, 1 skipped; full suite 92 passed, 4 skipped, one existing deprecation warning.
+- Earlier keyword-DSN and query-override findings are resolved as outdated. Codex review of the newest single-host guard is still running, with current-head confirmation pending. PR #34 remains open/unmerged/undeployed.
+- Isolated Neon fault-injection result remains successful (backend replaced and SELECT 1 passed). PB-10 remains open pending current-head review, merge/release decision, and production-version verification. Production remains at SHA `871315d`, health HTTP 200.
