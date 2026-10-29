@@ -21,7 +21,7 @@ _TARGET_ENV_KEYS = (
 
 
 def _is_dedicated_disposable_uri(conninfo: str) -> bool:
-    """Accept only the dedicated single-host URI without target overrides."""
+    """Accept only the dedicated single-host URI without routing overrides."""
     try:
         parsed = urlsplit(conninfo)
         query = parse_qsl(parsed.query, keep_blank_values=True)
@@ -44,8 +44,6 @@ def _is_dedicated_disposable_uri(conninfo: str) -> bool:
     if any(key.lower() not in allowed for key, _ in query):
         return False
 
-    # Require explicit secure transport settings; never inherit a TLS downgrade
-    # from PGSSLMODE or accept duplicate query keys with different values.
     ssl_modes = [value.lower() for key, value in query if key.lower() == "sslmode"]
     if len(ssl_modes) != 1 or ssl_modes[0] not in {"require", "verify-ca", "verify-full"}:
         return False
@@ -58,7 +56,11 @@ def _is_dedicated_disposable_uri(conninfo: str) -> bool:
     return True
 
 
-def test_disposable_url_guard_rejects_routing_tls_and_fallback_bypasses():
+def test_disposable_url_guard_rejects_routing_tls_and_fallback_bypasses(monkeypatch):
+    monkeypatch.setenv("PGHOSTADDR", "192.0.2.99")
+    monkeypatch.setenv("PGSSLMODE", "disable")
+    assert os.environ["PGHOSTADDR"] == "192.0.2.99"
+    assert os.environ["PGSSLMODE"] == "disable"
     assert not _is_dedicated_disposable_uri(
         "host=prod.db.example dbname=pb10-test user=test password=not-a-real-secret"
     )
@@ -101,7 +103,7 @@ def test_pool_replaces_backend_terminated_on_disposable_test_branch(monkeypatch)
     if not _is_dedicated_disposable_uri(conninfo):
         pytest.skip("PB10_TEST_DATABASE_URL must use the exact dedicated single-host Neon URI, expected database, and explicit secure TLS settings")
 
-    # Remove libpq target/TLS overrides inherited from the runner before either connection is created.
+    # Remove libpq target/TLS overrides inherited from the runner before creating connections.
     for key in _TARGET_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
 
