@@ -2,9 +2,12 @@ name: Python CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - fix/pb06-analytics-forward-port
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
