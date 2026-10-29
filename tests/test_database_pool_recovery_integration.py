@@ -79,3 +79,9 @@ def test_pool_replaces_backend_terminated_on_disposable_test_branch():
         pool.close()
 
 [executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
+
+### PB-10 integration CI fix and current state — 2026-10-30
+
+- PR #34 initial CI failed at test collection because the GitHub file contained a tool transcript footer after the last line. The local source file was clean; this was a GitHub file-content ingestion issue, not a test logic failure. The source has been corrected and its tail re-read to confirm only Python code remains.
+- Local disposable-branch test already passed: backend PID was terminated on the dedicated Neon child branch, then pooled query recovered using a different PID; `SELECT 1` passed. Local focused suite: 7 passed.
+- PR #34 still requires a fresh exact-head CI result and Codex review. Do not merge or deploy while those are pending.
