@@ -1,9 +1,10 @@
 import json
 
 import httpx
+import pytest
 
 from app.config import settings
-from app.content_generation import AFFILIATE_DISCLOSURE, generate_pin_content
+from app.content_generation import AFFILIATE_DISCLOSURE, ContentGenerationError, generate_pin_content
 
 
 PRODUCT = {
@@ -71,3 +72,44 @@ def test_transient_http_failure_logs_sanitized_correlation_metadata(monkeypatch,
     assert "request_id=req_123" in caplog.text
     assert secret not in caplog.text
     assert "private-body" not in caplog.text
+
+
+def test_http_failure_redacts_secret_reflected_in_provider_metadata(monkeypatch, caplog):
+    secret = "unit-test-api-secret"
+    monkeypatch.setattr(settings, "llm_api_key", secret)
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
+    monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
+    response = httpx.Response(
+        503,
+        request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
+        headers={
+            "content-type": f"application/{secret}",
+            "x-request-id": secret,
+        },
+        json={"error": {"type": secret, "message": f"private-body-{secret}"}},
+    )
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, headers, json):
+            return response
+
+    monkeypatch.setattr("app.content_generation.httpx.Client", FakeClient)
+
+    with pytest.raises(ContentGenerationError) as caught:
+        generate_pin_content(**PRODUCT)
+
+    assert secret not in caplog.text
+    assert secret not in str(caught.value)
+    assert f"private-body-{secret}" not in caplog.text
+    assert "provider_code=_REDACTED_" in caplog.text
+    assert "content_type=application/_REDACTED_" in caplog.text
+    assert "request_id=_REDACTED_" in caplog.text

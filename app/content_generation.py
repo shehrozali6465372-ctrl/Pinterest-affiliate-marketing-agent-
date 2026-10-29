@@ -32,7 +32,17 @@ class ContentGenerationError(RuntimeError):
 
 
 def _safe_http_failure_metadata(response: httpx.Response, elapsed_ms: int) -> dict[str, str | int]:
-    """Return bounded provider diagnostics without response bodies or credentials."""
+    """Return bounded provider diagnostics with configured credentials redacted."""
+    configured_secret = settings.llm_api_key or ""
+
+    def sanitize(value: object, limit: int) -> str:
+        text = str(value)
+        # Sanitize before character filtering: secrets can consist entirely of
+        # otherwise-allowed characters and may be reflected by proxies/providers.
+        if configured_secret:
+            text = text.replace(configured_secret, "[REDACTED]")
+        return re.sub(r"[^A-Za-z0-9_.:-]", "_", text)[:limit] or "unknown"
+
     provider_code = "unknown"
     try:
         error_body = response.json()
@@ -40,13 +50,19 @@ def _safe_http_failure_metadata(response: httpx.Response, elapsed_ms: int) -> di
         if isinstance(error_obj, dict):
             candidate = error_obj.get("type") or error_obj.get("code")
             if isinstance(candidate, (str, int)):
-                provider_code = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(candidate))[:80] or "unknown"
+                provider_code = sanitize(candidate, 80)
     except (ValueError, TypeError):
         pass
     headers = getattr(response, "headers", {})
-    content_type = str(headers.get("content-type", "unknown"))[:100] if hasattr(headers, "get") else "unknown"
+    if hasattr(headers, "get"):
+        raw_content_type = str(headers.get("content-type", "unknown"))
+        if configured_secret:
+            raw_content_type = raw_content_type.replace(configured_secret, "[REDACTED]")
+        content_type = re.sub(r"[^A-Za-z0-9_./:-]", "_", raw_content_type)[:100] or "unknown"
+    else:
+        content_type = "unknown"
     raw_request_id = headers.get("x-request-id") or headers.get("request-id") if hasattr(headers, "get") else None
-    request_id = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(raw_request_id))[:80] if raw_request_id else "unknown"
+    request_id = sanitize(raw_request_id, 80) if raw_request_id else "unknown"
     response_bytes = len(getattr(response, "content", b"") or b"")
     return {
         "status": int(response.status_code),
