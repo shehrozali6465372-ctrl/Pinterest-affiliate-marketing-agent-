@@ -35,6 +35,16 @@ def test_reconcile_requires_authentication(monkeypatch):
     assert response.status_code == 401
 
 
+def test_operator_routes_fail_closed_when_api_key_is_not_configured(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", None)
+    status = client.get("/publications/7")
+    reconcile = client.post("/publications/7/reconcile", json={
+        "outcome": "failed", "operator_evidence": "Verified all pages; absent",
+    })
+    assert status.status_code == 503
+    assert reconcile.status_code == 503
+
+
 def test_reconcile_success_requires_pin_id(monkeypatch):
     headers = auth(monkeypatch)
     response = client.post("/publications/7/reconcile", headers=headers, json={

@@ -49,6 +49,16 @@ def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Ke
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
 
+def require_configured_operator_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> None:
+    """Fail closed for publication reconciliation if the operator key is missing."""
+    if not settings.app_api_key:
+        raise HTTPException(status_code=503, detail="Operator authentication is not configured.")
+    if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
+        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+
+
 class ProductInput(BaseModel):
     product_name: str = Field(min_length=1, max_length=300)
     product_details: str = Field(min_length=1, max_length=10000)
@@ -513,7 +523,7 @@ class PublicationReconciliationInput(BaseModel):
         return value
 
 
-@app.get("/publications/{publication_id}", dependencies=[Depends(require_api_key)])
+@app.get("/publications/{publication_id}", dependencies=[Depends(require_configured_operator_key)])
 def get_publication_status(publication_id: int) -> dict[str, object]:
     """Inspect a publication record without making any Pinterest requests."""
     if publication_id <= 0:
@@ -531,7 +541,7 @@ def get_publication_status(publication_id: int) -> dict[str, object]:
     return row
 
 
-@app.post("/publications/{publication_id}/reconcile", dependencies=[Depends(require_api_key)])
+@app.post("/publications/{publication_id}/reconcile", dependencies=[Depends(require_configured_operator_key)])
 def reconcile_publication(publication_id: int, payload: PublicationReconciliationInput) -> dict[str, object]:
     """Operator-confirmed resolution of an `unknown` publish result; never publishes a Pin."""
     if publication_id <= 0:
