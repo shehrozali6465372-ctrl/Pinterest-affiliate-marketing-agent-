@@ -120,3 +120,12 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - Added regression coverage for keyword DSNs, wrong hosts, `host` query override, and `dbname` query override. Current PR #34 head is `6e5809825c47c0e6f5887ecc2f6173daaf5f4d7d`; Python Tests run `40972143345` and Python CI run `40972143050` both passed.
 - Latest Codex review was requested for exact head `6e58098`; status still reads running. Prior two findings are outdated after fixes, but the second thread remains formally unresolved until review reconciliation. No merge/deploy.
 - The controlled recovery experiment itself is proven on the dedicated child branch: terminated backend PID was replaced and `SELECT 1` succeeded. PR #34 remains open. Production still runs SHA `871315d780ecc6c6c66e14d84792d3863cae0243`, Render health HTTP 200.
+
+
+### PB-10 host-routing guard — third review edge case (2026-10-30)
+
+- Codex identified that libpq accepts comma-separated multi-host URI authorities and could fall back to a second host even if the first hostname was allowlisted. Updated the test guard to reject comma-separated authorities and IPv6-bracket authorities, in addition to rejecting keyword DSNs and all routing/database query override keys.
+- Added regression assertion for `allowlisted-disposable-host,prod.db.example`. Local focused tests: **7 passed, 1 skipped** (live fault injection remains opt-in); full suite: **92 passed, 4 skipped, 1 existing Starlette/httpx deprecation warning**; `compileall` and `git diff --check` passed.
+- Latest PR #34 source commit: `19c2b0c74216470bd7a7ff203c9bddb7874d7b8e`; exact-head Python CI run `40972632926` and Python Tests run `40972633033` both passed.
+- The two older P2 threads (keyword DSN and query override) are resolved as outdated. Newest multi-host finding was on prior head `6e58098` and is now outdated after the fix; Codex re-review of `19c2b0c` is still running. Keep PR #34 open until the current-head review finishes.
+- Production remains live at `871315d780ecc6c6c66e14d84792d3863cae0243`; live `/health` HTTP 200. No merge/deploy. No production DB session terminated or data modified; no Pinterest write/Pin/board creation/token rotation.
