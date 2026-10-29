@@ -93,3 +93,11 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - Codex re-review completed on the updated head with **no findings**. The previous P2 finding is no longer reported as unresolved on the new head. PR #33 remains open/unmerged. Do not claim PB-13 closed: instrumentation and credential redaction are improved, but intermittent production 503 root cause is still unverified.
 - No live DeepSeek request was performed for this fix. No production Neon mutation, Pinterest write, Pin/board creation, token rotation, or Render deployment occurred.
 - PB-10 remains OPEN: current pool tests verify lifecycle/configuration only and do not prove recovery after a real connection drop. Next safe engineering task is isolated stale-connection replacement coverage using a controlled non-production test, without injecting a failure into production Neon.
+
+
+### PB-10 PR #34 CI troubleshooting checkpoint — 2026-10-30
+
+- PR #34 head `a1631c6` initially failed CI because a tool-execution footer was included after the Python test file. Head `a5214e1` also failed because prose checkpoint notes were mistakenly appended into the Python test. This was an authoring/write-target error; no application runtime code changed.
+- Corrective commit `25fa037c8b325891e27a4995bed990bcb0b5826b` rewrote the GitHub test file to Python-only source. Exact-head CI must be checked again before considering PR #34 valid.
+- The isolated Neon fault-injection experiment remains successful: on the dedicated child branch, backend PID termination was followed by a successful pooled query on a different PID and `SELECT 1`. Focused local tests previously passed 7/7.
+- No merge or deployment. Do not push or merge the local PB-07 branch because it retains a local context edit and is separate from PR #34.
