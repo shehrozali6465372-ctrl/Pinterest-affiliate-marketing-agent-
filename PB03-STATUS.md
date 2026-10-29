@@ -111,3 +111,11 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Added opt-in integration test `tests/test_database_pool_recovery_integration.py`; it skips by default without `PB10_TEST_DATABASE_URL`, enforces a test-host allowlist, and verifies the replacement backend PID. Do not run with production credentials.
 - Test result with the child branch URL: **7 passed** (pool integration plus existing unit tests); `compileall` and `git diff --check` passed. No production connection was terminated or production data changed.
 - This is not yet in a PR or deployed. PB-10 is **verified on disposable Neon, but blocker remains OPEN** pending isolated branch/CI/review and release verification. PB-07 remains open for operator board verification; PB-13 remains open for real intermittent 503 root-cause evidence; PB-05 remains open for genuine token-refresh lifecycle proof. No live Pin published.
+
+
+### PB-10 test safety guard — additional fix (2026-10-30)
+
+- PR #34 Codex review identified a second potential bypass: libpq URI query parameters may override the host/database even when the URI hostname/path look valid.
+- Corrected `tests/test_database_pool_recovery_integration.py` to reject keyword-format DSNs, require the exact dedicated Neon child-branch host and expected database path, reject host/hostaddr/port/dbname/service/servicefile/options query keys, and permit only a narrow query allowlist. Regression coverage includes `?host=prod.db.example` and `?dbname=production` bypass attempts.
+- Latest commit `6e5809825c47c0e6f5887ecc2f6173daaf5f4d7d`; Python Tests `40972143345` and Python CI `40972143050` both passed. Targeted local tests: 7 passed, 1 skipped (live fault test skips unless the dedicated test URI is supplied); compileall and diff checks passed.
+- Codex review of the corrected head is still reported as running. Prior review findings are outdated because the guard changed; keep PR #34 open until reviewer confirms the current head. No merge/deployment.
