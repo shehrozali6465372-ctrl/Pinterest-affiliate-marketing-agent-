@@ -92,3 +92,13 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Commit: efe6e379c952e45d3452de01ce5be6cf59077a5e. Logs include status, sanitized provider code, attempt, duration, content type, response byte count and sanitized request ID; API keys, prompts and response bodies are excluded.
 - Local full suite: 67 passed, 1 existing Starlette/httpx deprecation warning; compileall and git diff --check passed. @codex review requested; review/CI still pending at checkpoint. No provider request, production mutation, Pin publication or deployment occurred.
 - This is instrumentation only. It does not establish the cause of intermittent 503s; keep PB-13 open until a real sanitized failure can be correlated with provider-side request/status evidence.
+
+
+### Current verification — PB-13 redaction patch (2026-10-30)
+
+- PR #33 head `23e15ecb95735108666ba6c8336006d928a0500c` includes a fix for Codex's P2 finding: configured LLM API credentials are redacted from provider-controlled error codes, content-type, and request-ID metadata before logging or surfacing the provider code in API errors.
+- Added regression test reflects the fake credential in each metadata field and provider message; confirms the secret is absent from captured logs and raised error.
+- Verification: focused DeepSeek tests **6 passed**; full local suite **68 passed, 1 existing Starlette/httpx deprecation warning**; compileall and `git diff --check` passed. Exact-head Python CI run `40968210595` and Python Tests run `40968210581` both succeeded.
+- Codex re-review completed on the updated head with **no findings**. PR #33 remains open and unmerged. Keep PB-13 OPEN until real sanitized telemetry identifies the intermittent HTTP 503 root cause.
+- No real provider request, production mutation, Pinterest write, Pin/board creation, token rotation, or Render deployment occurred.
+- PB-10 remains OPEN; pool lifecycle unit tests do not prove real stale-connection replacement/reconnect. PB-07 remains OPEN pending operator read-only verification and release gate. No new Pin may be published without separate explicit approval.
