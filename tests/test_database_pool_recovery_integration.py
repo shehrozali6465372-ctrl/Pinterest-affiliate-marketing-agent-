@@ -14,6 +14,7 @@ import pytest
 from psycopg_pool import ConnectionPool
 
 _DISPOSABLE_HOST = "ep-ancient-cherry-arpqssmi-pooler.c-4.us-west-2.aws.neon.tech"
+_TARGET_ENV_KEYS = ("PGHOSTADDR", "PGHOST", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE")
 
 
 def _is_dedicated_disposable_uri(conninfo: str) -> bool:
@@ -27,14 +28,11 @@ def _is_dedicated_disposable_uri(conninfo: str) -> bool:
         return False
     if parsed.username is None or parsed.path != "/pinterest_affiliate":
         return False
-    # Do not accept explicit ports or multi-host authorities: libpq supports
-    # host failover, and urlsplit().hostname reports only the first host.
     authority_without_userinfo = parsed.netloc.rsplit("@", 1)[-1]
     if "," in authority_without_userinfo or authority_without_userinfo.startswith("["):
         return False
     if parsed.port is not None or parsed.hostname.lower() != _DISPOSABLE_HOST:
         return False
-    # Reject libpq routing/database overrides and constrain security settings.
     forbidden = {"host", "hostaddr", "port", "dbname", "service", "servicefile", "options"}
     allowed = {"sslmode", "channel_binding", "application_name", "connect_timeout"}
     if any(key.lower() in forbidden for key, _ in query):
@@ -52,7 +50,9 @@ def _is_dedicated_disposable_uri(conninfo: str) -> bool:
     return True
 
 
-def test_disposable_url_guard_rejects_dsn_routing_multi_host_and_port_bypasses():
+def test_disposable_url_guard_rejects_routing_bypasses(monkeypatch):
+    monkeypatch.setenv("PGHOSTADDR", "192.0.2.99")
+    assert os.environ["PGHOSTADDR"] == "192.0.2.99"
     assert not _is_dedicated_disposable_uri(
         "host=prod.db.example dbname=pb10-test user=test password=not-a-real-secret"
     )
@@ -79,12 +79,17 @@ def test_disposable_url_guard_rejects_dsn_routing_multi_host_and_port_bypasses()
     )
 
 
-def test_pool_replaces_backend_terminated_on_disposable_test_branch():
+def test_pool_replaces_backend_terminated_on_disposable_test_branch(monkeypatch):
     conninfo = os.getenv("PB10_TEST_DATABASE_URL")
     if not conninfo:
         pytest.skip("PB10_TEST_DATABASE_URL is not configured")
     if not _is_dedicated_disposable_uri(conninfo):
         pytest.skip("PB10_TEST_DATABASE_URL must use the exact dedicated single-host Neon URI, expected database, and secure TLS settings")
+
+    # libpq can inherit target overrides from the runner environment. Strip them
+    # from this process before creating either the pool or admin connection.
+    for key in _TARGET_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
 
     def check_connection(conn):
         conn.execute("")
