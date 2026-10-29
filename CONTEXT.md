@@ -112,3 +112,11 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - Render service is confirmed configured to auto-deploy commits on `main`; latest live deploy remains `871315d780ecc6c6c66e14d84792d3863cae0243`. Agent `/health` returned HTTP 200 with `{"status":"ok","service":"pinterest-affiliate-model-1"}` after the free-service wake-up timeout. New PB-10 code is not in Render.
 - PR #34 has not been merged. No Render deploy was triggered. No production PostgreSQL sessions were killed; no production DB data modified; no Pinterest write, Pin/board creation, or credential rotation occurred.
 - Remaining blockers: PB-07 operator board-verification/release gate; PB-10 PR review/merge/deployed verification (isolated backend recovery proved); PB-13 real intermittent-503 root cause; PB-05 real token-refresh lifecycle. Do not claim these blockers closed solely from unit/CI success.
+
+
+### PB-10 strict URI guard follow-up — 2026-10-30
+
+- Codex review for PR #34 found two safety issues in the opt-in backend-termination test. First, keyword-format DSN could bypass host validation; corrected to accept only the exact dedicated Neon test URI. Second, libpq URI query overrides such as `?host=prod...` or `?dbname=production` could change the effective target; corrected by rejecting routing/database override keys and allowing only a narrow query-key allowlist.
+- Added regression coverage for keyword DSNs, wrong hosts, `host` query override, and `dbname` query override. Current PR #34 head is `6e5809825c47c0e6f5887ecc2f6173daaf5f4d7d`; Python Tests run `40972143345` and Python CI run `40972143050` both passed.
+- Latest Codex review was requested for exact head `6e58098`; status still reads running. Prior two findings are outdated after fixes, but the second thread remains formally unresolved until review reconciliation. No merge/deploy.
+- The controlled recovery experiment itself is proven on the dedicated child branch: terminated backend PID was replaced and `SELECT 1` succeeded. PR #34 remains open. Production still runs SHA `871315d780ecc6c6c66e14d84792d3863cae0243`, Render health HTTP 200.
