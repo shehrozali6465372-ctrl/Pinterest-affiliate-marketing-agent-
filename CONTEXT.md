@@ -82,3 +82,14 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - Posted @codex review on PR #33; review result is pending. PR #33 is open and has not been merged. No Render deployment was triggered.
 - PB-13 remains OPEN: instrumentation improves the next incident's evidence but does not yet identify the root cause of intermittent production HTTP 503s. Wait for exact-head CI and review, then correlate real sanitized failure logs with provider request ID/time and provider-side status.
 - The PR #32 branch remains separate at 66ffe9e; its two local-only status-file edits are preserved on that branch and have not been pushed. No production state was changed.
+
+
+### Continuation checkpoint — PB-13 credential-redaction fix (2026-10-30)
+
+- PR #33 updated commit: `23e15ecb95735108666ba6c8336006d928a0500c` on branch `fix/pb10-stale-connection-recovery-tests`. Fix redacts the configured LLM credential from provider error code, Content-Type, and request-ID metadata before logging or returning sanitized values.
+- Added regression coverage where the fake provider reflects the configured credential in all three metadata fields and the response message. Assertions confirm the credential is absent from logs and `ContentGenerationError`.
+- Local full suite: **68 passed, 1 existing Starlette/httpx deprecation warning**. Focused DeepSeek tests: **6 passed**. `.venv/bin/python -m compileall -q app tests` and `git diff --check` passed.
+- Exact-head GitHub checks on `23e15ecb95735108666ba6c8336006d928a0500c`: Python CI run `40968210595` and Python Tests run `40968210581` both succeeded.
+- Codex re-review completed on the updated head with **no findings**. The previous P2 finding is no longer reported as unresolved on the new head. PR #33 remains open/unmerged. Do not claim PB-13 closed: instrumentation and credential redaction are improved, but intermittent production 503 root cause is still unverified.
+- No live DeepSeek request was performed for this fix. No production Neon mutation, Pinterest write, Pin/board creation, token rotation, or Render deployment occurred.
+- PB-10 remains OPEN: current pool tests verify lifecycle/configuration only and do not prove recovery after a real connection drop. Next safe engineering task is isolated stale-connection replacement coverage using a controlled non-production test, without injecting a failure into production Neon.
