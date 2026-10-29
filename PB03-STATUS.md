@@ -145,3 +145,13 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Local full suite: **92 passed, 4 skipped, 1 existing Starlette/httpx deprecation warning**; focused pool test guard + pool lifecycle tests: 7 passed, 1 skipped; compileall and diff checks pass. Dedicated Neon child-branch backend termination followed by recovery on a different PID is proven.
 - PR #34 remains open and unmerged. PB-10 has strong isolated recovery evidence but stays OPEN pending deliberate release decision and deployed-version verification. Render auto-deploys on `main`, and latest live deployment remains `871315d780ecc6c6c66e14d84792d3863cae0243`; live `/health` HTTP 200.
 - No production DB session killed or data changed; no real Pin/board created; no token rotated; no Render deploy or merge occurred.
+
+
+### PB-10 PR merged — deployment verification (2026-10-30)
+
+- PR #34 merged via squash after strict-target safety guards, exact-head checks, and Codex review completed with no findings. Merge commit: `77cf19220425619fb041a638e12be13815cb41d4`. PR #34 only adds an opt-in PostgreSQL/Neon backend recovery integration test; it does not change application runtime code. The integration test skips unless `PB10_TEST_DATABASE_URL` is provided and has exact host/database/TLS/environment guards before any backend termination.
+- Pre-merge exact-head CI: Python Tests `40973794556` passed; Python CI `40973794511` passed. Local full suite: **92 passed, 4 skipped, 1 existing Starlette/httpx deprecation warning**. Disposable Neon integration successfully demonstrated backend replacement after backend termination. No production backend was terminated.
+- Render is configured to auto-deploy on pushes/merges to `main`. Post-merge Render API still lists latest live deployment at `871315d780ecc6c6c66e14d84792d3863cae0243`; no new deployment for `77cf192` was observed during the check. Since PR #34 only adds a test file, runtime behavior is unchanged; do not claim the merge SHA is deployed until Render reports it live.
+- Live Agent `/health` HTTP 200. Protected `/readiness` HTTP 401 when called without the API key, expected fail-closed behavior. No API key was exposed or sent in this probe.
+- PB-10 recovery is proven in the disposable Neon child branch and test is merged, but blocker remains **OPEN pending post-release verification and keeping the production runtime/version verified**. PB-07 remains open for operator board verification/release gate; PB-13 remains open pending real intermittent HTTP 503 root cause; PB-05 remains open pending real token refresh lifecycle proof.
+- No production data/session was changed, no Pin or board created, no token rotated, and no unsafe publishing action occurred.
