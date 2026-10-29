@@ -46,3 +46,13 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - PB-10 isolation test succeeded against dedicated Neon child branch `pb10-pool-recovery-test-20261030`: terminated pooled backend PID was replaced; next query got a different backend PID and `SELECT 1` passed. Local focused integration + unit suite 7 passed. This is not deployed; keep PB-10 OPEN pending PR review and deployed verification.
 - Render confirmed auto-deploy on commits to `main`; latest live deployment remains `871315d780ecc6c6c66e14d84792d3863cae0243`. Live `/health` returned HTTP 200 after service wake. No deployment triggered and no PR merged.
 - PB-07 remains OPEN pending operator board verification/release gate. PB-05 remains OPEN pending real refresh-token rotation/persistence evidence. PB-13 remains OPEN pending root cause. No production DB session was terminated or data modified, no Pinterest write/Pin/board creation, and no token rotation occurred.
+
+
+### PB-10 merged-test follow-up — 2026-10-30
+
+- PR #34 merged via squash as `77cf19220425619fb041a638e12be13815cb41d4`. The change adds only an opt-in disposable Neon pool-recovery integration test; no application runtime code changed.
+- Pre-merge verification: exact-head Python Tests run `40973794556` and Python CI run `40973794511` passed. Codex review for head `0a1db20212f6b5e0a1ad5970ab0d590bd0ab2595` completed with no findings and all inline threads resolved. Local full suite: **92 passed, 4 skipped, 1 existing Starlette/httpx deprecation warning**. Separate disposable Neon backend-termination/recovery experiment passed and produced a different backend PID on the next successful SELECT.
+- Render service auto-deploys commits to main; as of latest check, latest live deployment is still `871315d780ecc6c6c66e14d84792d3863cae0243`. No new deploy of `77cf192` is visible yet. Because PR #34 only changes tests, no runtime code is missing from deployment; do not claim that merge SHA itself is deployed until Render reports it live.
+- Runtime verification: Agent `/health` HTTP 200. `/readiness` returns 401 without the API key, as designed. No key was included in the probe.
+- PB-10: integration proof merged but blocker remains **OPEN for final release/deployed-version confirmation**. PB-07 remains open pending operator read-only board verification and release sign-off. PB-13 remains open until real intermittent 503s are correlated with safe provider evidence. PB-05 remains open until a genuine OAuth refresh lifecycle is proven.
+- No production database session terminated or data changed, no Pin/board created, no token rotated. No Render deployment was triggered manually.
