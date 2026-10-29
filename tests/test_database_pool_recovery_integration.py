@@ -7,7 +7,7 @@ This test terminates one backend session; it must never point at production.
 """
 import os
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import psycopg
 import pytest
@@ -17,23 +17,40 @@ _DISPOSABLE_HOST = "ep-ancient-cherry-arpqssmi-pooler.c-4.us-west-2.aws.neon.tec
 
 
 def _is_dedicated_disposable_uri(conninfo: str) -> bool:
-    """Accept only the exact disposable Neon URI host; reject keyword DSNs."""
-    parsed = urlsplit(conninfo)
-    return (
-        parsed.scheme in {"postgres", "postgresql"}
-        and parsed.hostname is not None
-        and parsed.hostname.lower() == _DISPOSABLE_HOST
-        and parsed.username is not None
-        and parsed.path == "/pinterest_affiliate"
-    )
+    """Accept only the test URI without libpq routing/database overrides."""
+    try:
+        parsed = urlsplit(conninfo)
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
+        return False
+    if parsed.username is None or parsed.path != "/pinterest_affiliate":
+        return False
+    if parsed.hostname.lower() != _DISPOSABLE_HOST:
+        return False
+    # libpq accepts routing and database settings in the query. Only allow a
+    # small set of harmless parameters, and reject overrides that could change
+    # the actual target after the URI authority/path have been validated.
+    forbidden = {"host", "hostaddr", "port", "dbname", "service", "servicefile", "options"}
+    allowed = {"sslmode", "channel_binding", "application_name", "connect_timeout"}
+    if any(key.lower() in forbidden for key, _ in query):
+        return False
+    return not any(key.lower() not in allowed for key, _ in query)
 
 
-def test_disposable_url_guard_rejects_keyword_dsn_host_bypass():
+def test_disposable_url_guard_rejects_dsn_and_query_overrides():
     assert not _is_dedicated_disposable_uri(
         "host=prod.db.example dbname=pb10-test user=test password=not-a-real-secret"
     )
     assert not _is_dedicated_disposable_uri(
         "postgresql://test@prod.db.example/pinterest_affiliate"
+    )
+    assert not _is_dedicated_disposable_uri(
+        "postgresql://test@ep-ancient-cherry-arpqssmi-pooler.c-4.us-west-2.aws.neon.tech/pinterest_affiliate?host=prod.db.example"
+    )
+    assert not _is_dedicated_disposable_uri(
+        "postgresql://test@ep-ancient-cherry-arpqssmi-pooler.c-4.us-west-2.aws.neon.tech/pinterest_affiliate?dbname=production"
     )
     assert _is_dedicated_disposable_uri(
         "postgresql://test:masked@ep-ancient-cherry-arpqssmi-pooler.c-4.us-west-2.aws.neon.tech/pinterest_affiliate?sslmode=require"
@@ -45,7 +62,7 @@ def test_pool_replaces_backend_terminated_on_disposable_test_branch():
     if not conninfo:
         pytest.skip("PB10_TEST_DATABASE_URL is not configured")
     if not _is_dedicated_disposable_uri(conninfo):
-        pytest.skip("PB10_TEST_DATABASE_URL must use the exact dedicated disposable Neon URI host and database")
+        pytest.skip("PB10_TEST_DATABASE_URL must use the exact dedicated disposable Neon URI host/database and no routing overrides")
 
     def check_connection(conn):
         conn.execute("")
