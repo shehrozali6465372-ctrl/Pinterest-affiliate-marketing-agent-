@@ -49,12 +49,12 @@ def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Ke
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
 
-def require_configured_operator_key(
+def require_configured_api_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> None:
-    """Fail closed for publication reconciliation if the operator key is missing."""
+    """Fail closed for publication-changing and operator endpoints if APP_API_KEY is missing."""
     if not settings.app_api_key:
-        raise HTTPException(status_code=503, detail="Operator authentication is not configured.")
+        raise HTTPException(status_code=503, detail="API authentication is not configured.")
     if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
@@ -523,7 +523,7 @@ class PublicationReconciliationInput(BaseModel):
         return value
 
 
-@app.get("/publications/{publication_id}", dependencies=[Depends(require_configured_operator_key)])
+@app.get("/publications/{publication_id}", dependencies=[Depends(require_configured_api_key)])
 def get_publication_status(publication_id: int) -> dict[str, object]:
     """Inspect a publication record without making any Pinterest requests."""
     if publication_id <= 0:
@@ -541,7 +541,7 @@ def get_publication_status(publication_id: int) -> dict[str, object]:
     return row
 
 
-@app.post("/publications/{publication_id}/reconcile", dependencies=[Depends(require_configured_operator_key)])
+@app.post("/publications/{publication_id}/reconcile", dependencies=[Depends(require_configured_api_key)])
 def reconcile_publication(publication_id: int, payload: PublicationReconciliationInput) -> dict[str, object]:
     """Operator-confirmed resolution of an `unknown` publish result; never publishes a Pin."""
     if publication_id <= 0:
@@ -569,7 +569,7 @@ def reconcile_publication(publication_id: int, payload: PublicationReconciliatio
     return {"reconciled": True, "published": row.get("status") == "succeeded", "publication": row}
 
 
-@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_api_key)])
+@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_configured_api_key)])
 def publish_product_content(product_id: int, content_version_id: int) -> dict[str, object]:
     if product_id <= 0 or content_version_id <= 0:
         raise HTTPException(status_code=422, detail="product_id and content_version_id must be positive integers")
@@ -623,7 +623,7 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
         raise HTTPException(status_code=503, detail="Publish request could not be fully recorded. Inspect publication record and Pinterest board before retrying.") from exc
 
 
-@app.post("/publish", dependencies=[Depends(require_api_key)])
+@app.post("/publish", dependencies=[Depends(require_configured_api_key)])
 def publish(payload: PublishRequest) -> dict[str, object]:
     return publish_product_content(payload.product_id, payload.content_version_id)
 
