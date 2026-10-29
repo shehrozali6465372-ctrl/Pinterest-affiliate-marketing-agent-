@@ -11,7 +11,7 @@
 - **PB-04 — REAL OAuth handoff:** Hub PR #6 and mocked handoff tests are merged/deployed, but the last recorded status still requires a human Pinterest consent flow and verification of encrypted Neon storage/account lookup. Mocked tests alone do not prove real consent.
 - **PB-05 — Refresh lifecycle:** Expiry/malformed-expiry guards and refresh-token rotation/preservation tests are merged. A real provider refresh has not been forced because credentials were not near expiry. Do not risk a live account solely to force this test.
 - **PB-06 — Learning Loop:** Account-scoped analytics ingestion and fail-closed metric validation are implemented and tested. Last recorded production check found 0 rows in pin_analytics_snapshots; a real persisted snapshot is still unverified. This is not a PB-03 issue.
-- **PB-07 — Publish recovery:** Automated tests cover persistence failure and uncertain publish outcomes. Production fault injection was not run to avoid disrupting the live service.
+- **PB-07 — Publish recovery:** Fail-closed retry guard, API-key-protected publication inspection, and operator-only reconciliation are implemented locally. Focused and full local suites pass (**89 passed**, 1 existing deprecation warning). Added stateful fake-DB tests for unknown -> verified success -> duplicate blocked; unknown -> operator-confirmed absent -> retry reserved; audit metadata; and one-way transition enforcement. The new `docs/PB-07-PUBLISH-RECOVERY.md` defines read-only board verification and audit requirements. Keep open pending exact-head CI/review and isolated PostgreSQL/provider-stub or disposable-account evidence; no production Pin was published.
 
 ## Current engineering baseline
 
@@ -25,3 +25,60 @@
 ## Next action
 
 Do not reopen PB-03. Continue with the next genuinely open verification item, prioritizing PB-04 only if the human is ready to complete Pinterest consent; otherwise proceed to safe read-only verification and PB-06 analytics prerequisites. Never publish a new Pin without separate explicit approval.
+
+## Continuation update — 2026-10-29 Remote Desktop Commander
+
+- PR #30 merged as `def34e272b846b491d8f76b69abfb77790e6e893`; Python tests and Python CI pass. Safe manual provider smoke workflow run `40845099954` completed successfully; no Pin/board publishing was requested or performed.
+- PR #31 merged as `871315d780ecc6c6c66e14d84792d3863cae0243` after clean merge state and green Python tests/CI. Its PB-06 code change clarifies supported analytics response shapes and omitted metrics in valid summaries. Full local tests: 66 passed, 1 existing deprecation warning.
+- Production health: Agent `/health` HTTP 200; Hub `/api/health` HTTP 200.
+- Neon: 1 Pinterest credential row, 1 successful publication row, 2 real analytics snapshots. Latest snapshot has impression=3, pin_click=1, outbound_click=1, save=0 for the latest captured period. This is descriptive analytics, not trained predictive ML.
+- Render deployment `dep-dbhgngpsrm7s73fqdsc0` reached `live` at `871315d780ecc6c6c66e14d84792d3863cae0243` after the prior stale deployment SHA was identified. Agent health was rechecked and returned HTTP 200.
+- PB-05 token refresh, PB-07 live recovery, PB-10 pool recovery/root cause, PB-13 DeepSeek intermittent 503 cause remain open/partial. No new Pin published; no secrets exposed or expiry forced.
+
+### Deep root-cause analysis — 2026-10-29
+
+**PB-05 — OPEN: live OAuth token refresh not verified.** Code rejects expired or malformed `refresh_token_expires_at` before sending refresh token to Pinterest; the stored refresh token is preserved if rotation is omitted. Mock tests cover successful rotation, omitted rotation, expired expiry, malformed expiry and auth. A protected local config exists at `/root/.config/pinterest-agent/.env` (mode `0600`) and contains `APP_API_KEY`, `DATABASE_URL`, `PINTEREST_CREDENTIAL_INGEST_KEY`, and `PINTEREST_TOKEN_ENCRYPTION_KEY`; values were not read or exposed. It does not list Pinterest OAuth client ID/secret. Do not infer these credentials are absent from server-side secrets. A live refresh has not yet been run through an approved secret-backed path. Do not force expiry or expose secrets. Close only after secret-backed server-side refresh occurs naturally and non-secret metadata plus a read-only Pinterest account lookup confirm persistence.
+
+**PB-07 — OPEN: local operator reconciliation added; isolated end-to-end recovery still not proven.** On timeout/5xx/missing Pin ID, the attempt is persisted as `unknown` and duplicate retry is blocked for the same content version/board. New API-key-protected endpoints allow read-only publication inspection and explicit operator reconciliation of only an `unknown` row; success requires a verified Pin ID, while failure requires recorded operator evidence of absence. The runbook `docs/PB-07-PUBLISH-RECOVERY.md` requires all board-listing pages and a follow-up Pin read, and forbids retry on incomplete/erroring lookups. Focused tests cover auth, payload gates, route behavior, and database state guard. No live publish/fault injection was run. Keep open until exact-head CI/review and isolated provider-stub/disposable-account proof shows durable unknown -> retry blocked -> read-only check -> reconciliation -> final state.
+
+**PB-10 — OPEN: no verified production root cause for pool recovery.** Pool configuration is lazy, min=1/max=5, and uses `ConnectionPool.check_connection` on checkout to detect stale connections following Neon idle disconnects; shutdown closes/resets the pool. psycopg_pool's checker executes an empty query under temporary autocommit. No focused tests currently cover stale-connection replacement, pool exhaustion, reconnect after close, or Neon idle disconnect. Read-only DB probes pass but do not establish recovery. Add isolated fake-pool tests and non-production reconnect/idle-disconnect integration coverage; correlate sanitized pool wait/connect/SQLSTATE events with Neon logs before assigning production root cause.
+
+**PB-13 — OPEN: intermittent DeepSeek 503's current exact cause unknown.** Historical PR #18 root cause was a different content-generation failure: `JSONDecodeError` from truncated model JSON with thinking enabled and a 1,200-token output budget. It disabled thinking, increased budget and added sanitized failure classification. PR #20 added a single retry for transient HTTP 429/5xx and transport errors. Current safe production smoke run `40845099954` succeeded with `deepseek_multimodal_generation.ok=true`, proving only that one sample succeeded. It does not explain intermittent 503s. Current diagnostics reduce exceptions to `deepseek_multimodal_completion_failed`; collect only safe status/provider error code, retry attempt, duration, finish reason, content length/content type and request timestamp/ID on the next failure. Do not add blind retries or claim quota/overload without correlated evidence.
+
+**Verification:** `PYTHONPATH=. .venv/bin/pytest -q` => 66 passed, one existing Starlette/httpx TestClient deprecation warning. Running pytest without `PYTHONPATH=.` fails collection due to import path, not code. GitHub PR/check history was inspected read-only; the GH Review Loop plugin scripts aren't installed on the remote device, so no plugin-generated review/thread receipt is claimed. No source code was deployed or pushed by this investigation; no token changed; no Pin published. The safe production diagnostic workflow was queued as run `40904239646` against `871315d780ecc6c6c66e14d84792d3863cae0243`; completion/result must be checked separately. All four PBs remain open pending the evidence above.
+
+### Additional Learning Loop verification — 2026-10-29 09:06 UTC
+
+- Real production Learning Loop workflow run `40847008820` completed successfully against deployed `871315d780ecc6c6c66e14d84792d3863cae0243`.
+- Response: `ok=true`; 1 published Pin checked; 1 real analytics snapshot persisted for 2026-09-29 through 2026-10-29. Aggregate: impressions=3, saves=0, outbound_clicks=1, save_rate=0.0, outbound_click_rate=0.3333. `model_trained=false` as expected.
+- Neon counts after run: 3 analytics snapshots, 1 publication, 1 credential. No new Pin or board published/created by this run.
+- Agent `/health` and Hub `/api/health` remain HTTP 200. Current deployed commit confirmed `871315d780ecc6c6c66e14d84792d3863cae0243`.
+
+
+### Follow-up validation — 2026-10-29 15:45 UTC
+
+- Protected local environment file metadata confirmed `0600`; only key names checked (no values printed). Present keys: `APP_API_KEY`, `DATABASE_URL`, `PINTEREST_CREDENTIAL_INGEST_KEY`, `PINTEREST_TOKEN_ENCRYPTION_KEY`; Pinterest OAuth client ID/secret are not in this file, which prevents a genuine refresh call from this config alone.
+- Fresh safe production diagnostic workflow run `40904239646` succeeded against deployed `871315d780ecc6c6c66e14d84792d3863cae0243`: DB `SELECT 1`, Pinterest account read, Cloudflare generation, DeepSeek Flash generation all passed. All non-publishing side effects were false; `secrets_returned=false`. Provider usage may be billable. No Pin published.
+- Connected Neon MCP read-only query verified `SELECT 1`; stored account remains connected and both encrypted token blobs exist, with access expiry `2026-11-27T09:26:42Z`, refresh expiry `2026-12-27T09:26:41Z`, updated `2026-10-28T09:26:42Z`. The only row in `pin_publications` remains `succeeded`; no pending/unknown rows currently present. No credential values were decrypted.
+- Added four local-only tests for lazy pool configuration/lifecycle and one sanitized diagnostic exception regression test. Full local suite: **71 passed**, 1 existing deprecation warning; `git diff --check` passes. These changes remain uncommitted/unpushed/undeployed.
+- PB-05, PB-07, PB-10 and PB-13 remain OPEN. Live refresh not attempted due absent OAuth client ID/secret in local env and no safe automatic refresh trigger; no expiry was forced. No ambiguous Pin publish was attempted. Pool tests do not yet prove connection replacement after a real disconnect. DeepSeek success is a single sample and does not isolate intermittent 503 root cause.
+
+
+### Continuation checkpoint — 2026-10-30 02:20 PKT
+
+- Remote Desktop Commander recovered; latest local HEAD remains `1292516` on `fix/pb06-analytics-forward-port`. No push/deployment or source code change was made.
+- Full local tests: **78 passed, 1 existing Starlette/httpx deprecation warning**; `git diff --check` and `python -m compileall -q app tests` pass.
+- Additional local-only tests cover pool checkout/lifecycle, sanitized DeepSeek diagnostic failures, HTTP 503 retry/provider-code sanitization, and publication idempotency states (`pending`, `unknown`, `succeeded` block retry; `failed` can reserve retry).
+- Historical checkpoint (2026-10-29): at that time, no reconciler existed. Current 2026-10-30 status: operator-only reconciliation path and stateful fake-DB tests are now present; real isolated persistence proof and exact-head CI/review are still pending. Never retry `unknown` blindly.
+- PB-10 remains OPEN: pool lifecycle/checkout delegation tested; real stale DB connection replacement/reconnect is still not proven.
+- PB-13 remains OPEN: failure diagnostics safely retain provider code in service logs and 503 retry is tested; live intermittent 503 root cause remains unknown.
+- PB-05 remains OPEN: no OAuth client ID/secret in local protected env file, so no genuine refresh call attempted; no token/expiry modified. No Pin published.
+
+
+### PB-07 focused implementation — 2026-10-30
+
+- Added `GET /publications/{publication_id}` (database-only status inspection) and `POST /publications/{publication_id}/reconcile` (operator-only state transition), both protected by the configured Agent `X-API-Key`.
+- Added `app.database.get_publication()` and `reconcile_unknown_publication()`. Reconciliation locks the target record, permits only `unknown`, requires a Pin ID to mark `succeeded`, forbids a Pin ID for operator-confirmed `failed`, and stores non-secret operator evidence in `response_metadata.reconciliation`. Neither endpoint sends a Pinterest request or publishes a Pin.
+- Added `tests/test_publish_reconciliation.py` for status reads, auth, payload validation, route-to-database behavior, non-unknown rejection, and required verified ID. Targeted suite (publication guard + reconciliation + workflow persistence recovery): **13 passed**. Full local suite: **85 passed, 1 existing Starlette/httpx deprecation warning**. `python -m compileall -q app tests` and `git diff --check` pass.
+- Added `docs/PB-07-PUBLISH-RECOVERY.md`: read all `GET /v5/boards/{board_id}/pins` pagination pages, verify candidates with `GET /v5/pins/{pin_id}`, stop on incomplete/erroring lookup or ambiguity, and explicitly document operator evidence. No production write or live publish was attempted.
+- **PB-07 status: IMPLEMENTED LOCALLY; NOT CLOSED.** The expanded suite now exercises `unknown` -> verified `succeeded` -> retry remains blocked, `unknown` -> operator-confirmed `failed` -> one retry reservation, audit metadata, and rejection of second transitions. Full suite: **89 passed**. Still requires code review, exact-head CI after the change is reviewed/merged, and isolated PostgreSQL/provider-stub or disposable-account scenario proving durable `unknown` -> retry blocked -> read-only board check -> explicit reconciliation -> final state. Local Docker/PostgreSQL are unavailable, so the stateful test uses a fake SQL harness and is not evidence of real transaction durability. No commit/push/deployment has occurred.
