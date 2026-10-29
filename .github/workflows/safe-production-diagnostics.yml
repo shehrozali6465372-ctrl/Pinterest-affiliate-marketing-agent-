@@ -55,7 +55,7 @@ jobs:
               "http_status": status,
               "ok": body.get("ok") is True and 200 <= status < 300,
               "checks": {
-                  name: {k: v for k, v in item.items() if k in {"ok", "check", "http_status", "model", "media_source_type", "image_bytes_persisted", "uploaded_to_cloudflare_images", "title_returned", "description_returned", "alt_text_returned", "skipped", "error"}}
+                  name: {k: v for k, v in item.items() if k in {"ok", "check", "http_status", "model", "media_source_type", "image_bytes_persisted", "uploaded_to_cloudflare_images", "title_returned", "description_returned", "alt_text_returned", "skipped"}}
                   for name, item in checks.items() if isinstance(item, dict)
               },
               "side_effects": {
@@ -65,8 +65,21 @@ jobs:
               "secrets_returned": body.get("secrets_returned") if isinstance(body, dict) else None,
           }
           print(json.dumps(summary, separators=(",", ":")))
-          if summary["ok"] is not True or any(v.get("ok") is not True for v in summary["checks"].values()):
+          if summary["ok"] is not True:
               raise SystemExit(1)
-          if summary["side_effects"].get("pinterest_pin_created") is not False or summary["side_effects"].get("pinterest_board_created") is not False:
-              raise SystemExit("Unsafe diagnostic side-effect contract.")
+          if len(summary["checks"]) < 4:
+              raise SystemExit("Expected all four provider diagnostic checks; refusing an incomplete/empty result.")
+          if any(v.get("ok") is not True for v in summary["checks"].values()):
+              raise SystemExit(1)
+          if summary["secrets_returned"] is not False:
+              raise SystemExit("Diagnostic did not explicitly confirm secrets_returned=false.")
+          no_side_effects = (
+              "pinterest_pin_created",
+              "pinterest_board_created",
+              "product_persisted",
+              "cloudflare_test_image_uploaded",
+              "generated_image_persisted",
+          )
+          if any(summary["side_effects"].get(k) is not False for k in no_side_effects):
+              raise SystemExit("Unsafe or unconfirmed diagnostic side-effect contract.")
           PY
