@@ -1,27 +1,51 @@
 """Opt-in integration test for pooled-connection recovery after backend loss.
 
-Run only against a disposable PostgreSQL/Neon test branch:
+Run only against the dedicated disposable Neon test branch:
 PB10_TEST_DATABASE_URL=... pytest -q tests/test_database_pool_recovery_integration.py
 
-This test terminates one backend session on the supplied test database; it must
-never point at production.
+This test terminates one backend session; it must never point at production.
 """
 import os
 import time
+from urllib.parse import urlsplit
 
 import psycopg
 import pytest
 from psycopg_pool import ConnectionPool
+
+_DISPOSABLE_HOST = "ep-ancient-cherry-arpqssmi-pooler.c-4.us-west-2.aws.neon.tech"
+
+
+def _is_dedicated_disposable_uri(conninfo: str) -> bool:
+    """Accept only the exact disposable Neon URI host; reject keyword DSNs."""
+    parsed = urlsplit(conninfo)
+    return (
+        parsed.scheme in {"postgres", "postgresql"}
+        and parsed.hostname is not None
+        and parsed.hostname.lower() == _DISPOSABLE_HOST
+        and parsed.username is not None
+        and parsed.path == "/pinterest_affiliate"
+    )
+
+
+def test_disposable_url_guard_rejects_keyword_dsn_host_bypass():
+    assert not _is_dedicated_disposable_uri(
+        "host=prod.db.example dbname=pb10-test user=test password=not-a-real-secret"
+    )
+    assert not _is_dedicated_disposable_uri(
+        "postgresql://test@prod.db.example/pinterest_affiliate"
+    )
+    assert _is_dedicated_disposable_uri(
+        "postgresql://test:masked@ep-ancient-cherry-arpqssmi-pooler.c-4.us-west-2.aws.neon.tech/pinterest_affiliate?sslmode=require"
+    )
 
 
 def test_pool_replaces_backend_terminated_on_disposable_test_branch():
     conninfo = os.getenv("PB10_TEST_DATABASE_URL")
     if not conninfo:
         pytest.skip("PB10_TEST_DATABASE_URL is not configured")
-
-    host = conninfo.split("@", 1)[-1].split("/", 1)[0].lower()
-    if "ep-ancient-cherry-arpqssmi" not in host and "pb10-test" not in host:
-        pytest.skip("Set PB10_TEST_DATABASE_URL to the dedicated PB-10 disposable Neon branch")
+    if not _is_dedicated_disposable_uri(conninfo):
+        pytest.skip("PB10_TEST_DATABASE_URL must use the exact dedicated disposable Neon URI host and database")
 
     def check_connection(conn):
         conn.execute("")
