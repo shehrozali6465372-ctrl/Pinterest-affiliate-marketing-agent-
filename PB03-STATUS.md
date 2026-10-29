@@ -102,3 +102,12 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Codex re-review completed on the updated head with **no findings**. PR #33 remains open and unmerged. Keep PB-13 OPEN until real sanitized telemetry identifies the intermittent HTTP 503 root cause.
 - No real provider request, production mutation, Pinterest write, Pin/board creation, token rotation, or Render deployment occurred.
 - PB-10 remains OPEN; pool lifecycle unit tests do not prove real stale-connection replacement/reconnect. PB-07 remains OPEN pending operator read-only verification and release gate. No new Pin may be published without separate explicit approval.
+
+
+### PB-10 disposable Neon backend-recovery verification — 2026-10-30
+
+- Dedicated child branch `pb10-pool-recovery-test-20261030` (`br-nameless-boat-arbem2q0`) created from Neon project `pinterest-affiliate-marketing-agent` main with low-capacity read-write compute and pooling disabled. Read-only probe confirmed the expected database and role.
+- Fault-injection experiment with Psycopg 3.3.6 and psycopg_pool 3.3.3: terminated one backend PID leased by a standalone pool on that disposable branch. The next checkout/query recovered successfully with a different backend PID and `SELECT 1` passed. Result: `pool_recovered=true`. This was isolated from the production database.
+- Added opt-in integration test `tests/test_database_pool_recovery_integration.py`; it skips by default without `PB10_TEST_DATABASE_URL`, enforces a test-host allowlist, and verifies the replacement backend PID. Do not run with production credentials.
+- Test result with the child branch URL: **7 passed** (pool integration plus existing unit tests); `compileall` and `git diff --check` passed. No production connection was terminated or production data changed.
+- This is not yet in a PR or deployed. PB-10 is **verified on disposable Neon, but blocker remains OPEN** pending isolated branch/CI/review and release verification. PB-07 remains open for operator board verification; PB-13 remains open for real intermittent 503 root-cause evidence; PB-05 remains open for genuine token-refresh lifecycle proof. No live Pin published.
