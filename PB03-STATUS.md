@@ -136,3 +136,12 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Latest PR #34 code head: `0a1db20212f6b5e0a1ad5970ab0d590bd0ab2595`. Exact-head Python Tests run `40973794556` and Python CI run `40973794511` passed. Full local suite: **92 passed, 4 skipped, 1 existing Starlette/httpx deprecation warning**; compileall and git diff checks passed.
 - Codex re-review of this head is running at last check. The two unresolved P2 review threads concern inherited `PGHOSTADDR` and missing explicit TLS mode, both targeted by the current code; do not merge until Codex confirms or provides a current finding.
 - The isolated Neon fault-injection experiment itself succeeded: terminating the pooled backend on the disposable branch was followed by a successful pooled query on a different PID. No production DB session/data changed. Render still runs `871315d780ecc6c6c66e14d84792d3863cae0243` and health returns HTTP 200. No merge/deploy.
+
+
+### Final PB-10 review verification — 2026-10-30
+
+- PR #34 latest head `0a1db20212f6b5e0a1ad5970ab0d590bd0ab2595` passed Python Tests run `40973794556` and Python CI run `40973794511`. Codex review completed with `has_any_findings=false` and `has_unresolved_findings=false` on this exact head.
+- All prior PB-10 test-safety review threads are resolved: keyword-DSN bypass, query routing/db overrides, multi-host fallback, inherited `PGHOSTADDR`, and missing explicit TLS mode. The guard requires exact single-host disposable Neon URI/database, rejects explicit ports/routing query overrides, requires one secure `sslmode` and `channel_binding=require`, and strips inherited libpq target/TLS environment overrides before either connection.
+- Local full suite: **92 passed, 4 skipped, 1 existing Starlette/httpx deprecation warning**; focused pool test guard + pool lifecycle tests: 7 passed, 1 skipped; compileall and diff checks pass. Dedicated Neon child-branch backend termination followed by recovery on a different PID is proven.
+- PR #34 remains open and unmerged. PB-10 has strong isolated recovery evidence but stays OPEN pending deliberate release decision and deployed-version verification. Render auto-deploys on `main`, and latest live deployment remains `871315d780ecc6c6c66e14d84792d3863cae0243`; live `/health` HTTP 200.
+- No production DB session killed or data changed; no real Pin/board created; no token rotated; no Render deploy or merge occurred.
