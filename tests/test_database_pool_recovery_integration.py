@@ -71,10 +71,3 @@ def test_pool_replaces_backend_terminated_on_disposable_test_branch():
         assert replacement_pid != stale_pid
     finally:
         pool.close()
-
-
-### PB-10 integration CI fix and current state — 2026-10-30
-
-- PR #34 initial CI failed during collection because an execution-transcript footer was accidentally appended to the test source. The test source has now been fully rewritten with Python-only content; check the new exact-head CI before considering merge.
-- Local disposable-branch test passed: after backend PID termination, the pool recovered with a different backend PID and `SELECT 1` succeeded. Focused suite: 7 passed.
-- PR #34 remains open; no merge or deployment is authorized by the current checkpoint. The test uses an explicit `PB10_TEST_DATABASE_URL` and a dedicated-host allowlist so it skips by default and cannot silently target normal production credentials.
