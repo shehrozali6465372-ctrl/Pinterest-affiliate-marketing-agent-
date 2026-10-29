@@ -180,14 +180,14 @@ def generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
             )
-        headers = getattr(response, "headers", {})
-        content_type = headers.get("content-type", "unknown") if hasattr(headers, "get") else "unknown"
-        response_bytes = len(getattr(response, "content", b"") or b"")
+        metadata = _safe_http_failure_metadata(
+            response, int((time.monotonic() - request_started) * 1000)
+        )
         logger.error(
             "DeepSeek API response JSON failure: status=%s content_type=%s response_bytes=%s",
-            response.status_code,
-            content_type,
-            response_bytes,
+            metadata["status"],
+            metadata["content_type"],
+            metadata["response_bytes"],
         )
         raise ContentGenerationError("DeepSeek API returned an invalid JSON response envelope.") from exc
 

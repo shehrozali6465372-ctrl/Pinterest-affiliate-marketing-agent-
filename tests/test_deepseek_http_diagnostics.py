@@ -113,3 +113,42 @@ def test_http_failure_redacts_secret_reflected_in_provider_metadata(monkeypatch,
     assert "provider_code=_REDACTED_" in caplog.text
     assert "content_type=application/_REDACTED_" in caplog.text
     assert "request_id=_REDACTED_" in caplog.text
+
+
+
+def test_invalid_json_retry_exhaustion_redacts_secret_from_content_type(monkeypatch, caplog):
+    secret = "unit-test-api-secret"
+    monkeypatch.setattr(settings, "llm_api_key", secret)
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
+    monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
+    responses = [
+        httpx.Response(
+            200,
+            request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
+            headers={"content-type": f"application/{secret}"},
+            content=b"not-json",
+        )
+        for _ in range(2)
+    ]
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, headers, json):
+            return responses.pop(0)
+
+    monkeypatch.setattr("app.content_generation.httpx.Client", FakeClient)
+
+    with pytest.raises(ContentGenerationError, match="invalid JSON response envelope"):
+        generate_pin_content(**PRODUCT)
+
+    assert secret not in caplog.text
+    assert "content_type=application/_REDACTED_" in caplog.text
+    assert "response_bytes=8" in caplog.text
