@@ -369,7 +369,7 @@ def reconcile_unknown_publication(
                        error_code = NULL,
                        response_metadata = COALESCE(response_metadata, '{}'::jsonb)
                            || jsonb_build_object('reconciliation', jsonb_build_object(
-                               'method', 'operator_board_verification', 'evidence', %s)),
+                               'method', 'operator_board_verification', 'evidence', %s::text)),
                        updated_at = now()
                    WHERE id = %s RETURNING *""",
                 (pin_id, evidence, publication_id),
@@ -381,7 +381,7 @@ def reconcile_unknown_publication(
                        error_code = 'operator_verified_pin_absent',
                        response_metadata = COALESCE(response_metadata, '{}'::jsonb)
                            || jsonb_build_object('reconciliation', jsonb_build_object(
-                               'method', 'operator_board_verification', 'evidence', %s)),
+                               'method', 'operator_board_verification', 'evidence', %s::text)),
                        updated_at = now()
                    WHERE id = %s RETURNING *""",
                 (evidence, publication_id),
