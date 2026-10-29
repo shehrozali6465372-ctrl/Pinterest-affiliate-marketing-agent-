@@ -136,6 +136,7 @@ def test_learning_loop_parses_top_level_summary_metrics_and_omitted_zero_metrics
         def json(self):
             return {"all": {"summary_metrics": {
                 "IMPRESSION": 120, "SAVE": 9, "PIN_CLICK": 22,
+                # OUTBOUND_CLICK omitted by Pinterest when no data is returned.
             }, "daily_metrics": []}}
 
     class Client:
