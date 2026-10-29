@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
@@ -27,6 +29,33 @@ class GeneratedContent(BaseModel):
 
 class ContentGenerationError(RuntimeError):
     """Raised when the real provider cannot return valid content."""
+
+
+def _safe_http_failure_metadata(response: httpx.Response, elapsed_ms: int) -> dict[str, str | int]:
+    """Return bounded provider diagnostics without response bodies or credentials."""
+    provider_code = "unknown"
+    try:
+        error_body = response.json()
+        error_obj = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+        if isinstance(error_obj, dict):
+            candidate = error_obj.get("type") or error_obj.get("code")
+            if isinstance(candidate, (str, int)):
+                provider_code = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(candidate))[:80] or "unknown"
+    except (ValueError, TypeError):
+        pass
+    headers = getattr(response, "headers", {})
+    content_type = str(headers.get("content-type", "unknown"))[:100] if hasattr(headers, "get") else "unknown"
+    raw_request_id = headers.get("x-request-id") or headers.get("request-id") if hasattr(headers, "get") else None
+    request_id = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(raw_request_id))[:80] if raw_request_id else "unknown"
+    response_bytes = len(getattr(response, "content", b"") or b"")
+    return {
+        "status": int(response.status_code),
+        "provider_code": provider_code,
+        "content_type": content_type,
+        "response_bytes": response_bytes,
+        "request_id": request_id,
+        "duration_ms": max(0, int(elapsed_ms)),
+    }
 
 
 def generate_pin_content(
@@ -82,6 +111,7 @@ def generate_pin_content(
         "max_tokens": 2400,
         "stream": False,
     }
+    request_started = time.monotonic()
     try:
         with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
             response = client.post(
@@ -94,31 +124,26 @@ def generate_pin_content(
             )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        elapsed_ms = int((time.monotonic() - request_started) * 1000)
+        metadata = _safe_http_failure_metadata(exc.response, elapsed_ms)
         if _retry_attempt == 0 and (exc.response.status_code == 429 or exc.response.status_code >= 500):
-            logger.warning("DeepSeek transient HTTP failure; retrying once: status=%s", exc.response.status_code)
+            logger.warning(
+                "DeepSeek transient HTTP failure; retrying once: status=%s provider_code=%s attempt=1 duration_ms=%s content_type=%s response_bytes=%s request_id=%s",
+                metadata["status"], metadata["provider_code"], metadata["duration_ms"],
+                metadata["content_type"], metadata["response_bytes"], metadata["request_id"],
+            )
             return generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
             )
-        # Log status and a bounded provider error code/message only; never log request headers,
-        # API keys, prompt contents, or the full response body.
-        provider_code = "unknown"
-        try:
-            error_body = exc.response.json()
-            error_obj = error_body.get("error", {}) if isinstance(error_body, dict) else {}
-            if isinstance(error_obj, dict):
-                candidate = error_obj.get("type") or error_obj.get("code")
-                if isinstance(candidate, (str, int)):
-                    provider_code = str(candidate)[:80]
-        except (ValueError, TypeError):
-            pass
+        # Never log request headers, API keys, prompt contents, or response bodies.
         logger.error(
-            "DeepSeek HTTP failure: status=%s provider_code=%s",
-            exc.response.status_code,
-            provider_code,
+            "DeepSeek HTTP failure: status=%s provider_code=%s attempt=%s duration_ms=%s content_type=%s response_bytes=%s request_id=%s",
+            metadata["status"], metadata["provider_code"], _retry_attempt + 1,
+            metadata["duration_ms"], metadata["content_type"], metadata["response_bytes"], metadata["request_id"],
         )
         raise ContentGenerationError(
-            f"DeepSeek request rejected (HTTP {exc.response.status_code}; provider_code={provider_code})."
+            f"DeepSeek request rejected (HTTP {exc.response.status_code}; provider_code={metadata['provider_code']})."
         ) from exc
     except httpx.HTTPError as exc:
         if _retry_attempt == 0:
