@@ -101,3 +101,14 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - Corrective commit `25fa037c8b325891e27a4995bed990bcb0b5826b` rewrote the GitHub test file to Python-only source. Exact-head CI must be checked again before considering PR #34 valid.
 - The isolated Neon fault-injection experiment remains successful: on the dedicated child branch, backend PID termination was followed by a successful pooled query on a different PID and `SELECT 1`. Focused local tests previously passed 7/7.
 - No merge or deployment. Do not push or merge the local PB-07 branch because it retains a local context edit and is separate from PR #34.
+
+
+### Final continuation status — 2026-10-30
+
+- PR #32: latest documentation checkpoint commit `2952cae4873846e250d241a6eaed30e803fa6baf`; Python Tests + Python CI pass; Codex review completed with no findings.
+- PR #33: credential redaction fix commit `23e15ecb95735108666ba6c8336006d928a0500c`; Python Tests + Python CI passed; Codex re-review completed with no findings. PB-13 remains open for actual intermittent production 503 root-cause evidence.
+- PR #34: `fix/pb10-disposable-pool-recovery`, latest test-source head `25fa037c8b325891e27a4995bed990bcb0b5826b`. Python Tests run `40970940524` and Python CI run `40970940526` both succeeded. The integration test was checked by fetching the exact GitHub file and confirming the tail is Python-only. Codex status remains running at last status query; a new comment requested reconciliation of review status. No inline review threads exist so far.
+- PB-10 disposable Neon integration: manually terminated backend PID on child branch; next pooled query succeeded on a different PID, with `SELECT 1` successful. Targeted pool integration + unit tests passed **7/7** locally. This is strong isolated recovery evidence, but PR #34 is not merged/deployed.
+- Render service is confirmed configured to auto-deploy commits on `main`; latest live deploy remains `871315d780ecc6c6c66e14d84792d3863cae0243`. Agent `/health` returned HTTP 200 with `{"status":"ok","service":"pinterest-affiliate-model-1"}` after the free-service wake-up timeout. New PB-10 code is not in Render.
+- PR #34 has not been merged. No Render deploy was triggered. No production PostgreSQL sessions were killed; no production DB data modified; no Pinterest write, Pin/board creation, or credential rotation occurred.
+- Remaining blockers: PB-07 operator board-verification/release gate; PB-10 PR review/merge/deployed verification (isolated backend recovery proved); PB-13 real intermittent-503 root cause; PB-05 real token-refresh lifecycle. Do not claim these blockers closed solely from unit/CI success.
