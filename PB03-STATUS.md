@@ -82,3 +82,11 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Exact-head GitHub CI passed on `1de70ec`: Python Tests run `41041546460`; Python CI with PostgreSQL 16 service run `41041546479`. PostgreSQL CI log: **96 passed, 1 skipped, 1 warning**. Local full suite: **92 passed, 5 skipped** because disposable PostgreSQL is not configured locally; compileall and diff check passed.
 - This closes the missing HTTP/API-to-disposable-PostgreSQL integration-test gap. It does **not** prove a real Pinterest incident or live board pagination; the read-only board verification remains an operator runbook procedure. Production still has zero `unknown` rows, so no record was manufactured or reconciled.
 - PR #32 remains open/unmerged. Render auto-deploys commits to `main`; no merge/deploy performed. No Pinterest write, Pin/board creation, token rotation, or production DB mutation.
+
+### PB-07 — OPEN again for follow-up live verification (2026-10-30)
+
+- Previously closed by explicit owner acceptance of the remaining live board verification gap. Owner has now requested that the gap be fixed; PB-07 is **reopened / OPEN** pending deployment and live read-only verification.
+- PR #43: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/43, head `ae8268ca0663ba2c36cabb325d3f7f4bb4c191b2`. Adds protected read-only publication verification, complete bookmark pagination, stored Pin listing match, direct Pin detail match, and a manual production verification workflow.
+- Exact-head GitHub Python CI run `41078263644` and Python tests run `41078263788` passed. Local full suite: **114 passed, 5 skipped**; focused suite: **19 passed**.
+- Not yet merged or deployed. Live production verification has not run; no live Pinterest call, production DB mutation, Pin/board creation, or deployment occurred.
+- Close PB-07 after PR review/merge/deployment and a successful read-only production verification of an existing publication. This verifies real board authorization/pagination and Pin detail; retain the separate note that no real ambiguous production recovery was rehearsed.

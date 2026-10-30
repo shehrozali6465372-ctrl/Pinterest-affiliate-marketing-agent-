@@ -2,6 +2,12 @@ name: Read-only production auth and provider verification
 
 on:
   workflow_dispatch:
+    inputs:
+      publication_id:
+        description: "Existing publication record ID to verify read-only (default: known succeeded record 1)"
+        required: true
+        default: "1"
+        type: string
 
 permissions:
   contents: read
@@ -17,6 +23,7 @@ jobs:
     env:
       AGENT_BASE_URL: https://pinterest-affiliate-marketing-agent.onrender.com
       APP_API_KEY: ${{ secrets.PINTEREST_AGENT_APP_API_KEY }}
+      PUBLICATION_ID: ${{ inputs.publication_id }}
     steps:
       - name: Validate secret presence without revealing it
         shell: bash
@@ -78,4 +85,45 @@ jobs:
               raise SystemExit(1)
           if providers.get("cloudflare", {}).get("verified") is not True:
               raise SystemExit(1)
+          PY
+
+      - name: Verify an existing Pinterest publication read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.error, urllib.request
+          base = os.environ["AGENT_BASE_URL"].rstrip("/")
+          publication_id = os.environ["PUBLICATION_ID"]
+          if not publication_id.isdigit() or int(publication_id) <= 0:
+              raise SystemExit("publication_id must be a positive integer")
+          req = urllib.request.Request(
+              f"{base}/publications/{publication_id}/pinterest-verification",
+              headers={"X-API-Key": os.environ["APP_API_KEY"], "Accept": "application/json"},
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=90) as response:
+                  status, payload = response.status, json.loads(response.read())
+          except urllib.error.HTTPError as exc:
+              status, payload = exc.code, {}
+          summary = {
+              "http_status": status,
+              "publication_id": publication_id,
+              "publication_status": payload.get("publication_status"),
+              "board_pages_read": payload.get("board_pages_read"),
+              "board_pins_seen": payload.get("board_pins_seen"),
+              "pagination_complete": payload.get("pagination_complete"),
+              "stored_pin_found_on_board": payload.get("stored_pin_found_on_board"),
+              "pin_detail_board_matches": payload.get("pin_detail_board_matches"),
+              "read_only": payload.get("read_only"),
+              "secrets_returned": False,
+              "pinterest_write_performed": False,
+              "database_modified": False,
+          }
+          print(json.dumps(summary, separators=(",", ":")))
+          if status != 200 or payload.get("pagination_complete") is not True:
+              raise SystemExit(1)
+          if payload.get("publication_status") == "succeeded":
+              if payload.get("stored_pin_found_on_board") is not True or payload.get("pin_detail_board_matches") is not True:
+                  raise SystemExit(1)
           PY

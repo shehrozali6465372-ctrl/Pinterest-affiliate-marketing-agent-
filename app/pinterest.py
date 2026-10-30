@@ -2,6 +2,7 @@
 from __future__ import annotations
 import base64
 import re
+from urllib.parse import quote
 import httpx
 from app.config import settings
 
@@ -54,3 +55,82 @@ def publish_image_pin(*, board_id: str, title: str, description: str, alt_text: 
         raise PinterestPublishError("Pinterest did not return a Pin ID; the publish outcome is uncertain.", outcome_uncertain=True, http_status=response.status_code, error_code="missing_pin_id")
     metadata = {"id": pin_id, "board_id": body.get("board_id") if isinstance(body.get("board_id"), str) else board_id, "created_at": body.get("created_at") if isinstance(body.get("created_at"), str) else None}
     return {"pin_id": pin_id, "http_status": response.status_code, "metadata": metadata}
+
+
+class PinterestReadError(RuntimeError):
+    """A sanitized error from a read-only Pinterest verification request."""
+
+
+def list_board_pins_read_only(
+    *, board_id: str, access_token: str, page_size: int = 250, max_pages: int = 100,
+) -> dict[str, object]:
+    """Read every page of a Pinterest board; never creates or changes Pins.
+
+    Pagination fails closed on malformed/repeated bookmarks or provider errors.
+    The API host is derived only from configured Pinterest API base URL.
+    """
+    if not board_id or not board_id.strip():
+        raise ValueError("board_id is required")
+    if not access_token or not access_token.strip():
+        raise ValueError("access_token is required")
+    if not 1 <= page_size <= 250 or not 1 <= max_pages <= 100:
+        raise ValueError("page_size or max_pages is outside the supported safety bound")
+
+    endpoint = f"{settings.pinterest_api_base_url.rstrip('/')}/boards/{quote(board_id, safe='')}/pins"
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    items: list[dict[str, object]] = []
+    seen_bookmarks: set[str] = set()
+    bookmark: str | None = None
+    pages = 0
+    try:
+        with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+            while True:
+                params: dict[str, object] = {"page_size": page_size}
+                if bookmark is not None:
+                    params["bookmark"] = bookmark
+                response = client.get(endpoint, headers=headers, params=params)
+                if response.status_code >= 400:
+                    raise PinterestReadError(f"Pinterest board read failed with HTTP {response.status_code}")
+                try:
+                    body = response.json()
+                except ValueError as exc:
+                    raise PinterestReadError("Pinterest board read returned invalid JSON") from exc
+                if not isinstance(body, dict) or not isinstance(body.get("items"), list):
+                    raise PinterestReadError("Pinterest board response has an invalid items collection")
+                pages += 1
+                for item in body["items"]:
+                    if isinstance(item, dict):
+                        items.append(item)
+                next_bookmark = body.get("bookmark")
+                if next_bookmark in (None, ""):
+                    return {"items": items, "pages_read": pages, "pagination_complete": True}
+                if not isinstance(next_bookmark, str) or next_bookmark in seen_bookmarks:
+                    raise PinterestReadError("Pinterest board pagination bookmark is invalid or repeated")
+                if pages >= max_pages:
+                    raise PinterestReadError("Pinterest board pagination safety limit reached; verification incomplete")
+                seen_bookmarks.add(next_bookmark)
+                bookmark = next_bookmark
+    except httpx.RequestError as exc:
+        raise PinterestReadError("Pinterest board read failed due to a transport error") from exc
+
+
+def get_pin_read_only(*, pin_id: str, access_token: str) -> dict[str, object]:
+    """Fetch one Pin's details from Pinterest; performs no write operation."""
+    if not pin_id or not pin_id.strip():
+        raise ValueError("pin_id is required")
+    if not access_token or not access_token.strip():
+        raise ValueError("access_token is required")
+    endpoint = f"{settings.pinterest_api_base_url.rstrip('/')}/pins/{quote(pin_id, safe='')}"
+    try:
+        with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+            response = client.get(endpoint, headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"})
+        if response.status_code >= 400:
+            raise PinterestReadError(f"Pinterest Pin detail read failed with HTTP {response.status_code}")
+        body = response.json()
+        if not isinstance(body, dict):
+            raise PinterestReadError("Pinterest Pin detail response is invalid")
+        return body
+    except httpx.RequestError as exc:
+        raise PinterestReadError("Pinterest Pin detail read failed due to a transport error") from exc
+    except ValueError as exc:
+        raise PinterestReadError("Pinterest Pin detail returned invalid JSON") from exc
