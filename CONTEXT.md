@@ -143,3 +143,12 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 
 - Render log review (2026-10-23 to 2026-10-30 UTC): two DeepSeek application events surfaced (JSONDecodeError and schema-invalid retry, both 2026-10-26); no HTTP 503 request log matched `/products/*/content`. This is not proof no provider 503 happened; deployed code lacks the new status/request-ID telemetry. No quota/overload conclusion is supported.
 - PB-05 read-only Neon metadata: one connected Pinterest account; both encrypted token blobs exist; access expiry `2026-11-27T09:26:42Z`, refresh expiry `2026-12-27T09:26:41Z`, last update `2026-10-28T09:26:42Z`. No token was decrypted or rotated; no forced refresh was attempted because the access token is not near expiry. PB-05 remains open pending genuine server-side refresh/persistence evidence.
+
+
+### PB-10 final verification — CLOSED (2026-10-30)
+
+- Live Render deploy `dep-dbhgngpsrm7s73fqdsc0` is at SHA `871315d780ecc6c6c66e14d84792d3863cae0243`; deployed `app/database.py` contains psycopg pool checkout validation via `ConnectionPool.check_connection`.
+- PR #34 merged as `77cf19220425619fb041a638e12be13815cb41d4` and adds only an opt-in isolated recovery test. Exact-head CI passed (Python Tests `40973794556`, Python CI `40973794511`); Codex review found no issues on the reviewed test head.
+- Disposable Neon child-branch fault injection proved backend replacement: after terminating a pooled backend PID, the next pooled query succeeded on a different PID. The test target guard strictly pins the disposable Neon URI/database and requires secure TLS/channel binding.
+- Final production-safe probes passed: Neon main `SELECT 1` returned 1; Render `/health` returned HTTP 200 with the expected service identity. No production session was terminated or data changed.
+- No new deployment was required because live SHA `871315d` already contains the runtime recovery checker; PR #34 changed tests only. Do not state `77cf192` is deployed. PB-10 is closed.

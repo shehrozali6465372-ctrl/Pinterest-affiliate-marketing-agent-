@@ -169,3 +169,12 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 
 - **Live log correlation (Render, 2026-10-23 through 2026-10-30 UTC):** Application log search for `DeepSeek` returned two older parsing/schema events (a `JSONDecodeError` on 2026-10-26 and “content schema invalid; retrying once” on 2026-10-26). A separate request-log search for HTTP 503 on `/products/*/content` returned no matching requests. This does not prove no provider 503 occurred; deployed code does not yet emit the new HTTP-status/request-ID telemetry. Do not infer quota or provider overload from this evidence.
 - **PB-05 token metadata (read-only):** Neon confirms one connected account `pinterest:1069323642682526567`; access-token ciphertext and refresh-token ciphertext are both present. Access expiry is `2026-11-27T09:26:42Z`; refresh expiry is `2026-12-27T09:26:41Z`; last update `2026-10-28T09:26:42Z`. No token was decrypted, refreshed, rotated, or modified. The access token is not near expiry, so no forced refresh was attempted; PB-05 remains OPEN until a natural/approved server-side refresh is evidenced.
+
+
+### PB-10 closure — deployed runtime and isolated recovery verified (2026-10-30)
+
+- **PB-10 — CLOSED.** The live Render deployment `dep-dbhgngpsrm7s73fqdsc0` is `live` at SHA `871315d780ecc6c6c66e14d84792d3863cae0243`. The exact deployed `app/database.py` contains lazy psycopg pool creation with `check=ConnectionPool.check_connection` on checkout.
+- PR #34 was merged as `77cf19220425619fb041a638e12be13815cb41d4`; it adds the opt-in disposable PostgreSQL/Neon recovery integration test only and does not change runtime code. Exact-head Python Tests `40973794556` and Python CI `40973794511` passed; Codex review on the reviewed test head had no findings.
+- The isolated Neon child-branch fault-injection experiment terminated a pooled backend PID; the next pooled query succeeded on a different backend PID and `SELECT 1` passed. The integration test has strict target/TLS guards and is opt-in.
+- Final safe production verification: Neon main `SELECT 1` returned `1`; Render `GET /health` returned HTTP 200 with the expected Agent service identity. No production backend was terminated and no production data was modified.
+- No additional deployment was needed: the production runtime already contained the connection-check implementation; PR #34 added test coverage only. PB-10 is closed on this evidence. Do not claim that merge SHA `77cf192` is deployed; the live application SHA remains `871315d`.
