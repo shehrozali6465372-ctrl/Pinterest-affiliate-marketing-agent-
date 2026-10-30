@@ -235,3 +235,37 @@ def test_stateful_unknown_state_still_blocks_retry_without_reconciliation(monkey
     assert attempt["status"] == "unknown"
     assert harness.row["status"] == "unknown"
     assert not any(sql.startswith("UPDATE pin_publications") or sql.startswith("INSERT INTO pin_publications") for sql, _ in harness.calls)
+
+
+def test_read_only_pinterest_verification_route_paginates_and_never_mutates(monkeypatch):
+    headers = auth(monkeypatch)
+    publication = {
+        "id": 7, "account_id": "pinterest:test", "board_id": "board-1",
+        "status": "succeeded", "pinterest_pin_id": "pin-1",
+        "created_at": None, "updated_at": None,
+    }
+    monkeypatch.setattr("app.database.get_publication", lambda publication_id: publication)
+    monkeypatch.setattr("app.credential_vault.get_pinterest_credential", lambda account_id: {"access_token": "never-return-this"})
+    monkeypatch.setattr("app.pinterest.list_board_pins_read_only", lambda **kwargs: {
+        "items": [{"id": "pin-1", "board_id": "board-1", "title": "A", "link": "https://example.test"}],
+        "pages_read": 3, "pagination_complete": True,
+    })
+    monkeypatch.setattr("app.pinterest.get_pin_read_only", lambda **kwargs: {"id": "pin-1", "board_id": "board-1"})
+
+    response = client.get("/publications/7/pinterest-verification", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pagination_complete"] is True
+    assert body["board_pages_read"] == 3
+    assert body["stored_pin_found_on_board"] is True
+    assert body["pin_detail_board_matches"] is True
+    assert body["read_only"] is True
+    assert "access_token" not in str(body)
+    assert "never-return-this" not in str(body)
+
+
+def test_read_only_pinterest_verification_route_requires_auth(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "test-api-key")
+    response = client.get("/publications/7/pinterest-verification")
+    assert response.status_code == 401
