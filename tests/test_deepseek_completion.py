@@ -249,5 +249,3 @@ def test_deepseek_429_is_not_retried_as_a_balance_or_server_error(monkeypatch):
     with pytest.raises(ContentGenerationError, match="HTTP 429"):
         generate_pin_content(**PRODUCT)
     assert len(calls) == 1
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
