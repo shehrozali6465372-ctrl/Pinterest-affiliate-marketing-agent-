@@ -295,5 +295,3 @@ def generate_pin_content(
             f"{AFFILIATE_DISCLOSURE}"
         )
     return content, settings.llm_model
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
