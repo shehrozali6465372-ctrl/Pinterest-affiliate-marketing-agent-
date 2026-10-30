@@ -129,3 +129,14 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - Latest PR #34 source commit: `19c2b0c74216470bd7a7ff203c9bddb7874d7b8e`; exact-head Python CI run `40972632926` and Python Tests run `40972633033` both passed.
 - The two older P2 threads (keyword DSN and query override) are resolved as outdated. Newest multi-host finding was on prior head `6e58098` and is now outdated after the fix; Codex re-review of `19c2b0c` is still running. Keep PR #34 open until the current-head review finishes.
 - Production remains live at `871315d780ecc6c6c66e14d84792d3863cae0243`; live `/health` HTTP 200. No merge/deploy. No production DB session terminated or data modified; no Pinterest write/Pin/board creation/token rotation.
+
+
+
+### PB-07 and PB-13 continuation — 2026-10-30
+
+- Neon production database `pinterest_affiliate` on default branch `main` was queried read-only. `pin_publications` has one `succeeded` row and zero `pending`/`unknown` rows. There is no current production ambiguous publication to reconcile. No SQL write was performed.
+- PR #32 current branch head is `fc7b5bb3d9630e61d9d91426c82c1d866af5d12d`; local full suite: **91 passed, 3 skipped, 1 existing Starlette/httpx deprecation warning**. Earlier exact code-head CI for `f1d17cc`: Python Tests `40965255116` and Python CI `40965255272` passed. Later branch commits are documentation/status only. PR #32 remains open; do not merge because Render auto-deploys main and release sign-off is not complete.
+- PB-07 remains open pending isolated persisted reconciliation proof and explicit release sign-off. Since production has no `unknown` row, do not invoke reconciliation or manufacture a production incident.
+- PR #33 PB-13 branch latest commit `eb9d415c12b93510189d316eb423e10d839ddeb5` fixes a second credential leak path in malformed-success-response retry exhaustion by applying the shared redaction helper to Content-Type metadata. New test reflects the fake configured key in Content-Type. Focused tests **3 passed**; full suite **69 passed**; compileall and diff check pass. Exact-head CI and Codex review have been requested and are pending.
+- PB-13 remains open: intermittent production DeepSeek 503 root cause is not yet established; no real provider request was made during this patch. Do not merge/deploy until CI and review are clean and a real sanitized failure can be correlated.
+- No production DB mutation, Pinterest write, Pin/board creation, token rotation, or Render deploy.
