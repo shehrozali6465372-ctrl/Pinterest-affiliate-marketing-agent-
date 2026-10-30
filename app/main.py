@@ -330,7 +330,9 @@ def refresh_pinterest_credential(
             now + timedelta(seconds=int(token_data["refresh_token_expires_in"]))
         ).isoformat()
     else:
-        refresh_token_expires_at = None
+        # A successful refresh may omit refresh-token expiry metadata. Preserve
+        # the previously stored expiry rather than reporting it as unknown.
+        refresh_token_expires_at = stored.get("refresh_token_expires_at")
 
     try:
         saved = store_pinterest_credential({
@@ -352,7 +354,13 @@ def refresh_pinterest_credential(
         "refreshed": True,
         "account_id": saved["account_id"],
         "expires_at": saved.get("expires_at").isoformat() if saved.get("expires_at") else expires_at,
-        "refresh_token_expires_at": saved.get("refresh_token_expires_at").isoformat() if saved.get("refresh_token_expires_at") else refresh_token_expires_at,
+        "refresh_token_expires_at": (
+            saved.get("refresh_token_expires_at").isoformat()
+            if saved.get("refresh_token_expires_at")
+            else refresh_token_expires_at.isoformat()
+            if isinstance(refresh_token_expires_at, datetime)
+            else refresh_token_expires_at
+        ),
     }
 
 

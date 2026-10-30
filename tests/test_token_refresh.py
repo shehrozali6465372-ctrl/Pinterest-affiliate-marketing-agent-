@@ -105,6 +105,7 @@ def test_refresh_preserves_existing_refresh_token_when_provider_omits_rotation(m
             "username": "test-user",
             "refresh_token": "still-valid-refresh-secret",
             "scope": "pins:read,pins:write",
+            "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
         },
     )
     saved_payloads = []
@@ -148,6 +149,8 @@ def test_refresh_preserves_existing_refresh_token_when_provider_omits_rotation(m
     assert response.status_code == 200, response.text
     assert saved_payloads[0]["access_token"] == "rotated-access-secret"
     assert saved_payloads[0]["refresh_token"] == "still-valid-refresh-secret"
+    assert saved_payloads[0]["refresh_token_expires_at"] == datetime(2030, 1, 1, tzinfo=timezone.utc)
+    assert response.json()["refresh_token_expires_at"] == "2030-01-01T00:00:00+00:00"
     assert "still-valid-refresh-secret" not in response.text
 
 
