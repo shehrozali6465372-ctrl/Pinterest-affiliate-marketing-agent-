@@ -184,10 +184,10 @@ def generate_pin_content(
             response, int((time.monotonic() - request_started) * 1000)
         )
         logger.error(
-            "DeepSeek API response JSON failure: status=%s content_type=%s response_bytes=%s",
-            metadata["status"],
-            metadata["content_type"],
-            metadata["response_bytes"],
+            "DeepSeek API response JSON failure: status=%s content_type=%s response_bytes=%s "
+            "duration_ms=%s request_id=%s",
+            metadata["status"], metadata["content_type"], metadata["response_bytes"],
+            metadata["duration_ms"], metadata["request_id"],
         )
         raise ContentGenerationError("DeepSeek API returned an invalid JSON response envelope.") from exc
 
@@ -204,10 +204,14 @@ def generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
             )
+        metadata = _safe_http_failure_metadata(
+            response, int((time.monotonic() - request_started) * 1000)
+        )
         logger.error(
-            "DeepSeek content type failure: value_type=%s finish_reason=%s",
-            type(raw_content).__name__,
-            finish_reason or "unknown",
+            "DeepSeek content type failure: value_type=%s finish_reason=%s "
+            "status=%s duration_ms=%s request_id=%s",
+            type(raw_content).__name__, finish_reason or "unknown",
+            metadata["status"], metadata["duration_ms"], metadata["request_id"],
         )
         raise ContentGenerationError("DeepSeek returned an unsupported response format.")
 
@@ -229,10 +233,14 @@ def generate_pin_content(
             raise ContentGenerationError(
                 "DeepSeek output reached its token limit before completing valid JSON; retry the request."
             ) from exc
+        metadata = _safe_http_failure_metadata(
+            response, int((time.monotonic() - request_started) * 1000)
+        )
         logger.error(
-            "DeepSeek model JSON parse failure: finish_reason=%s content_chars=%s",
-            finish_reason or "unknown",
-            len(raw_content),
+            "DeepSeek model JSON parse failure: finish_reason=%s content_chars=%s "
+            "status=%s duration_ms=%s request_id=%s",
+            finish_reason or "unknown", len(raw_content), metadata["status"],
+            metadata["duration_ms"], metadata["request_id"],
         )
         raise ContentGenerationError("DeepSeek returned invalid JSON content.") from exc
 
@@ -245,10 +253,14 @@ def generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
             )
+        metadata = _safe_http_failure_metadata(
+            response, int((time.monotonic() - request_started) * 1000)
+        )
         logger.error(
-            "DeepSeek content schema validation failure: finish_reason=%s exception_type=%s",
-            finish_reason or "unknown",
-            type(exc).__name__,
+            "DeepSeek content schema validation failure: finish_reason=%s exception_type=%s "
+            "status=%s duration_ms=%s request_id=%s",
+            finish_reason or "unknown", type(exc).__name__, metadata["status"],
+            metadata["duration_ms"], metadata["request_id"],
         )
         raise ContentGenerationError("DeepSeek JSON did not match the required content schema.") from exc
 

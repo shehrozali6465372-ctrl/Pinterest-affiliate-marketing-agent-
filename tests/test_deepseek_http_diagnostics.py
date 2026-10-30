@@ -125,7 +125,7 @@ def test_invalid_json_retry_exhaustion_redacts_secret_from_content_type(monkeypa
         httpx.Response(
             200,
             request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
-            headers={"content-type": f"application/{secret}"},
+            headers={"content-type": f"application/{secret}", "x-request-id": "envelope/456"},
             content=b"not-json",
         )
         for _ in range(2)
@@ -152,3 +152,5 @@ def test_invalid_json_retry_exhaustion_redacts_secret_from_content_type(monkeypa
     assert secret not in caplog.text
     assert "content_type=application/_REDACTED_" in caplog.text
     assert "response_bytes=8" in caplog.text
+    assert "duration_ms=" in caplog.text
+    assert "request_id=envelope_456" in caplog.text

@@ -164,7 +164,19 @@ def publish_product_end_to_end(
             alt_text=generated.alt_text,
         )
     except Exception as exc:
-        logger.error("workflow stage=product_content_persistence outcome=failed exception_type=%s", type(exc).__name__)
+        # psycopg exposes structured diagnostics for constraint failures. These
+        # fields identify schema drift (for example a NOT NULL column) without
+        # logging SQL, parameters, product data, credentials, or provider output.
+        diagnostic = getattr(exc, "diag", None)
+        sqlstate = getattr(exc, "sqlstate", None) or "unknown"
+        table_name = getattr(diagnostic, "table_name", None) or "unknown"
+        column_name = getattr(diagnostic, "column_name", None) or "unknown"
+        constraint_name = getattr(diagnostic, "constraint_name", None) or "unknown"
+        logger.error(
+            "workflow stage=product_content_persistence outcome=failed "
+            "exception_type=%s sqlstate=%s table=%s column=%s constraint=%s",
+            type(exc).__name__, sqlstate, table_name, column_name, constraint_name,
+        )
         raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. If the transaction rolled back, retry with the same Idempotency-Key; otherwise inspect the stored product before retrying.") from exc
 
     attempt = begin_publish_attempt(

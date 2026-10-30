@@ -111,3 +111,46 @@ def test_ambiguous_pin_publish_marks_attempt_unknown_and_blocks_safe_retry(monke
 
     assert response.status_code == 502
     assert any(item.get("status") == "unknown" and item.get("error_code") == "pinterest_outcome_uncertain" for item in finished)
+
+
+def test_persistence_constraint_failure_logs_safe_schema_diagnostics(monkeypatch, caplog):
+    from types import SimpleNamespace
+    import app.workflow as workflow
+
+    _setup_generation(monkeypatch, workflow)
+    pinterest_calls = []
+
+    def pinterest_request(method, path, token, *, body=None):
+        pinterest_calls.append(path)
+        if path == "/user_account":
+            return 200, {"id": "test-user"}
+        if path == "/boards?page_size=100":
+            return 200, {"items": [{"id": "board-1", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
+        raise AssertionError("No Pinterest write is allowed after persistence fails")
+
+    class SimulatedNotNullViolation(Exception):
+        sqlstate = "23502"
+        diag = SimpleNamespace(
+            table_name="products",
+            column_name="image_url",
+            constraint_name="unknown",
+        )
+
+    monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
+
+    def fail_persistence(**kwargs):
+        raise SimulatedNotNullViolation("do not log raw database error or parameters")
+
+    monkeypatch.setattr(workflow, "create_product_with_content_version", fail_persistence)
+    response = client.post(
+        "/workflow/publish-product",
+        json=_payload(),
+        headers=_headers("persist-not-null-diagnostics-123"),
+    )
+
+    assert response.status_code == 503
+    assert "sqlstate=23502" in caplog.text
+    assert "table=products" in caplog.text
+    assert "column=image_url" in caplog.text
+    assert "do not log raw database error" not in caplog.text
+    assert all(path != "/pins" for path in pinterest_calls)
