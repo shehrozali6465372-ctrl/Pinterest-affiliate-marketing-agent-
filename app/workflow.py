@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
+from uuid import uuid4
 from urllib.parse import urlsplit
 
 import httpx
@@ -25,6 +27,21 @@ router = APIRouter(prefix="/workflow", tags=["end-to-end"])
 def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
     if not settings.app_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+
+
+def _log_workflow_failure(stage: str, exc: Exception, request_id: str, *, http_status: int | None = None) -> None:
+    """Log safe failure classification without exception messages or request data."""
+    diagnostic = getattr(exc, "diag", None)
+    sqlstate = getattr(exc, "sqlstate", None) or "unknown"
+    table_name = getattr(diagnostic, "table_name", None) or "unknown"
+    column_name = getattr(diagnostic, "column_name", None) or "unknown"
+    constraint_name = getattr(diagnostic, "constraint_name", None) or "unknown"
+    logger.error(
+        "workflow stage=%s outcome=failed request_id=%s exception_type=%s http_status=%s "
+        "sqlstate=%s table=%s column=%s constraint=%s",
+        stage, request_id, type(exc).__name__, http_status if http_status is not None else "unknown",
+        sqlstate, table_name, column_name, constraint_name,
+    )
 
 
 class ProductWorkflowInput(BaseModel):
@@ -84,11 +101,14 @@ def _ensure_board(token: str, name: str, description: str) -> str:
 def publish_product_end_to_end(
     payload: ProductWorkflowInput,
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    x_request_id: str | None = Header(default=None, alias="X-Request-ID", max_length=128),
 ) -> dict[str, object]:
     """Generate image and copy before persisting, then publish one Pin."""
+    request_id = re.sub(r"[^A-Za-z0-9_.:-]", "_", x_request_id or str(uuid4()))[:128]
     try:
         existing = get_product_by_idempotency_key(idempotency_key)
     except Exception as exc:
+        _log_workflow_failure("idempotency_state_read", exc, request_id, http_status=503)
         raise HTTPException(status_code=503, detail="Could not verify idempotency state; refusing to start a potentially duplicate workflow.") from exc
     if existing:
         raise HTTPException(
@@ -108,6 +128,7 @@ def publish_product_end_to_end(
     try:
         _pinterest_request("GET", "/user_account", credential["access_token"])
     except HTTPException as exc:
+        _log_workflow_failure("pinterest_credential_verification", exc, request_id, http_status=exc.status_code)
         raise HTTPException(
             status_code=503 if exc.status_code >= 500 else 401,
             detail="Stored Pinterest credential could not be verified. Reconnect the account before publishing.",
@@ -120,10 +141,10 @@ def publish_product_end_to_end(
     try:
         board_id = _ensure_board(token, payload.board_name, payload.board_description)
     except HTTPException as exc:
-        logger.error("workflow stage=board_resolution outcome=failed http_status=%s", exc.status_code)
+        _log_workflow_failure("board_resolution", exc, request_id, http_status=exc.status_code)
         raise
     except Exception as exc:
-        logger.error("workflow stage=board_resolution outcome=failed exception_type=%s", type(exc).__name__)
+        _log_workflow_failure("board_resolution", exc, request_id)
         raise
 
     # Generate both external-provider outputs before consuming the persisted key.
@@ -135,7 +156,7 @@ def publish_product_end_to_end(
             product_details=payload.product_details,
         )
     except ImageGenerationError as exc:
-        logger.error("workflow stage=image_generation outcome=failed detail=%s", str(exc)[:180])
+        _log_workflow_failure("image_generation", exc, request_id, http_status=503)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     try:
@@ -145,7 +166,7 @@ def publish_product_end_to_end(
             image_url=media["image_url"],
         )
     except ContentGenerationError as exc:
-        logger.error("workflow stage=content_generation outcome=failed detail=%s", str(exc)[:180])
+        _log_workflow_failure("content_generation", exc, request_id, http_status=503)
         raise HTTPException(status_code=503, detail="Content generation failed before product persistence; retry with the same Idempotency-Key.") from exc
 
     try:
@@ -167,22 +188,17 @@ def publish_product_end_to_end(
         # psycopg exposes structured diagnostics for constraint failures. These
         # fields identify schema drift (for example a NOT NULL column) without
         # logging SQL, parameters, product data, credentials, or provider output.
-        diagnostic = getattr(exc, "diag", None)
-        sqlstate = getattr(exc, "sqlstate", None) or "unknown"
-        table_name = getattr(diagnostic, "table_name", None) or "unknown"
-        column_name = getattr(diagnostic, "column_name", None) or "unknown"
-        constraint_name = getattr(diagnostic, "constraint_name", None) or "unknown"
-        logger.error(
-            "workflow stage=product_content_persistence outcome=failed "
-            "exception_type=%s sqlstate=%s table=%s column=%s constraint=%s",
-            type(exc).__name__, sqlstate, table_name, column_name, constraint_name,
-        )
+        _log_workflow_failure("product_content_persistence", exc, request_id, http_status=503)
         raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. If the transaction rolled back, retry with the same Idempotency-Key; otherwise inspect the stored product before retrying.") from exc
 
-    attempt = begin_publish_attempt(
-        product_id=product["id"], content_version_id=content["id"],
-        board_id=board_id, account_id=payload.account_id,
-    )
+    try:
+        attempt = begin_publish_attempt(
+            product_id=product["id"], content_version_id=content["id"],
+            board_id=board_id, account_id=payload.account_id,
+        )
+    except Exception as exc:
+        _log_workflow_failure("publication_attempt_create", exc, request_id, http_status=503)
+        raise HTTPException(status_code=503, detail="Publication attempt could not be recorded; no Pinterest Pin was sent. Inspect the product record before retrying.") from exc
     if attempt.get("blocked"):
         if attempt.get("status") == "succeeded":
             return {
@@ -211,6 +227,7 @@ def publish_product_end_to_end(
             response_metadata={"id": pin_id, "board_id": board_id, "created_at": result.get("created_at")},
         )
     except HTTPException as exc:
+        _log_workflow_failure("pinterest_pin_publish", exc, request_id, http_status=exc.status_code)
         try:
             if exc.status_code >= 500:
                 finish_publish_attempt(attempt["id"], status="unknown", error_code="pinterest_outcome_uncertain", response_metadata={})
@@ -220,6 +237,7 @@ def publish_product_end_to_end(
             pass
         raise
     except Exception as exc:
+        _log_workflow_failure("pinterest_publish_recording", exc, request_id, http_status=502)
         try:
             finish_publish_attempt(attempt["id"], status="unknown", error_code="publish_recording_error", response_metadata={})
         except Exception:
