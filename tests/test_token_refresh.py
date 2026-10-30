@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -231,3 +233,104 @@ def test_malformed_refresh_token_expiry_fails_closed(monkeypatch):
     assert "expiry is invalid" in response.json()["detail"]
     assert provider_calls == []
     assert "malformed-expiry-refresh-secret" not in response.text
+
+
+@pytest.mark.skipif(
+    not __import__("os").getenv("TEST_DATABASE_URL"),
+    reason="TEST_DATABASE_URL is set only for isolated PostgreSQL CI integration tests",
+)
+def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgres(monkeypatch):
+    """Exercise the real vault + refresh endpoint against disposable PostgreSQL; Pinterest is mocked."""
+    import base64
+    import os
+    import uuid
+    import httpx
+    from app import credential_vault, database
+
+    test_database_url = os.environ["TEST_DATABASE_URL"]
+    monkeypatch.setattr(database.settings, "database_url", test_database_url)
+    database.close_pool()
+    monkeypatch.setattr(database, "_pool", None)
+    database.run_migrations()
+
+    account_id = f"pinterest:pb05-test-{uuid.uuid4().hex}"
+    encryption_key = base64.b64encode(bytes(range(32))).decode("ascii")
+    assert len(base64.b64decode(encryption_key)) == 32
+    monkeypatch.setattr(settings, "pinterest_token_encryption_key", encryption_key)
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "pb05-integration-ingest-key")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+
+    try:
+        credential_vault.store_pinterest_credential({
+            "account_id": account_id,
+            "pinterest_user_id": "pb05-test-user",
+            "username": "pb05-test-user",
+            "access_token": "old-access-token-fixture",
+            "refresh_token": "old-refresh-token-fixture",
+            "scope": "user_accounts:read,pins:read",
+            "expires_at": "2026-10-01T00:00:00+00:00",
+            "refresh_token_expires_at": "2030-01-01T00:00:00+00:00",
+        })
+
+        class FakeResponse:
+            content = b'{"access_token":"rotated-access-token-fixture"}'
+            is_success = True
+            status_code = 200
+
+            def json(self):
+                return {
+                    "access_token": "rotated-access-token-fixture",
+                    "refresh_token": "rotated-refresh-token-fixture",
+                    "token_type": "bearer",
+                    "scope": "user_accounts:read,pins:read",
+                    "expires_in": 3600,
+                    "refresh_token_expires_in": 86400,
+                }
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return False
+            def post(self, url, *, auth, data):
+                assert url == "https://api.pinterest.com/v5/oauth/token"
+                assert auth == ("pb05-client-id", "pb05-client-secret")
+                assert data["grant_type"] == "refresh_token"
+                assert data["refresh_token"] == "old-refresh-token-fixture"
+                return FakeResponse()
+
+        monkeypatch.setattr(httpx, "Client", FakeClient)
+        response = client.post(
+            "/integrations/pinterest/refresh",
+            headers={"X-Credential-Ingest-Key": "pb05-integration-ingest-key"},
+            json={"account_id": account_id, "client_id": "pb05-client-id", "client_secret": "pb05-client-secret"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["refreshed"] is True
+        for secret in (
+            "old-access-token-fixture", "old-refresh-token-fixture",
+            "rotated-access-token-fixture", "rotated-refresh-token-fixture",
+            "pb05-client-secret",
+        ):
+            assert secret not in response.text
+
+        access = credential_vault.get_pinterest_credential(account_id)
+        refresh = credential_vault.get_pinterest_refresh_credential(account_id)
+        assert access["access_token"] == "rotated-access-token-fixture"
+        assert refresh["refresh_token"] == "rotated-refresh-token-fixture"
+        assert access["expires_at"] is not None
+        assert refresh["refresh_token_expires_at"] is not None
+
+        with database.connection() as conn:
+            row = conn.execute(
+                "SELECT access_token_ciphertext, refresh_token_ciphertext FROM pinterest_credentials WHERE account_id = %s",
+                (account_id,),
+            ).fetchone()
+        assert bytes(row["access_token_ciphertext"]) != b"rotated-access-token-fixture"
+        assert bytes(row["refresh_token_ciphertext"]) != b"rotated-refresh-token-fixture"
+    finally:
+        with database.connection() as conn:
+            conn.execute("DELETE FROM pinterest_credentials WHERE account_id = %s", (account_id,))
+        database.close_pool()
