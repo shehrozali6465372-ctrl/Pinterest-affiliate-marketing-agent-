@@ -190,3 +190,37 @@ def test_invalid_json_retry_uses_corrective_prompt_and_recovers(monkeypatch):
     assert "RETRY CORRECTION" not in prompts[0]
     assert "RETRY CORRECTION" in prompts[1]
     assert "invalid_model_json" in prompts[1]
+
+
+def test_schema_invalid_retry_uses_schema_correction_and_recovers(monkeypatch):
+    monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
+    monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
+    invalid_schema = '{"pin_idea":"idea","title":"title","description":"description","alt_text":7}'
+    responses = [FakeResponse(invalid_schema), FakeResponse(_valid_model_json())]
+    prompts = []
+
+    class SequenceClient:
+        def __init__(self, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, headers, json):
+            prompts.append(json["messages"][1]["content"][0]["text"])
+            return responses.pop(0)
+
+    monkeypatch.setattr("app.content_generation.httpx.Client", SequenceClient)
+
+    generated, model = generate_pin_content(**PRODUCT)
+
+    assert generated.title == "Organized Spice Rack"
+    assert model == "deepseek-flash"
+    assert len(prompts) == 2
+    assert "RETRY CORRECTION" not in prompts[0]
+    assert "RETRY CORRECTION" in prompts[1]
+    assert "schema_validation_failed" in prompts[1]
