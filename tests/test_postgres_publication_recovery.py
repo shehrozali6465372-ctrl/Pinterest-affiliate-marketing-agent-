@@ -159,3 +159,68 @@ def test_migrations_are_idempotent_on_postgres(isolated_postgres):
     with database.connection() as conn:
         versions = conn.execute("SELECT COUNT(*) AS total FROM schema_migrations").fetchone()["total"]
     assert versions >= 8
+
+
+def test_operator_http_reconciliation_round_trip_on_disposable_postgres(
+    isolated_postgres, monkeypatch,
+):
+    """Exercise the authenticated API + real disposable DB; Pinterest remains stubbed out."""
+    from fastapi.testclient import TestClient
+    from app.config import settings
+    from app.main import app
+
+    monkeypatch.setattr(settings, "app_api_key", "pb07-integration-only-key")
+    product = isolated_postgres["product"]
+    content = isolated_postgres["content"]
+    board_id = f"test-board-{uuid.uuid4().hex}"
+    reserved = database.begin_publish_attempt(
+        product_id=product["id"], content_version_id=content["id"],
+        board_id=board_id, account_id="test-account-never-used-for-API",
+    )
+    database.finish_publish_attempt(
+        reserved["id"], status="unknown", error_code="simulated_timeout",
+        response_metadata={"source": "disposable-postgres-provider-stub"},
+    )
+
+    with TestClient(app) as client:
+        # Both operator endpoints must fail closed without the configured API key.
+        assert client.get(f"/publications/{reserved['id']}").status_code == 401
+        assert client.post(
+            f"/publications/{reserved['id']}/reconcile",
+            json={"outcome": "succeeded", "pinterest_pin_id": "stub-pin-verified",
+                  "operator_evidence": "Disposable provider stub confirms this Pin exists"},
+        ).status_code == 401
+
+        headers = {"X-API-Key": "pb07-integration-only-key"}
+        before = client.get(f"/publications/{reserved['id']}", headers=headers)
+        assert before.status_code == 200
+        assert before.json()["status"] == "unknown"
+
+        blocked = database.begin_publish_attempt(
+            product_id=product["id"], content_version_id=content["id"],
+            board_id=board_id, account_id="test-account-never-used-for-API",
+        )
+        assert blocked["blocked"] is True
+        assert blocked["status"] == "unknown"
+
+        reconciled = client.post(
+            f"/publications/{reserved['id']}/reconcile", headers=headers,
+            json={"outcome": "succeeded", "pinterest_pin_id": "stub-pin-verified",
+                  "operator_evidence": "Disposable provider stub confirms this Pin exists"},
+        )
+        assert reconciled.status_code == 200
+        assert reconciled.json()["publication"]["status"] == "succeeded"
+
+        after = client.get(f"/publications/{reserved['id']}", headers=headers)
+        assert after.status_code == 200
+        assert after.json()["status"] == "succeeded"
+        assert after.json()["pinterest_pin_id"] == "stub-pin-verified"
+        assert after.json()["response_metadata"]["reconciliation"]["method"] == "operator_board_verification"
+
+    retry = database.begin_publish_attempt(
+        product_id=product["id"], content_version_id=content["id"],
+        board_id=board_id, account_id="test-account-never-used-for-API",
+    )
+    assert retry["blocked"] is True
+    assert retry["status"] == "succeeded"
+    assert retry["attempt_count"] == 1
