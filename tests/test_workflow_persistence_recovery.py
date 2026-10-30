@@ -154,3 +154,63 @@ def test_persistence_constraint_failure_logs_safe_schema_diagnostics(monkeypatch
     assert "column=image_url" in caplog.text
     assert "do not log raw database error" not in caplog.text
     assert all(path != "/pins" for path in pinterest_calls)
+
+
+def test_idempotency_state_failure_logs_safe_stage_and_correlation_id(monkeypatch, caplog):
+    import app.workflow as workflow
+
+    monkeypatch.setattr(settings, "app_api_key", "test-api-key")
+
+    def fail_lookup(_key):
+        raise RuntimeError("private database connection string must never be logged")
+
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", fail_lookup)
+    response = client.post(
+        "/workflow/publish-product",
+        json=_payload(),
+        headers={**_headers("idempotency-failure-123"), "X-Request-ID": "trace/123"},
+    )
+
+    assert response.status_code == 503
+    assert "stage=idempotency_state_read" in caplog.text
+    assert "request_id=trace_123" in caplog.text
+    assert "exception_type=RuntimeError" in caplog.text
+    assert "private database connection string" not in caplog.text
+
+
+def test_publication_attempt_create_failure_is_classified_before_pinterest_write(monkeypatch, caplog):
+    import app.workflow as workflow
+
+    _setup_generation(monkeypatch, workflow)
+    pinterest_paths = []
+
+    def pinterest_request(method, path, token, *, body=None):
+        pinterest_paths.append(path)
+        if path == "/user_account":
+            return 200, {"id": "test-user"}
+        if path == "/boards?page_size=100":
+            return 200, {"items": [{"id": "board-1", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
+        raise AssertionError("Pinterest Pin write must not happen before attempt persistence")
+
+    monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
+    monkeypatch.setattr(workflow, "create_product_with_content_version", lambda **kwargs: (
+        {"id": 1001, "product_name": kwargs["product_name"]},
+        {"id": 1002, "product_id": 1001},
+    ))
+
+    def fail_attempt(**kwargs):
+        raise RuntimeError("private DB details must not be logged")
+
+    monkeypatch.setattr(workflow, "begin_publish_attempt", fail_attempt)
+    response = client.post(
+        "/workflow/publish-product",
+        json=_payload(),
+        headers={**_headers("attempt-create-failure-123"), "X-Request-ID": "attempt-42"},
+    )
+
+    assert response.status_code == 503
+    assert "stage=publication_attempt_create" in caplog.text
+    assert "request_id=attempt-42" in caplog.text
+    assert "exception_type=RuntimeError" in caplog.text
+    assert "private DB details" not in caplog.text
+    assert "/pins" not in pinterest_paths
