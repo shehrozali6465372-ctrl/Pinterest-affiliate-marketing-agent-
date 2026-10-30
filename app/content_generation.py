@@ -9,9 +9,8 @@ import time
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from app.provider_retry import retry_delay_seconds
-
 from app.config import settings
+from app.provider_retry import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
 
