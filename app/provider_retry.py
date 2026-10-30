@@ -26,5 +26,3 @@ def retry_delay_seconds(response: object, retry_number: int, *, max_retry_after:
             return None
     backoff = min(2 ** max(0, retry_number - 1), 4) + random.uniform(0.0, 0.25)
     return min(max_retry_after, max(backoff, provider_delay or 0.0))
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
