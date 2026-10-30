@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
+from app.provider_retry import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +153,18 @@ def generate_pin_content(
     except httpx.HTTPStatusError as exc:
         elapsed_ms = int((time.monotonic() - request_started) * 1000)
         metadata = _safe_http_failure_metadata(exc.response, elapsed_ms)
-        if _retry_attempt == 0 and (exc.response.status_code == 429 or exc.response.status_code >= 500):
+        retry_delay = (
+            retry_delay_seconds(exc.response, _retry_attempt + 1)
+            if exc.response.status_code in {500, 503} and _retry_attempt == 0
+            else None
+        )
+        if retry_delay is not None:
             logger.warning(
-                "DeepSeek transient HTTP failure; retrying once: status=%s provider_code=%s attempt=1 duration_ms=%s content_type=%s response_bytes=%s request_id=%s",
-                metadata["status"], metadata["provider_code"], metadata["duration_ms"],
+                "DeepSeek transient HTTP failure; retrying once: status=%s provider_code=%s attempt=1 retry_delay_ms=%s duration_ms=%s content_type=%s response_bytes=%s request_id=%s",
+                metadata["status"], metadata["provider_code"], int(retry_delay * 1000), metadata["duration_ms"],
                 metadata["content_type"], metadata["response_bytes"], metadata["request_id"],
             )
+            time.sleep(retry_delay)
             return generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
@@ -172,8 +179,10 @@ def generate_pin_content(
             f"DeepSeek request rejected (HTTP {exc.response.status_code}; provider_code={metadata['provider_code']})."
         ) from exc
     except httpx.HTTPError as exc:
-        if _retry_attempt == 0:
-            logger.warning("DeepSeek transport failure; retrying once: exception_type=%s", type(exc).__name__)
+        if _retry_attempt == 0 and isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)):
+            delay = retry_delay_seconds(None, _retry_attempt + 1)
+            logger.warning("DeepSeek transport failure; retrying once: exception_type=%s retry_delay_ms=%s", type(exc).__name__, int(delay * 1000))
+            time.sleep(delay)
             return generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,

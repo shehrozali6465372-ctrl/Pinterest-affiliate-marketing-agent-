@@ -150,6 +150,7 @@ def test_deepseek_http_503_retries_once_then_logs_provider_code_without_secret(m
             return ErrorResponse()
 
     monkeypatch.setattr("app.content_generation.httpx.Client", FakeClient)
+    monkeypatch.setattr("app.content_generation.time.sleep", lambda seconds: None)
     with pytest.raises(ContentGenerationError, match="HTTP 503; provider_code=service_unavailable"):
         generate_pin_content(**PRODUCT)
 
@@ -224,3 +225,27 @@ def test_schema_invalid_retry_uses_schema_correction_and_recovers(monkeypatch):
     assert "RETRY CORRECTION" not in prompts[0]
     assert "RETRY CORRECTION" in prompts[1]
     assert "schema_validation_failed" in prompts[1]
+
+
+def test_deepseek_429_is_not_retried_as_a_balance_or_server_error(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
+    calls = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def post(self, *args, **kwargs):
+            calls.append(True)
+            request = httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+            response = httpx.Response(429, request=request, json={"error": {"type": "rate_limit"}})
+            response.raise_for_status()
+            return response
+
+    monkeypatch.setattr("app.content_generation.httpx.Client", FakeClient)
+    with pytest.raises(ContentGenerationError, match="HTTP 429"):
+        generate_pin_content(**PRODUCT)
+    assert len(calls) == 1
