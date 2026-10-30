@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publication_id:
-        description: Existing publication record ID to verify read-only (default: known succeeded record 1)
+        description: "Existing publication record ID to verify read-only (default: known succeeded record 1)"
         required: true
         default: "1"
         type: string
