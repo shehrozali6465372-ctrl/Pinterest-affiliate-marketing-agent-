@@ -80,6 +80,7 @@ def generate_pin_content(
     product_details: str,
     image_url: str,
     _retry_attempt: int = 0,
+    _retry_hint: str | None = None,
 ) -> tuple[GeneratedContent, str]:
     """Generate content with DeepSeek Flash using supplied text and image evidence."""
     if not settings.llm_api_key:
@@ -103,6 +104,15 @@ def generate_pin_content(
         "describe only what is actually visible. Do not put Markdown fences around the JSON.\n\n"
         f"Product name: {product_name}\nProduct details: {product_details}"
     )
+    if _retry_hint:
+        prompt += (
+            "\n\nRETRY CORRECTION: The previous response was rejected. "
+            "Return a complete, syntactically valid JSON object only. Include exactly "
+            "pin_idea, title, description, and alt_text as non-empty strings. "
+            "Do not use Markdown fences, comments, trailing commas, or extra keys. "
+            "Keep every field within its stated character limit. "
+            f"Reason category: {_retry_hint}."
+        )
     payload = {
         "model": settings.llm_model,
         "messages": [
@@ -179,6 +189,7 @@ def generate_pin_content(
             return generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
+                _retry_hint="invalid_response_envelope",
             )
         metadata = _safe_http_failure_metadata(
             response, int((time.monotonic() - request_started) * 1000)
@@ -203,6 +214,7 @@ def generate_pin_content(
             return generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
+                _retry_hint="missing_or_non_text_content",
             )
         metadata = _safe_http_failure_metadata(
             response, int((time.monotonic() - request_started) * 1000)
@@ -223,6 +235,7 @@ def generate_pin_content(
             return generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
+                _retry_hint="invalid_model_json",
             )
         if finish_reason == "length":
             logger.error(
@@ -252,6 +265,7 @@ def generate_pin_content(
             return generate_pin_content(
                 product_name=product_name, product_details=product_details,
                 image_url=image_url, _retry_attempt=1,
+                _retry_hint="schema_validation_failed",
             )
         metadata = _safe_http_failure_metadata(
             response, int((time.monotonic() - request_started) * 1000)

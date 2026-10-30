@@ -157,3 +157,36 @@ def test_deepseek_http_503_retries_once_then_logs_provider_code_without_secret(m
     assert "status=503 provider_code=service_unavailable" in caplog.text
     assert "private request data" not in caplog.text
     assert "unit-test-secret" not in caplog.text
+
+
+def test_invalid_json_retry_uses_corrective_prompt_and_recovers(monkeypatch):
+    monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
+    monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
+    responses = [FakeResponse("not-json-content"), FakeResponse(_valid_model_json())]
+    prompts = []
+
+    class SequenceClient:
+        def __init__(self, timeout):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, headers, json):
+            prompts.append(json["messages"][1]["content"][0]["text"])
+            return responses.pop(0)
+
+    monkeypatch.setattr("app.content_generation.httpx.Client", SequenceClient)
+
+    generated, model = generate_pin_content(**PRODUCT)
+
+    assert generated.title == "Organized Spice Rack"
+    assert model == "deepseek-flash"
+    assert len(prompts) == 2
+    assert "RETRY CORRECTION" not in prompts[0]
+    assert "RETRY CORRECTION" in prompts[1]
+    assert "invalid_model_json" in prompts[1]
