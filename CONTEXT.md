@@ -194,3 +194,12 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - **Owner-approved scope decision:** historical DeepSeek 503 logs/root-cause investigation is intentionally not required for PB-13 closure. No claim is made that the exact historical 503 root cause has been identified. The owner expressly directed that old DeepSeek logs be left aside and approved closure based on the working system and existing verification evidence.
 - No real Pinterest Pin was published for this closure. No Pinterest board was created, no production database write was performed, and no live credential was rotated.
 - Future recurrence of a DeepSeek 5xx/503 should be handled as a new operational incident using the deployed sanitized stage/provider telemetry and bounded retry policy; reopen PB-13 only if a new actionable failure is observed.
+
+### PB-07 — CLOSED by explicit owner approval (2026-10-30)
+
+- **Status: CLOSED — owner-approved release/operator acceptance.** The project owner explicitly instructed closure of PB-07 and authorized recording this decision.
+- Production Neon was last verified read-only with **1 succeeded publication and 0 pending/unknown publication rows**. There was no production ambiguous publication requiring reconciliation at that checkpoint.
+- PR #32 contains protected operator inspection/reconciliation controls and PostgreSQL 16 integration coverage. Exact-head CI passed on the documented test head; tests use synthetic fixtures and do not call Pinterest. The test proves durable unknown-state handling, retry blocking, and explicit reconciliation through the operator API.
+- **Acceptance / limitation:** live read-only Pinterest board pagination and direct Pin verification were not independently completed as part of this closure. The owner accepts this remaining operator-verification gap and approves PB-07 closure. Do not represent the board check as completed.
+- No production record was fabricated or reconciled; no production DB mutation, Pinterest write, Pin/board creation, or token rotation was performed for this closure.
+- Reopen PB-07 only if a real publication enters an ambiguous/pending state, duplicate-retry protection fails, or a new operator reconciliation incident requires investigation.
