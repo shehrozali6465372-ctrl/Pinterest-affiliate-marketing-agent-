@@ -1,3 +1,12 @@
+# Latest blocker disposition — 2026-10-31 (owner request)
+
+- **PB-05 — WAITING / scheduled natural verification; not closed.** The implementation and safety hardening are in place, but genuine Pinterest refresh-token rotation and encrypted Neon persistence have not yet been observed in production. The last verified access-token expiry is **2026-11-27 09:26:42 UTC** (refresh-token expiry **2026-12-27 09:26:41 UTC**). Wait for the natural refresh trigger; do not force expiry, manually rotate credentials, or manufacture a production refresh.
+- Hub PR #11 (https://github.com/shehrozali6465372-ctrl/modern-living-hub/pull/11) prevents replaying the non-idempotent OAuth refresh POST after an ambiguous transient failure. Its exact-head CI run 41140479456 passed, including the mocked regression that asserts a 503 produces exactly one refresh attempt. PR #11 is still open/unmerged and Hub has not been deployed with this change.
+- Until the natural refresh occurs, continue only safe preparatory work: review/merge the Hub fix under the normal release gate, verify its deployment separately, and use read-only checks. Do not publish Pins/create boards or alter production credential/expiry data.
+- **Resume PB-05 verification when the natural refresh occurs:** confirm a successful Pinterest OAuth response; verify only non-secret Neon metadata shows updated credential/expiry timestamps; perform a fresh vault decrypt internally without displaying token material; then confirm a read-only Pinterest account lookup succeeds without reconnect. Close PB-05 only after all evidence is recorded.
+- **Disposition:** move PB-05 from the active OPEN queue to the **WAITING** list pending its natural trigger. It remains technically unverified and must not be reported as CLOSED. PB-07 and PB-13 remain CLOSED; PB-03, PB-04, PB-06 and PB-10 remain CLOSED; PB-12 remains DEFERRED; PB-08 remains separate human release sign-off.
+
+---
 
 
 ## Authoritative status update — 2026-10-30 20:58 PKT (owner-approved)
