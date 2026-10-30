@@ -1,3 +1,13 @@
+
+
+## Authoritative status update — 2026-10-30 20:58 PKT (owner-approved)
+
+- **PB-07 — CLOSED / VERIFIED.** PR #43 merged to main at `016fde8c91224d4915337019771bad37b25b1c94`. Render deployment `dep-dbibdpff3r2c73cipupg` is `live` on that exact commit. Agent `/health` returned HTTP 200. Protected `GET /publications/1/pinterest-verification` returned HTTP 401 without the API key, confirming the route is deployed and access-controlled. GitHub Actions read-only production verification run [41081017678](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/41081017678) completed successfully; all steps passed, including protected readiness/provider checks and existing publication #1 board pagination/Pin-detail verification. No Pin was published, no production DB write occurred, and no token was rotated. Limitation: this verifies an existing successful publication, not a replay of an actual ambiguous/unknown-state production incident.
+- **PB-13 — CLOSED by explicit owner approval on 2026-10-30.** The owner accepted closure after the DeepSeek retry/backoff and sanitized stage/provider telemetry work was merged and deployed (PRs #38–#42; deployed retry/backoff baseline included in PR #42), and the safe production provider smoke verification had passed. Historical intermittent 503 root cause was not conclusively isolated; record this as an accepted residual/known limitation, not as a proven root cause. Do not reopen unless a new reproducible 503 or material provider regression is observed.
+- **PB-05 — ONLY REMAINING OPEN TECHNICAL BLOCKER.** Genuine Pinterest refresh-token rotation and encrypted persistence have not been verified in production. Do not force expiry or rotate the live token just to test; complete a safe naturally-due refresh and verify only non-secret metadata/account access.
+- **PB-03, PB-04, PB-06, PB-07, PB-10, PB-13 — CLOSED. PB-12 — DEFERRED**, because the analytics dataset is not yet sufficient for predictive model training; this is not a release blocker.
+- **PB-08 — HUMAN REVIEW / release sign-off**, tracked separately from the single remaining technical blocker; it is not counted as an open engineering PB blocker in this status summary.
+- **Release gate:** one remaining technical blocker: PB-05. No new Pin publishing is authorized by this status update.
 # Model 1 blocker status — 2026-10-27
 
 ## Closed
