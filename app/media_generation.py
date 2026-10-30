@@ -106,5 +106,3 @@ def generate_and_host_pin_image(*, product_name: str, product_details: str) -> d
     except (ValueError, KeyError, TypeError) as exc:
         logger.error("image_generation stage=cloudflare_response outcome=failed exception_type=%s", type(exc).__name__)
         raise ImageGenerationError(f"Cloudflare returned an invalid image response ({type(exc).__name__}).") from exc
-
-[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
