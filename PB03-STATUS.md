@@ -73,3 +73,12 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Sync commit: `d1135ed3e9b75e9c1e4ea2e594957f8d471a53db`. PR #32 is now `mergeable=true`, open/unmerged.
 - Exact sync-head GitHub CI passed: Python CI run `40979903928` and Python Tests run `40979903920`. Local full suite: **92 passed, 4 skipped, 1 existing Starlette/httpx deprecation warning**; compileall and `git diff --check` passed.
 - No PR merge or Render deployment. Since Render auto-deploys main, PR #32 remains unmerged pending explicit release sign-off. No production DB mutation or Pinterest write.
+
+
+### PB-07 HTTP + disposable PostgreSQL end-to-end verification — 2026-10-30
+
+- PR #32 received commit `1de70ec16c90de2a7ca4222e583934dd6ebcd75f`, adding `test_operator_http_reconciliation_round_trip_on_disposable_postgres` to `tests/test_postgres_publication_recovery.py`.
+- The test runs only when CI supplies dedicated `TEST_DATABASE_URL`; it uses synthetic product/content/publication fixtures, never calls Pinterest, checks both operator endpoints reject missing API key (401), reads persisted `unknown`, confirms retry blocked, reconciles through the authenticated HTTP endpoint, re-reads durable `succeeded` state/audit metadata, and confirms duplicate retry remains blocked.
+- Exact-head GitHub CI passed on `1de70ec`: Python Tests run `41041546460`; Python CI with PostgreSQL 16 service run `41041546479`. PostgreSQL CI log: **96 passed, 1 skipped, 1 warning**. Local full suite: **92 passed, 5 skipped** because disposable PostgreSQL is not configured locally; compileall and diff check passed.
+- This closes the missing HTTP/API-to-disposable-PostgreSQL integration-test gap. It does **not** prove a real Pinterest incident or live board pagination; the read-only board verification remains an operator runbook procedure. Production still has zero `unknown` rows, so no record was manufactured or reconciled.
+- PR #32 remains open/unmerged. Render auto-deploys commits to `main`; no merge/deploy performed. No Pinterest write, Pin/board creation, token rotation, or production DB mutation.
