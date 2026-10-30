@@ -10,7 +10,7 @@
 
 - **PB-04 — REAL OAuth handoff:** Hub PR #6 and mocked handoff tests are merged/deployed, but the last recorded status still requires a human Pinterest consent flow and verification of encrypted Neon storage/account lookup. Mocked tests alone do not prove real consent.
 - **PB-05 — Refresh lifecycle:** Expiry/malformed-expiry guards and refresh-token rotation/preservation tests are merged. A real provider refresh has not been forced because credentials were not near expiry. Do not risk a live account solely to force this test.
-- **PB-06 — Learning Loop:** Account-scoped analytics ingestion and fail-closed metric validation are implemented and tested. Last recorded production check found 0 rows in pin_analytics_snapshots; a real persisted snapshot is still unverified. This is not a PB-03 issue.
+- **PB-06 — Learning Loop: CLOSED for ingestion/persistence.** Production Neon read-only query on 2026-10-30 returned 4 rows in `pin_analytics_snapshots`, latest fetch `2026-10-30T10:11:18.989Z`; 1 succeeded publication and 0 pending/unknown. Earlier real Learning Loop workflow `40847008820` returned `ok=true`, `pins_checked=1`, `snapshots_saved=1` on deployed SHA `871315d`. This verifies real snapshot persistence. Predictive model training remains deferred (`model_trained=false`) because the available dataset is insufficient; it is not an ingestion blocker.
 - **PB-07 — Publish recovery:** Automated tests cover persistence failure and uncertain publish outcomes. Production fault injection was not run to avoid disrupting the live service.
 
 ## Current engineering baseline
