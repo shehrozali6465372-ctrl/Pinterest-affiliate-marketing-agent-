@@ -49,6 +49,16 @@ def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Ke
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
 
+def require_configured_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> None:
+    """Fail closed for publication-changing and operator endpoints if APP_API_KEY is missing."""
+    if not settings.app_api_key:
+        raise HTTPException(status_code=503, detail="API authentication is not configured.")
+    if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
+        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+
+
 class ProductInput(BaseModel):
     product_name: str = Field(min_length=1, max_length=300)
     product_details: str = Field(min_length=1, max_length=10000)
@@ -499,7 +509,67 @@ def list_product_content(product_id: int) -> dict[str, object]:
         raise HTTPException(status_code=503, detail="Content history is unavailable. Check database migrations and connectivity.") from exc
 
 
-@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_api_key)])
+class PublicationReconciliationInput(BaseModel):
+    outcome: str = Field(pattern=r"^(succeeded|failed)$")
+    pinterest_pin_id: str | None = Field(default=None, min_length=1, max_length=200)
+    operator_evidence: str = Field(min_length=12, max_length=2000)
+
+    @field_validator("operator_evidence")
+    @classmethod
+    def evidence_must_be_nonblank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("operator_evidence must not be blank")
+        return value
+
+
+@app.get("/publications/{publication_id}", dependencies=[Depends(require_configured_api_key)])
+def get_publication_status(publication_id: int) -> dict[str, object]:
+    """Inspect a publication record without making any Pinterest requests."""
+    if publication_id <= 0:
+        raise HTTPException(status_code=422, detail="publication_id must be positive")
+    from app.database import get_publication
+    try:
+        row = get_publication(publication_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Publication status could not be read") from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail="Publication not found")
+    for field in ("created_at", "updated_at"):
+        if row.get(field) is not None:
+            row[field] = row[field].isoformat()
+    return row
+
+
+@app.post("/publications/{publication_id}/reconcile", dependencies=[Depends(require_configured_api_key)])
+def reconcile_publication(publication_id: int, payload: PublicationReconciliationInput) -> dict[str, object]:
+    """Operator-confirmed resolution of an `unknown` publish result; never publishes a Pin."""
+    if publication_id <= 0:
+        raise HTTPException(status_code=422, detail="publication_id must be positive")
+    if payload.outcome == "succeeded" and not payload.pinterest_pin_id:
+        raise HTTPException(status_code=422, detail="Verified Pinterest Pin ID is required when outcome is succeeded")
+    if payload.outcome == "failed" and payload.pinterest_pin_id:
+        raise HTTPException(status_code=422, detail="Do not provide a Pin ID when confirming no Pin exists")
+    from app.database import reconcile_unknown_publication
+    try:
+        row = reconcile_unknown_publication(
+            publication_id, outcome=payload.outcome,
+            pinterest_pin_id=payload.pinterest_pin_id,
+            operator_evidence=payload.operator_evidence,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Publication not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Publication reconciliation failed; inspect the stored record before retrying") from exc
+    for field in ("created_at", "updated_at"):
+        if row.get(field) is not None:
+            row[field] = row[field].isoformat()
+    return {"reconciled": True, "published": row.get("status") == "succeeded", "publication": row}
+
+
+@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_configured_api_key)])
 def publish_product_content(product_id: int, content_version_id: int) -> dict[str, object]:
     if product_id <= 0 or content_version_id <= 0:
         raise HTTPException(status_code=422, detail="product_id and content_version_id must be positive integers")
@@ -553,7 +623,7 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
         raise HTTPException(status_code=503, detail="Publish request could not be fully recorded. Inspect publication record and Pinterest board before retrying.") from exc
 
 
-@app.post("/publish", dependencies=[Depends(require_api_key)])
+@app.post("/publish", dependencies=[Depends(require_configured_api_key)])
 def publish(payload: PublishRequest) -> dict[str, object]:
     return publish_product_content(payload.product_id, payload.content_version_id)
 

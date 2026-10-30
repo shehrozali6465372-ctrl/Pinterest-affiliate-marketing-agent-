@@ -121,3 +121,39 @@ def test_invalid_api_envelope_is_distinguished_from_model_json(monkeypatch, capl
     assert "DeepSeek API response JSON failure" in caplog.text
     assert "response_bytes=" in caplog.text
     assert "not-json" not in caplog.text
+
+
+def test_deepseek_http_503_retries_once_then_logs_provider_code_without_secret(monkeypatch, caplog):
+    import httpx
+
+    monkeypatch.setattr(settings, "llm_api_key", "unit-test-secret")
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com")
+    monkeypatch.setattr(settings, "llm_model", "deepseek-flash")
+    calls = []
+
+    class ErrorResponse:
+        status_code = 503
+        headers = {"content-type": "application/json"}
+        content = b'{"error":{"type":"service_unavailable","message":"private request data"}}'
+        def json(self):
+            return {"error": {"type": "service_unavailable", "message": "private request data"}}
+        def raise_for_status(self):
+            request = httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+            raise httpx.HTTPStatusError("upstream failed", request=request, response=httpx.Response(503, request=request, json=self.json()))
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def post(self, *args, **kwargs):
+            calls.append(True)
+            return ErrorResponse()
+
+    monkeypatch.setattr("app.content_generation.httpx.Client", FakeClient)
+    with pytest.raises(ContentGenerationError, match="HTTP 503; provider_code=service_unavailable"):
+        generate_pin_content(**PRODUCT)
+
+    assert len(calls) == 2
+    assert "status=503 provider_code=service_unavailable" in caplog.text
+    assert "private request data" not in caplog.text
+    assert "unit-test-secret" not in caplog.text

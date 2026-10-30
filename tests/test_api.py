@@ -374,15 +374,33 @@ def test_pinterest_client_marks_5xx_as_uncertain(monkeypatch):
         raise AssertionError("Expected PinterestPublishError")
 
 
+def test_publish_routes_fail_closed_without_configured_api_key(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", None)
+    payload = {"product_id": 5, "content_version_id": 12}
+
+    direct_route = client.post("/products/5/content/12/publish")
+    shorthand_route = client.post("/publish", json=payload)
+
+    assert direct_route.status_code == 503
+    assert shorthand_route.status_code == 503
+    assert "authentication is not configured" in direct_route.json()["detail"]
+    assert "authentication is not configured" in shorthand_route.json()["detail"]
+
+
 def test_publish_route_needs_real_credentials(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     monkeypatch.setattr(settings, "pinterest_access_token", None)
     monkeypatch.setattr(settings, "pinterest_board_id", None)
-    response = client.post("/products/5/content/12/publish")
+    response = client.post(
+        "/products/5/content/12/publish",
+        headers={"X-API-Key": "private-test-api-key"},
+    )
     assert response.status_code == 503
     assert "must be configured" in response.json()["detail"]
 
 
 def test_publish_route_persists_confirmed_pin_id(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     from app import database
     import app.main as main_module
 
@@ -416,13 +434,17 @@ def test_publish_route_persists_confirmed_pin_id(monkeypatch):
             "http_status": kwargs["http_status"],
         },
     )
-    response = client.post("/publish", json={"product_id": 5, "content_version_id": 12})
+    response = client.post(
+        "/publish", json={"product_id": 5, "content_version_id": 12},
+        headers={"X-API-Key": "private-test-api-key"},
+    )
     assert response.status_code == 200
     assert response.json()["published"] is True
     assert response.json()["pin_id"] == "verified-pin-id"
 
 
 def test_publish_route_does_not_duplicate_successful_pin(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     from app import database
     import app.main as main_module
 
@@ -437,14 +459,18 @@ def test_publish_route_does_not_duplicate_successful_pin(monkeypatch):
     def must_not_publish(**kwargs):
         raise AssertionError("duplicate Pinterest call should be blocked")
     monkeypatch.setattr(main_module, "publish_image_pin", must_not_publish)
-    response = client.post("/publish", json={"product_id": 5, "content_version_id": 12})
+    response = client.post(
+        "/publish", json={"product_id": 5, "content_version_id": 12},
+        headers={"X-API-Key": "private-test-api-key"},
+    )
     assert response.status_code == 200
     assert response.json()["already_published"] is True
     assert response.json()["pin_id"] == "previous-pin-id"
 
 
-def test_publish_is_not_faked():
-    response = client.post("/publish")
+def test_publish_is_not_faked(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    response = client.post("/publish", headers={"X-API-Key": "private-test-api-key"})
     assert response.status_code == 422
 
 
