@@ -142,3 +142,4 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - No production DB mutation, Pinterest write, Pin/board creation, token rotation, or Render deploy.
 
 - Render log review (2026-10-23 to 2026-10-30 UTC): two DeepSeek application events surfaced (JSONDecodeError and schema-invalid retry, both 2026-10-26); no HTTP 503 request log matched `/products/*/content`. This is not proof no provider 503 happened; deployed code lacks the new status/request-ID telemetry. No quota/overload conclusion is supported.
+- PB-05 read-only Neon metadata: one connected Pinterest account; both encrypted token blobs exist; access expiry `2026-11-27T09:26:42Z`, refresh expiry `2026-12-27T09:26:41Z`, last update `2026-10-28T09:26:42Z`. No token was decrypted or rotated; no forced refresh was attempted because the access token is not near expiry. PB-05 remains open pending genuine server-side refresh/persistence evidence.
