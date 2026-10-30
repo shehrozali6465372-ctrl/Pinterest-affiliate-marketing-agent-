@@ -1,0 +1,81 @@
+name: Read-only production auth and provider verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: read-only-production-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      AGENT_BASE_URL: https://pinterest-affiliate-marketing-agent.onrender.com
+      APP_API_KEY: ${{ secrets.PINTEREST_AGENT_APP_API_KEY }}
+    steps:
+      - name: Validate secret presence without revealing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APP_API_KEY" || { echo "::error::Missing PINTEREST_AGENT_APP_API_KEY"; exit 1; }
+
+      - name: Verify protected readiness and non-billable provider access checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.error, urllib.request
+          base = os.environ["AGENT_BASE_URL"].rstrip("/")
+          key = os.environ["APP_API_KEY"]
+          headers = {"X-API-Key": key, "Accept": "application/json"}
+          def get(path):
+              req = urllib.request.Request(base + path, headers=headers)
+              try:
+                  with urllib.request.urlopen(req, timeout=25) as response:
+                      status = response.status
+                      raw = response.read()
+              except urllib.error.HTTPError as exc:
+                  status, raw = exc.code, exc.read()
+              try:
+                  payload = json.loads(raw)
+              except Exception:
+                  payload = {}
+              return status, payload
+          readiness_status, readiness = get("/readiness")
+          provider_status, providers = get("/diagnostics/providers")
+          safe_readiness = {
+              "database_configured": readiness.get("database_configured"),
+              "pinterest_account_workflow_configured": readiness.get("pinterest_account_workflow_configured"),
+              "pinterest_token_encryption_key_valid": readiness.get("pinterest_token_encryption_key_valid"),
+              "pinterest_credential_ingest_configured": readiness.get("pinterest_credential_ingest_configured"),
+              "image_generation_configured": readiness.get("image_generation_configured"),
+              "llm_configured": readiness.get("llm_configured"),
+              "api_key_configured": readiness.get("api_key_configured"),
+          }
+          safe_providers = {
+              "deepseek": {k: providers.get("deepseek", {}).get(k) for k in ("configured", "verified", "http_status", "check", "error")},
+              "cloudflare": {k: providers.get("cloudflare", {}).get(k) for k in ("token_configured", "account_id_configured", "verified", "http_status", "check", "error")},
+          }
+          result = {
+              "readiness_http_status": readiness_status,
+              "readiness": safe_readiness,
+              "providers_http_status": provider_status,
+              "providers": safe_providers,
+              "secrets_returned": False,
+              "billable_generation_performed": False,
+              "pinterest_write_performed": False,
+              "database_modified": False,
+          }
+          print(json.dumps(result, separators=(",", ":")))
+          if readiness_status != 200 or provider_status != 200:
+              raise SystemExit(1)
+          if providers.get("deepseek", {}).get("verified") is not True:
+              raise SystemExit(1)
+          if providers.get("cloudflare", {}).get("verified") is not True:
+              raise SystemExit(1)
+          PY
