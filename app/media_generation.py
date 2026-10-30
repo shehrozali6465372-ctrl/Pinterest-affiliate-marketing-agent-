@@ -2,17 +2,22 @@
 Generated images are returned as data URLs and sent to Pinterest using image_base64.
 """
 from __future__ import annotations
+
 import base64
 import logging
+import time
+
 import httpx
+
 from app.config import settings
+from app.provider_retry import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
 
 class ImageGenerationError(RuntimeError):
     """Raised when image generation fails or returns unusable data."""
 
-def _safe_cloudflare_error(stage: str, response: httpx.Response) -> ImageGenerationError:
+def _cloudflare_error_codes(response: httpx.Response) -> list[int | str]:
     codes: list[int | str] = []
     try:
         body = response.json()
@@ -23,9 +28,15 @@ def _safe_cloudflare_error(stage: str, response: httpx.Response) -> ImageGenerat
                     codes.append(item["code"])
     except ValueError:
         pass
+    return codes
+
+
+def _safe_cloudflare_error(stage: str, response: httpx.Response) -> ImageGenerationError:
+    codes = _cloudflare_error_codes(response)
     suffix = f"; provider_codes={codes}" if codes else ""
     logger.error("image_generation stage=cloudflare outcome=failed http_status=%s provider_codes=%s", response.status_code, codes)
     return ImageGenerationError(f"Cloudflare {stage} failed (HTTP {response.status_code}{suffix}).")
+
 
 def generate_and_host_pin_image(*, product_name: str, product_details: str) -> dict[str, str]:
     """Generate an image and return a data URL; no separate image host is used."""
@@ -43,13 +54,29 @@ def generate_and_host_pin_image(*, product_name: str, product_details: str) -> d
     base = f"https://api.cloudflare.com/client/v4/accounts/{settings.cloudflare_account_id}"
     try:
         with httpx.Client(timeout=timeout) as client:
-            generated = client.post(
-                f"{base}/ai/run/{settings.cloudflare_image_model}",
-                headers={**headers, "Content-Type": "application/json"},
-                json={"prompt": prompt},
-            )
-            if generated.is_error:
-                raise _safe_cloudflare_error("Workers AI generation", generated)
+            for attempt in range(2):
+                generated = client.post(
+                    f"{base}/ai/run/{settings.cloudflare_image_model}",
+                    headers={**headers, "Content-Type": "application/json"},
+                    json={"prompt": prompt},
+                )
+                if not generated.is_error:
+                    break
+                codes = _cloudflare_error_codes(generated)
+                retryable = (
+                    generated.status_code in {500, 502, 503, 504}
+                    or (generated.status_code == 429 and 3040 in codes)
+                )
+                delay = retry_delay_seconds(generated, attempt + 1) if retryable and attempt == 0 else None
+                if delay is None:
+                    raise _safe_cloudflare_error("Workers AI generation", generated)
+                logger.warning(
+                    "image_generation stage=cloudflare outcome=retrying http_status=%s provider_codes=%s retry_delay_ms=%s attempt=%s",
+                    generated.status_code, codes, int(delay * 1000), attempt + 1,
+                )
+                time.sleep(delay)
+            else:
+                raise ImageGenerationError("Cloudflare Workers AI generation retry budget exhausted.")
             content_type = generated.headers.get("content-type", "").lower()
             if "image/" in content_type:
                 image_bytes = generated.content
@@ -79,3 +106,5 @@ def generate_and_host_pin_image(*, product_name: str, product_details: str) -> d
     except (ValueError, KeyError, TypeError) as exc:
         logger.error("image_generation stage=cloudflare_response outcome=failed exception_type=%s", type(exc).__name__)
         raise ImageGenerationError(f"Cloudflare returned an invalid image response ({type(exc).__name__}).") from exc
+
+[executed on device: localhost (bb54f029-ff20-4907-ad1f-8b963b1958c1)]
