@@ -159,3 +159,12 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - Synced PR #32 branch `fix/pb06-analytics-forward-port` with main `c1679ca3cb7c1f2ba4f3050cd73b0dbe59abef3b` via merge commit `d1135ed3e9b75e9c1e4ea2e594957f8d471a53db`. Resolved the single `PB03-STATUS.md` conflict by preserving main's PB10 history and re-appending current PB07/PB13/PB05 evidence; CONTEXT.md and the PB10 integration test were preserved.
 - PR #32 is open/unmerged and now `mergeable=true`. Exact sync-head Python CI run `40979903928` and Python Tests run `40979903920` both passed. Local full suite: 92 passed, 4 skipped, one existing Starlette/httpx deprecation warning; compileall and diff checks passed.
 - No merge to main or Render deployment was performed. PB-07 remains open pending operator/release sign-off; PB-10 is closed; PB-13 and PB-05 remain open.
+
+
+### PB-07 HTTP + disposable PostgreSQL end-to-end verification — 2026-10-30
+
+- PR #32 received commit `1de70ec16c90de2a7ca4222e583934dd6ebcd75f`, adding `test_operator_http_reconciliation_round_trip_on_disposable_postgres` to `tests/test_postgres_publication_recovery.py`.
+- The test runs only when CI supplies dedicated `TEST_DATABASE_URL`; it uses synthetic product/content/publication fixtures, never calls Pinterest, checks both operator endpoints reject missing API key (401), reads persisted `unknown`, confirms retry blocked, reconciles through the authenticated HTTP endpoint, re-reads durable `succeeded` state/audit metadata, and confirms duplicate retry remains blocked.
+- Exact-head GitHub CI passed on `1de70ec`: Python Tests run `41041546460`; Python CI with PostgreSQL 16 service run `41041546479`. PostgreSQL CI log: **96 passed, 1 skipped, 1 warning**. Local full suite: **92 passed, 5 skipped** because disposable PostgreSQL is not configured locally; compileall and diff check passed.
+- This closes the missing HTTP/API-to-disposable-PostgreSQL integration-test gap. It does **not** prove a real Pinterest incident or live board pagination; the read-only board verification remains an operator runbook procedure. Production still has zero `unknown` rows, so no record was manufactured or reconciled.
+- PR #32 remains open/unmerged. Render auto-deploys commits to `main`; no merge/deploy performed. No Pinterest write, Pin/board creation, token rotation, or production DB mutation.
