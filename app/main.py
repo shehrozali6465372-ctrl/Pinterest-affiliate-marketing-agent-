@@ -517,6 +517,112 @@ def list_product_content(product_id: int) -> dict[str, object]:
         raise HTTPException(status_code=503, detail="Content history is unavailable. Check database migrations and connectivity.") from exc
 
 
+class ProductTaggingInput(BaseModel):
+    product_pin_ids: list[str] = Field(min_length=1, max_length=24)
+
+    @field_validator("product_pin_ids")
+    @classmethod
+    def product_pin_ids_must_be_unique_and_nonblank(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if any(not item for item in cleaned):
+            raise ValueError("product_pin_ids must contain nonblank Pinterest product Pin IDs")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("product_pin_ids must not contain duplicates")
+        return cleaned
+
+
+@app.post("/publications/{publication_id}/product-tags", dependencies=[Depends(require_configured_api_key)])
+def attach_product_tags_to_publication(publication_id: int, payload: ProductTaggingInput) -> dict[str, object]:
+    """Attach existing Pinterest product Pins to an already-published hero Pin."""
+    if publication_id <= 0:
+        raise HTTPException(status_code=422, detail="publication_id must be positive")
+    from app.database import get_publication
+    from app.credential_vault import get_pinterest_credential
+    from app.pinterest import (
+        PinterestProductTagError, PinterestReadError, add_product_tags_to_pin,
+        get_pin_read_only, list_product_tags_read_only,
+    )
+    try:
+        publication = get_publication(publication_id)
+        if publication is None:
+            raise HTTPException(status_code=404, detail="Publication not found")
+        if publication.get("status") != "succeeded" or not publication.get("pinterest_pin_id"):
+            raise HTTPException(status_code=409, detail="Only a confirmed successful publication can receive product tags")
+        account_id = publication.get("account_id")
+        board_id = publication.get("board_id")
+        if not account_id or not board_id:
+            raise HTTPException(status_code=409, detail="Publication lacks the account or board reference required for tagging")
+        credential = get_pinterest_credential(str(account_id))
+        hero_pin_id = str(publication["pinterest_pin_id"])
+        hero = get_pin_read_only(pin_id=hero_pin_id, access_token=credential["access_token"])
+        if str(hero.get("id")) != hero_pin_id or str(hero.get("board_id")) != str(board_id):
+            raise HTTPException(status_code=409, detail="Pinterest hero Pin does not match the stored publication and board")
+
+        existing = set(list_product_tags_read_only(pin_id=hero_pin_id, access_token=credential["access_token"]))
+        requested = payload.product_pin_ids
+        missing = [item for item in requested if item not in existing]
+        if missing:
+            add_product_tags_to_pin(pin_id=hero_pin_id, product_pin_ids=missing, access_token=credential["access_token"])
+        verified = set(list_product_tags_read_only(pin_id=hero_pin_id, access_token=credential["access_token"]))
+        not_verified = [item for item in requested if item not in verified]
+        if not_verified:
+            raise HTTPException(status_code=502, detail={"code": "product_tag_verification_incomplete", "message": "Pinterest write completed or may have completed, but read-back did not confirm every requested product tag. Inspect current tags before retrying.", "missing_product_pin_ids": not_verified})
+        return {
+            "tagged": True, "publication_id": publication_id, "hero_pin_id": hero_pin_id,
+            "requested_product_pin_ids": requested,
+            "newly_attached_product_pin_ids": missing,
+            "already_attached_product_pin_ids": [item for item in requested if item in existing],
+            "verified_product_pin_ids": requested,
+            "verification": "read_after_write",
+        }
+    except HTTPException:
+        raise
+    except PinterestProductTagError as exc:
+        status_code = 502 if exc.outcome_uncertain or exc.http_status is None or exc.http_status >= 500 else exc.http_status
+        raise HTTPException(status_code=status_code, detail={"code": "pinterest_product_tag_write_failed", "message": str(exc), "outcome_uncertain": exc.outcome_uncertain, "verify_before_retry": exc.outcome_uncertain}) from exc
+    except PinterestReadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail="Stored Pinterest account credential is unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Product tagging could not be completed; inspect the hero Pin tags before retrying") from exc
+
+
+@app.get("/publications/{publication_id}/product-tags", dependencies=[Depends(require_configured_api_key)])
+def verify_publication_product_tags(publication_id: int) -> dict[str, object]:
+    """Read-only product-tag verification for an existing publication."""
+    if publication_id <= 0:
+        raise HTTPException(status_code=422, detail="publication_id must be positive")
+    from app.database import get_publication
+    from app.credential_vault import get_pinterest_credential
+    from app.pinterest import PinterestReadError, get_pin_read_only, list_product_tags_read_only
+    try:
+        publication = get_publication(publication_id)
+        if publication is None:
+            raise HTTPException(status_code=404, detail="Publication not found")
+        if publication.get("status") != "succeeded" or not publication.get("pinterest_pin_id"):
+            raise HTTPException(status_code=409, detail="Only a confirmed successful publication can be verified")
+        account_id = publication.get("account_id")
+        board_id = publication.get("board_id")
+        if not account_id or not board_id:
+            raise HTTPException(status_code=409, detail="Publication lacks the account or board reference required for verification")
+        credential = get_pinterest_credential(str(account_id))
+        pin_id = str(publication["pinterest_pin_id"])
+        hero = get_pin_read_only(pin_id=pin_id, access_token=credential["access_token"])
+        if str(hero.get("id")) != pin_id or str(hero.get("board_id")) != str(board_id):
+            raise HTTPException(status_code=409, detail="Pinterest hero Pin does not match the stored publication and board")
+        tags = list_product_tags_read_only(pin_id=pin_id, access_token=credential["access_token"])
+        return {"publication_id": publication_id, "hero_pin_id": pin_id, "product_pin_ids": tags, "verified": True, "read_only": True}
+    except HTTPException:
+        raise
+    except PinterestReadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail="Stored Pinterest account credential is unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Pinterest product-tag verification could not be completed") from exc
+
+
 class PublicationReconciliationInput(BaseModel):
     outcome: str = Field(pattern=r"^(succeeded|failed)$")
     pinterest_pin_id: str | None = Field(default=None, min_length=1, max_length=200)
