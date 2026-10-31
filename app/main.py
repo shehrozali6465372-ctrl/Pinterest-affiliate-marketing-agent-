@@ -503,6 +503,9 @@ def pinterest_account_operation(
     data = payload.payload
     base = settings.pinterest_api_base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
+    # Product-tag operations return before the generic operation branch, so initialize
+    # query here to ensure both read and write requests have an explicit params value.
+    query = None
     if operation in {"product_tags", "add_product_tags"}:
         pin_id = str(data.get("pin_id") or "").strip()
         if not pin_id:
@@ -538,7 +541,6 @@ def pinterest_account_operation(
     if operation not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported Pinterest operation.")
     method, path, body = allowed[operation]
-    query = None
     if operation == "list_pins":
         page_size = data.get("page_size", 100)
         if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 100:
