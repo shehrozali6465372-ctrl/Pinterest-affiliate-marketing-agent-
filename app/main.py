@@ -408,7 +408,7 @@ def pinterest_account_operation(
             method, path, body = "POST", f"/pins/{quote(pin_id, safe='')}/product_tags", {"product_tags": [{"pin_id": item.strip()} for item in product_pin_ids]}
         try:
             with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-                response = client.request(method, f"{base}{path}", headers=headers, json=body)
+                response = client.request(method, f"{base}{path}", headers=headers, json=body, params=query)
             result = response.json() if response.content else {}
         except (httpx.HTTPError, ValueError) as exc:
             raise HTTPException(status_code=502, detail="Pinterest product-tag request failed; read current tags before retrying a write.") from exc
@@ -417,7 +417,8 @@ def pinterest_account_operation(
         return {"data": result}
     allowed = {
         "account": ("GET", "/user_account", None),
-        "boards": ("GET", "/boards?page_size=100", None),
+        "boards": ("GET", "/boards", None),
+        "list_pins": ("GET", "/pins", None),
         "create_board": ("POST", "/boards", {"name": str(data.get("name") or ""), "description": str(data.get("description") or "")}),
         "create_pin": ("POST", "/pins", {"board_id": str(data.get("board_id") or ""), "title": str(data.get("title") or ""), "description": str(data.get("description") or ""), "alt_text": str(data.get("alt_text") or ""), "media_source": {"source_type": "image_url", "url": str(data.get("image_url") or ""), "is_standard": True}, "link": str(data.get("destination_url") or "")}),
     }
@@ -427,13 +428,24 @@ def pinterest_account_operation(
     if operation not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported Pinterest operation.")
     method, path, body = allowed[operation]
+    query = None
+    if operation == "list_pins":
+        page_size = data.get("page_size", 100)
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 100:
+            raise HTTPException(status_code=422, detail="page_size must be an integer from 1 to 100.")
+        query = {"page_size": page_size}
+        bookmark = data.get("bookmark")
+        if bookmark is not None:
+            if not isinstance(bookmark, str) or not bookmark.strip() or len(bookmark) > 2000:
+                raise HTTPException(status_code=422, detail="bookmark must be a non-empty string up to 2000 characters.")
+            query["bookmark"] = bookmark
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
     if operation == "create_pin" and not all(body.get(k) for k in ("board_id", "title", "link", "media_source")):
         raise HTTPException(status_code=400, detail="Board, title, image URL, and destination URL are required.")
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
-            response = client.request(method, f"{base}{path}", headers=headers, json=body)
+            response = client.request(method, f"{base}{path}", headers=headers, json=body, params=query)
         result = response.json() if response.content else {}
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Pinterest API request failed.") from exc
