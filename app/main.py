@@ -393,6 +393,28 @@ def pinterest_account_operation(
     data = payload.payload
     base = settings.pinterest_api_base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
+    if operation in {"product_tags", "add_product_tags"}:
+        pin_id = str(data.get("pin_id") or "").strip()
+        if not pin_id:
+            raise HTTPException(status_code=400, detail="Hero Pin ID is required.")
+        if operation == "product_tags":
+            method, path, body = "GET", f"/pins/{pin_id}/product_tags", None
+        else:
+            product_pin_ids = data.get("product_pin_ids")
+            if not isinstance(product_pin_ids, list) or not 1 <= len(product_pin_ids) <= 24:
+                raise HTTPException(status_code=400, detail="Between 1 and 24 product Pin IDs are required.")
+            if any(not isinstance(item, str) or not item.strip() for item in product_pin_ids) or len(set(product_pin_ids)) != len(product_pin_ids):
+                raise HTTPException(status_code=400, detail="Product Pin IDs must be nonblank and unique.")
+            method, path, body = "POST", f"/pins/{pin_id}/product_tags", {"product_tags": [{"pin_id": item.strip()} for item in product_pin_ids]}
+        try:
+            with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+                response = client.request(method, f"{base}{path}", headers=headers, json=body)
+            result = response.json() if response.content else {}
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail="Pinterest product-tag request failed; read current tags before retrying a write.") from exc
+        if not response.is_success:
+            raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail="Pinterest rejected product-tag operation.")
+        return {"data": result}
     allowed = {
         "account": ("GET", "/user_account", None),
         "boards": ("GET", "/boards?page_size=100", None),
