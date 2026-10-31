@@ -3,10 +3,13 @@
 External integrations only report success after real operations complete.
 """
 import hmac
+import os
+import uuid
 from contextlib import asynccontextmanager
 from urllib.parse import quote, urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+import httpx
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
@@ -110,6 +113,113 @@ def _serialize_row(row: dict) -> dict[str, object]:
     if created_at:
         result["created_at"] = created_at.isoformat()
     return result
+
+
+
+def _pinterest_sandbox_token() -> str | None:
+    """Read only dedicated Sandbox credentials; never fall back to production OAuth."""
+    return (
+        settings.pinterest_sandbox_access_token
+        or os.getenv("PINTEREST_SANDBOX_ACCESS_TOKEN")
+        or os.getenv("PINTEREST_SANDBOX_TOKEN")
+        or os.getenv("PINTEREST_SANDBOX_API_TOKEN")
+    )
+
+
+@app.post("/diagnostics/pinterest/catalog-sandbox", dependencies=[Depends(require_configured_api_key)])
+def create_pinterest_catalog_sandbox_test_item() -> dict[str, object]:
+    """Create one disposable item in Pinterest Sandbox only; never touches production."""
+    token = _pinterest_sandbox_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="Pinterest Sandbox token is not configured.")
+
+    base_url = "https://api-sandbox.pinterest.com/v5"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    timeout = httpx.Timeout(20.0, connect=5.0)
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            # First validate that this is a valid Sandbox token, not a production token.
+            validation = client.get(f"{base_url}/catalogs", headers=headers)
+            if validation.status_code in (401, 403):
+                raise HTTPException(status_code=502, detail={"stage": "sandbox_token_validation", "provider_status": validation.status_code, "message": "Pinterest rejected the Sandbox token."})
+            validation.raise_for_status()
+            item_id = f"model1-sandbox-{uuid.uuid4().hex[:16]}"
+            payload = {
+                "catalog_type": "RETAIL",
+                "country": "US",
+                "language": "EN",
+                "items": [{
+                    "item_id": item_id,
+                    "operation": "CREATE",
+                    "attributes": {
+                        "image_link": ["https://picsum.photos/200/300"],
+                        "availability": "in stock",
+                        "condition": "new",
+                        "description": "Disposable Model 1 Pinterest API Sandbox validation item.",
+                        "id": item_id,
+                        "item_group_id": "model1-sandbox-validation",
+                        "link": "https://www.example.com/sandbox/model1-test-item",
+                        "price": "24.99 USD",
+                        "title": "Model 1 Sandbox Validation Item"
+                    }
+                }]
+            }
+            created = client.post(f"{base_url}/catalogs/items/batch", headers={**headers, "Content-Type": "application/json"}, json=payload)
+            created.raise_for_status()
+            result = created.json()
+            batch_id = result.get("batch_id")
+            if not batch_id:
+                raise HTTPException(status_code=502, detail={"stage": "sandbox_batch_create", "message": "Pinterest response did not include batch_id."})
+            return {
+                "ok": True,
+                "environment": "pinterest_sandbox",
+                "token_validation": "accepted",
+                "item_id": item_id,
+                "batch_id": str(batch_id),
+                "batch_status": result.get("status"),
+                "item_status": (result.get("items") or [{}])[0].get("status"),
+                "production_touched": False,
+                "pin_published": False,
+                "token_exposed": False
+            }
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail={"stage": "sandbox_catalog_batch", "provider_status": exc.response.status_code, "message": "Pinterest Sandbox rejected the catalog batch request."}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"stage": "sandbox_catalog_batch", "message": f"Pinterest Sandbox request failed: {type(exc).__name__}."}) from exc
+
+
+@app.get("/diagnostics/pinterest/catalog-sandbox/{batch_id}", dependencies=[Depends(require_configured_api_key)])
+def get_pinterest_catalog_sandbox_batch_status(batch_id: str) -> dict[str, object]:
+    """Read status of a previously submitted Sandbox batch."""
+    token = _pinterest_sandbox_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="Pinterest Sandbox token is not configured.")
+    if not batch_id.isdigit():
+        raise HTTPException(status_code=422, detail="batch_id must contain digits only.")
+    try:
+        response = httpx.get(
+            f"https://api-sandbox.pinterest.com/v5/catalogs/items/batch/{batch_id}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=httpx.Timeout(20.0, connect=5.0),
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "ok": True,
+            "environment": "pinterest_sandbox",
+            "batch_id": str(data.get("batch_id", batch_id)),
+            "batch_status": data.get("status"),
+            "items": data.get("items", []),
+            "production_touched": False,
+            "pin_published": False,
+            "token_exposed": False
+        }
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail={"stage": "sandbox_batch_status", "provider_status": exc.response.status_code, "message": "Pinterest Sandbox rejected the batch-status request."}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"stage": "sandbox_batch_status", "message": f"Pinterest Sandbox request failed: {type(exc).__name__}."}) from exc
 
 
 @app.get("/health")
