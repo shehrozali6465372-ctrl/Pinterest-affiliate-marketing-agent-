@@ -71,3 +71,48 @@ def test_list_pins_rejects_invalid_page_size_before_provider_call(monkeypatch):
 
     assert response.status_code == 422
     assert FakeClient.calls == []
+
+
+def test_list_pins_can_include_protected_pins_and_product_tag_objects(monkeypatch):
+    import app.credential_vault
+    import httpx
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "service-key")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    monkeypatch.setattr(app.credential_vault, "get_pinterest_credential", lambda _account: {"access_token": "test-token"})
+    FakeClient.calls = []
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+
+    response = client.post(
+        "/integrations/pinterest/operation",
+        headers={"X-Credential-Ingest-Key": "service-key"},
+        json={"account_id": "pinterest:123", "operation": "list_pins", "payload": {
+            "page_size": 100, "include_protected_pins": True, "include_product_tag_obj": True,
+        }},
+    )
+
+    assert response.status_code == 200
+    assert FakeClient.calls[0][2]["params"] == {
+        "page_size": 100, "include_protected_pins": True, "include_product_tag_obj": True,
+    }
+
+
+def test_list_pins_rejects_non_boolean_protected_filter_before_provider_call(monkeypatch):
+    import app.credential_vault
+    import httpx
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "service-key")
+    monkeypatch.setattr(app.credential_vault, "get_pinterest_credential", lambda _account: {"access_token": "test-token"})
+    FakeClient.calls = []
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+
+    response = client.post(
+        "/integrations/pinterest/operation",
+        headers={"X-Credential-Ingest-Key": "service-key"},
+        json={"account_id": "pinterest:123", "operation": "list_pins", "payload": {
+            "include_protected_pins": "true",
+        }},
+    )
+
+    assert response.status_code == 422
+    assert FakeClient.calls == []
