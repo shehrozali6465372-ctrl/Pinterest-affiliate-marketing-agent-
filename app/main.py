@@ -405,7 +405,7 @@ def pinterest_account_operation(
                 raise HTTPException(status_code=400, detail="Between 1 and 24 product Pin IDs are required.")
             if any(not isinstance(item, str) or not item.strip() for item in product_pin_ids) or len(set(product_pin_ids)) != len(product_pin_ids):
                 raise HTTPException(status_code=400, detail="Product Pin IDs must be nonblank and unique.")
-            method, path, body = "POST", f"/pins/{pin_id}/product_tags", {"product_tags": [{"pin_id": item.strip()} for item in product_pin_ids]}
+            method, path, body = "POST", f"/pins/{quote(pin_id, safe='')}/product_tags", {"product_tags": [{"pin_id": item.strip()} for item in product_pin_ids]}
         try:
             with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
                 response = client.request(method, f"{base}{path}", headers=headers, json=body)
