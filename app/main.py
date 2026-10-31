@@ -442,6 +442,13 @@ def pinterest_account_operation(
             if not isinstance(bookmark, str) or not bookmark.strip() or len(bookmark) > 2000:
                 raise HTTPException(status_code=422, detail="bookmark must be a non-empty string up to 2000 characters.")
             query["bookmark"] = bookmark
+        # URL-created Product Pins may live on protected boards. Expose only
+        # Pinterest's documented read filters so callers can discover them.
+        for flag in ("include_protected_pins", "include_product_tag_obj"):
+            if flag in data:
+                if not isinstance(data[flag], bool):
+                    raise HTTPException(status_code=422, detail=f"{flag} must be a boolean.")
+                query[flag] = data[flag]
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
     if operation == "create_pin" and not all(body.get(k) for k in ("board_id", "title", "link", "media_source")):
