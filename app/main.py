@@ -147,7 +147,7 @@ def create_pinterest_catalog_sandbox_test_item() -> dict[str, object]:
             payload = {
                 "catalog_type": "RETAIL",
                 "country": "US",
-                "language": "en-US",
+                "language": "EN",
                 "items": [{
                     "item_id": item_id,
                     "operation": "CREATE",
