@@ -393,6 +393,9 @@ def pinterest_account_operation(
     data = payload.payload
     base = settings.pinterest_api_base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
+    # Product-tag operations do not use query parameters; initialize this before
+    # their early branch so the request cannot reference an unbound local.
+    query = None
     if operation in {"product_tags", "add_product_tags"}:
         pin_id = str(data.get("pin_id") or "").strip()
         if not pin_id:
