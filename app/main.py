@@ -4,7 +4,7 @@ External integrations only report success after real operations complete.
 """
 import hmac
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl, field_validator
@@ -398,7 +398,7 @@ def pinterest_account_operation(
         if not pin_id:
             raise HTTPException(status_code=400, detail="Hero Pin ID is required.")
         if operation == "product_tags":
-            method, path, body = "GET", f"/pins/{pin_id}/product_tags", None
+            method, path, body = "GET", f"/pins/{quote(pin_id, safe='')}/product_tags", None
         else:
             product_pin_ids = data.get("product_pin_ids")
             if not isinstance(product_pin_ids, list) or not 1 <= len(product_pin_ids) <= 24:
