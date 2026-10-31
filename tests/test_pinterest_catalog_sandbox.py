@@ -63,6 +63,7 @@ def test_sandbox_catalog_smoke_uses_only_sandbox_and_returns_batch_id(monkeypatc
     assert FakeClient.calls[1][0] == "POST"
     assert FakeClient.calls[1][1] == "https://api-sandbox.pinterest.com/v5/catalogs/items/batch"
     assert FakeClient.calls[1][2]["json"]["items"][0]["operation"] == "CREATE"
+    assert FakeClient.calls[1][2]["json"]["language"] == "EN"
     assert "sandbox-secret" not in response.text
 
 
