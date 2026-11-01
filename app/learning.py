@@ -44,6 +44,28 @@ def _number(value: object) -> float:
         raise ValueError("Pinterest analytics metric is outside the valid range")
     return number
 
+def _extract_metrics(raw: dict[str, object]) -> dict[str, float | None]:
+    """Keep absent Pinterest metrics unknown; only explicit numeric values become numbers."""
+    summary = raw.get("summary_metrics")
+    if summary is not None and not isinstance(summary, dict):
+        raise ValueError("Pinterest analytics summary_metrics has an unexpected shape")
+
+    metrics: dict[str, float | None] = {}
+    for metric in METRICS:
+        value = None
+        if isinstance(summary, dict):
+            value = summary.get(metric, summary.get(metric.lower()))
+        else:
+            value = raw.get(metric, raw.get(metric.lower()))
+            if isinstance(value, dict):
+                nested_summary = value.get("summary_metrics")
+                if not isinstance(nested_summary, dict):
+                    raise ValueError("Pinterest analytics response omitted summary metrics")
+                value = nested_summary.get(metric, nested_summary.get(metric.lower()))
+        metrics[metric.lower()] = None if value is None else _number(value)
+    return metrics
+
+
 
 @router.post("/run", dependencies=[Depends(_require_api_key)])
 def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
@@ -122,28 +144,8 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                 if not isinstance(raw, dict):
                     raise ValueError("Pinterest analytics response has an unexpected shape")
 
-                # Support top-level summary_metrics and per-metric wrappers.
-                # Pinterest's PinAnalyticsResponse normally places period totals in
-                # raw['summary_metrics']; some responses expose per-metric wrappers.
-                summary = raw.get("summary_metrics")
-                if summary is not None and not isinstance(summary, dict):
-                    raise ValueError("Pinterest analytics summary_metrics has an unexpected shape")
-                metrics: dict[str, float] = {}
-                for metric in METRICS:
-                    if isinstance(summary, dict):
-                        # Pinterest may omit metrics with no returned data; a valid
-                        # summary object with an absent requested metric means zero.
-                        value = summary.get(metric, summary.get(metric.lower(), 0))
-                    else:
-                        value = raw.get(metric, raw.get(metric.lower()))
-                        if isinstance(value, dict):
-                            nested_summary = value.get("summary_metrics")
-                            if not isinstance(nested_summary, dict):
-                                raise ValueError("Pinterest analytics response omitted summary metrics")
-                            value = nested_summary.get(metric, nested_summary.get(metric.lower(), 0))
-                        elif value is None:
-                            raise ValueError("Pinterest analytics response omitted a requested metric")
-                    metrics[metric.lower()] = _number(value)
+                # A missing metric is unknown, not zero. Preserve it as JSON null.
+                metrics = _extract_metrics(raw)
 
                 failure_stage = "database_persistence"
                 with connection() as conn:
@@ -159,11 +161,16 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                         ),
                     )
                 impressions = metrics["impression"]
+                outbound = metrics["outbound_click"]
                 results.append({
                     "pin_id": pin["pinterest_pin_id"],
                     "ok": True,
                     "metrics": metrics,
-                    "outbound_click_rate": round(metrics["outbound_click"] / impressions, 4) if impressions else None,
+                    "outbound_click_rate": (
+                        round(outbound / impressions, 4)
+                        if impressions is not None and impressions > 0 and outbound is not None
+                        else None
+                    ),
                 })
             except httpx.TimeoutException:
                 failed += 1
@@ -180,9 +187,14 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
                 })
 
     successful = [item for item in results if item.get("ok")]
-    total_impressions = sum(item["metrics"]["impression"] for item in successful)
-    total_saves = sum(item["metrics"]["save"] for item in successful)
-    total_outbound = sum(item["metrics"]["outbound_click"] for item in successful)
+    def aggregate(metric: str) -> float | None:
+        values = [item["metrics"][metric] for item in successful]
+        # A partial sum would misrepresent an aggregate when any Pin metric is unknown.
+        return sum(values) if values and all(value is not None for value in values) else None
+
+    total_impressions = aggregate("impression")
+    total_saves = aggregate("save")
+    total_outbound = aggregate("outbound_click")
     return {
         "ok": failed == 0,
         "pins_checked": len(pins),
@@ -192,8 +204,8 @@ def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
             "impressions": total_impressions,
             "saves": total_saves,
             "outbound_clicks": total_outbound,
-            "save_rate": round(total_saves / total_impressions, 4) if total_impressions else None,
-            "outbound_click_rate": round(total_outbound / total_impressions, 4) if total_impressions else None,
+            "save_rate": round(total_saves / total_impressions, 4) if total_impressions and total_saves is not None else None,
+            "outbound_click_rate": round(total_outbound / total_impressions, 4) if total_impressions and total_outbound is not None else None,
         },
         "pin_results": results,
         "learning_status": "analytics_ingested_descriptive_evaluation_only" if successful else "analytics_unavailable",

@@ -12,7 +12,10 @@ from app.content_generation import (
 from app.main import app
 from app.pinterest import PinterestPublishError, publish_image_pin
 
-client = TestClient(app)
+# Every test request uses an explicit test-only key; production dependencies
+# are intentionally fail-closed when APP_API_KEY is absent.
+settings.app_api_key = "test-api-key"
+client = TestClient(app, headers={"X-API-Key": "test-api-key"})
 
 VALID_PRODUCT = {
     "product_name": "Wooden spice rack",
@@ -771,7 +774,7 @@ def test_live_diagnostics_runs_read_only_pinterest_and_reports_side_effect_guard
     monkeypatch.setattr(diagnostics.httpx, "Client", FakeHttpClient)
     monkeypatch.setattr(
         "app.media_generation.generate_and_host_pin_image",
-        lambda **kwargs: {"image_url": "data:image/png;base64,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "model": "test-image-model"},
+        lambda **kwargs: {"image_url": "https://imagedelivery.net/test-account/test-image/public", "model": "test-image-model", "cloudflare_image_id": "test-image"},
     )
     monkeypatch.setattr(
         "app.content_generation.generate_pin_content",
@@ -790,6 +793,9 @@ def test_live_diagnostics_runs_read_only_pinterest_and_reports_side_effect_guard
     assert result["side_effects"]["pinterest_pin_created"] is False
     assert result["side_effects"]["pinterest_board_created"] is False
     assert result["side_effects"]["product_persisted"] is False
+    assert result["side_effects"]["cloudflare_test_image_uploaded"] is True
+    assert result["side_effects"]["generated_image_persisted"] is True
+    assert result["side_effects"]["provider_usage_may_be_billable"] is True
     assert result["secrets_returned"] is False
 
 

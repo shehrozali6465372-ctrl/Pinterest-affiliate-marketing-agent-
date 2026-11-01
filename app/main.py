@@ -42,9 +42,9 @@ app.include_router(learning_router)
 
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    """Protect operational endpoints when APP_API_KEY is configured."""
+    """Fail closed: operational endpoints are unavailable until API authentication is configured."""
     if not settings.app_api_key:
-        return
+        raise HTTPException(status_code=503, detail="API authentication is not configured.")
     if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
@@ -395,10 +395,36 @@ def pinterest_account_operation(
     headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
     allowed = {
         "account": ("GET", "/user_account", None),
-        "boards": ("GET", "/boards?page_size=100", None),
         "create_board": ("POST", "/boards", {"name": str(data.get("name") or ""), "description": str(data.get("description") or "")}),
-        "create_pin": ("POST", "/pins", {"board_id": str(data.get("board_id") or ""), "title": str(data.get("title") or ""), "description": str(data.get("description") or ""), "alt_text": str(data.get("alt_text") or ""), "media_source": {"source_type": "image_url", "url": str(data.get("image_url") or ""), "is_standard": True}, "link": str(data.get("destination_url") or "")}),
     }
+    if operation == "boards":
+        items: list[dict[str, object]] = []
+        bookmark: str | None = None
+        seen_bookmarks: set[str] = set()
+        try:
+            with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+                for _page in range(100):
+                    params: dict[str, object] = {"page_size": 100}
+                    if bookmark:
+                        params["bookmark"] = bookmark
+                    response = client.get(f"{base}/boards", headers=headers, params=params)
+                    if not response.is_success:
+                        raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail="Pinterest board listing failed.")
+                    page = response.json() if response.content else {}
+                    if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+                        raise HTTPException(status_code=502, detail="Pinterest returned an invalid board-list response.")
+                    items.extend(item for item in page["items"] if isinstance(item, dict))
+                    next_bookmark = page.get("bookmark")
+                    if not next_bookmark:
+                        return {"data": {"items": items, "bookmark": None}}
+                    next_bookmark = str(next_bookmark)
+                    if next_bookmark in seen_bookmarks:
+                        raise HTTPException(status_code=502, detail="Pinterest repeated a board pagination cursor.")
+                    seen_bookmarks.add(next_bookmark)
+                    bookmark = next_bookmark
+            raise HTTPException(status_code=502, detail="Pinterest board pagination exceeded the safety limit.")
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Pinterest board listing request failed.") from exc
     if operation == "disconnect":
         revoke_pinterest_credential(payload.account_id)
         return {"disconnected": True}
@@ -407,8 +433,8 @@ def pinterest_account_operation(
     method, path, body = allowed[operation]
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
-    if operation == "create_pin" and not all(body.get(k) for k in ("board_id", "title", "link", "media_source")):
-        raise HTTPException(status_code=400, detail="Board, title, image URL, and destination URL are required.")
+    if operation == "create_pin":
+        raise HTTPException(status_code=400, detail="Pin writes must use the canonical idempotent /workflow/publish-hub-pin gateway.")
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
             response = client.request(method, f"{base}{path}", headers=headers, json=body)
