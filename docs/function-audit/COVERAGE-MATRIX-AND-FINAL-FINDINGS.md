@@ -12,7 +12,7 @@ Mode: read-only source review. No code behavior, production data, credentials, d
 |---|---:|---|---|
 | Python | 30 files under app/, scripts/, tests/ | Definitions inventoried; production modules reviewed in dedicated detail reports; 119 top-level test functions have individual TEST records | Not run in this audit |
 | Production Python | 13 files under app/ and scripts/ | Dedicated reviews for main routes, database, credential vault, workflow, learning, content/media/Pinterest and remaining modules | Not live-verified |
-| Tests | 17 modules; 119 top-level test functions | TEST records and grouped helper/fake/fixture reviews; TEST-TO-PRODUCTION-MAP is referenced by index but was not retrievable at the checked path | No test suite run |
+| Tests | 17 modules; 119 top-level test functions | TEST records and grouped helper/fake/fixture reviews; the previously referenced TEST-TO-PRODUCTION-MAP.md was not retrievable at the checked path, so cross-module mapping remains an evidence gap | No test suite run |
 | SQL | 8 migrations | MIGRATIONS-001-008.md reviewed statement-by-statement | No migration executed |
 | GitHub Actions | 5 workflows | WORKFLOWS-001-005.md reviewed step-by-step | No workflow dispatched |
 | Audit documents | Index reports 242 Markdown files (241 records excluding index) | Counts are index-reported; this audit refresh did not independently enumerate the complete Git tree | N/A |
@@ -33,7 +33,7 @@ Mode: read-only source review. No code behavior, production data, credentials, d
 
 ### P1 — Inconsistent fail-closed API authentication
 
-In `app/main.py`, `require_api_key` returns successfully when `APP_API_KEY` is absent. `require_configured_api_key` fails closed, but only routes that explicitly use that dependency benefit. The diagnostics and learning routers implement their own fail-closed checks. Audit every operational route and ensure any sensitive or state-changing route uses a fail-closed dependency. Do not rely on a missing secret to protect an endpoint.
+In `app/main.py`, `require_api_key` returns successfully when `APP_API_KEY` is absent. Routes explicitly using it include `POST /products` (database write) and `POST /products/{product_id}/content` (billable provider call plus DB write), as well as product validation/read/history routes. `require_configured_api_key` fails closed, and publish routes use it; diagnostics and learning routers implement their own fail-closed checks. This is a concrete fail-open configuration risk for product persistence/content generation. Require a configured key for every operational route, then add tests proving each route returns 503 when the key is missing.
 
 ### P1 — Refresh-token rotation race and missing automatic refresh
 
@@ -73,7 +73,7 @@ The reviewed media implementation calls Cloudflare Workers AI and returns a Base
 
 ## Test and workflow evidence limits
 
-- The 119 individual test-function count is recorded in INDEX.md; this refresh did not execute pytest.
+- The 119 individual test-function count is recorded in INDEX.md; this refresh did not execute pytest. The test-to-production mapping document referenced in earlier notes could not be fetched at the expected path, so do not treat that mapping as independently verified.
 - Fake clients/cursors cannot prove PostgreSQL advisory-lock, transaction, pool recovery or concurrent refresh semantics.
 - The opt-in PostgreSQL recovery test is destructive to a backend session and must only run against a disposable test database.
 - CI workflows differ in Python version and PostgreSQL service availability. A green result must be tied to the exact workflow run and commit.
