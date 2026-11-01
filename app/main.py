@@ -395,9 +395,36 @@ def pinterest_account_operation(
     headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
     allowed = {
         "account": ("GET", "/user_account", None),
-        "boards": ("GET", "/boards?page_size=100", None),
         "create_board": ("POST", "/boards", {"name": str(data.get("name") or ""), "description": str(data.get("description") or "")}),
     }
+    if operation == "boards":
+        items: list[dict[str, object]] = []
+        bookmark: str | None = None
+        seen_bookmarks: set[str] = set()
+        try:
+            with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+                for _page in range(100):
+                    params: dict[str, object] = {"page_size": 100}
+                    if bookmark:
+                        params["bookmark"] = bookmark
+                    response = client.get(f"{base}/boards", headers=headers, params=params)
+                    if not response.is_success:
+                        raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail="Pinterest board listing failed.")
+                    page = response.json() if response.content else {}
+                    if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+                        raise HTTPException(status_code=502, detail="Pinterest returned an invalid board-list response.")
+                    items.extend(item for item in page["items"] if isinstance(item, dict))
+                    next_bookmark = page.get("bookmark")
+                    if not next_bookmark:
+                        return {"data": {"items": items, "bookmark": None}}
+                    next_bookmark = str(next_bookmark)
+                    if next_bookmark in seen_bookmarks:
+                        raise HTTPException(status_code=502, detail="Pinterest repeated a board pagination cursor.")
+                    seen_bookmarks.add(next_bookmark)
+                    bookmark = next_bookmark
+            raise HTTPException(status_code=502, detail="Pinterest board pagination exceeded the safety limit.")
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Pinterest board listing request failed.") from exc
     if operation == "disconnect":
         revoke_pinterest_credential(payload.account_id)
         return {"disconnected": True}
