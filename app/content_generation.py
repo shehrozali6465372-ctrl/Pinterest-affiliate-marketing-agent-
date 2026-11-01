@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
 from app.provider_retry import retry_delay_seconds
+from app.pin_limits import PIN_DESCRIPTION_MAX_LENGTH, PIN_TITLE_MAX_LENGTH, PIN_ALT_TEXT_MAX_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,19 @@ AFFILIATE_DISCLOSURE = (
 
 class GeneratedContent(BaseModel):
     pin_idea: str = Field(min_length=1, max_length=500)
-    title: str = Field(min_length=1, max_length=100)
-    description: str = Field(min_length=1, max_length=2000)
-    alt_text: str = Field(min_length=1, max_length=500)
+    title: str = Field(min_length=1, max_length=PIN_TITLE_MAX_LENGTH)
+    description: str = Field(min_length=1, max_length=PIN_DESCRIPTION_MAX_LENGTH)
+    alt_text: str = Field(min_length=1, max_length=PIN_ALT_TEXT_MAX_LENGTH)
+
+
+
+def _with_affiliate_disclosure(description: str) -> str:
+    """Append the mandatory disclosure while staying inside Pinterest's 800-char limit."""
+    if AFFILIATE_DISCLOSURE.lower() in description.lower():
+        return description
+    separator = "\\n\\n"
+    available_copy_length = PIN_DESCRIPTION_MAX_LENGTH - len(separator) - len(AFFILIATE_DISCLOSURE)
+    return f"{description[:available_copy_length].rstrip()}{separator}{AFFILIATE_DISCLOSURE}"
 
 
 class ContentGenerationError(RuntimeError):
@@ -95,14 +106,17 @@ def generate_pin_content(
         "You can inspect the supplied image. Use visible evidence for alt_text, but use only supplied product "
         "facts for claims about materials, dimensions, certifications, performance, prices, or specifications. "
         "Do not infer hidden properties or invent unsupported claims. "
-        "Return one JSON object with exactly these string keys: pin_idea, title, description, alt_text. "
-        "pin_idea: a concrete visual/creative concept consistent with the product details, max 500 characters. "
-        "title: concise and relevant, max 100 characters. "
-        "description: natural useful copy, avoid keyword stuffing, max 2000 characters, and include this "
-        "clear disclosure verbatim: \"Affiliate disclosure: This post contains affiliate links; I may earn "
+        "Return valid json as one JSON object with exactly these string keys: pin_idea, title, description, alt_text. "
+        "Enforce these hard character limits: pin_idea 500, title 100, description 800, alt_text 500. "
+        "The description limit includes the complete affiliate disclosure; never exceed 800 characters. "
+        "Include this disclosure verbatim in description: \"Affiliate disclosure: This post contains affiliate links; I may earn "
         "a commission at no extra cost to you.\" "
-        "alt_text: concise accessibility-focused description of visible image content, max 500 characters; "
-        "describe only what is actually visible. Do not put Markdown fences around the JSON.\n\n"
+        "Use this exact JSON shape (values are examples, not product claims): "
+        "{\"pin_idea\":\"A practical visual concept\",\"title\":\"Organized Spice Rack\",\"description\":\"Useful kitchen organization. Affiliate disclosure: This post contains affiliate links; I may earn a commission at no extra cost to you.\",\"alt_text\":\"A spice rack holding jars on a kitchen wall.\"}. "
+        "pin_idea: a concrete visual/creative concept consistent with the product details. "
+        "title: concise and relevant. description: natural useful copy; avoid keyword stuffing. "
+        "alt_text: concise accessibility-focused description of visible image content; describe only what is actually visible. "
+        "Do not put Markdown fences around the JSON.\n\n"
         f"Product name: {product_name}\nProduct details: {product_details}"
     )
     if _retry_hint:
@@ -287,11 +301,5 @@ def generate_pin_content(
         )
         raise ContentGenerationError("DeepSeek JSON did not match the required content schema.") from exc
 
-    if AFFILIATE_DISCLOSURE.lower() not in content.description.lower():
-        content.description = f"{content.description.rstrip()}\n\n{AFFILIATE_DISCLOSURE}"
-    if len(content.description) > 2000:
-        content.description = (
-            f"{content.description[: 2000 - len(AFFILIATE_DISCLOSURE) - 2].rstrip()}\n\n"
-            f"{AFFILIATE_DISCLOSURE}"
-        )
+    content.description = _with_affiliate_disclosure(content.description)
     return content, settings.llm_model
