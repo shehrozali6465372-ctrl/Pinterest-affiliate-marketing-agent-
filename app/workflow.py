@@ -5,7 +5,7 @@ import hmac
 import logging
 import re
 from uuid import uuid4
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -85,11 +85,33 @@ def _pinterest_request(method: str, path: str, token: str, *, body: dict | None 
 
 
 def _ensure_board(token: str, name: str, description: str) -> str:
-    _, response = _pinterest_request("GET", "/boards?page_size=100", token)
-    items = response.get("items", []) if isinstance(response, dict) else []
-    for board in items:
-        if isinstance(board, dict) and board.get("name", "").casefold() == name.casefold() and board.get("id"):
-            return str(board["id"])
+    """Resolve a board across all Pinterest pages before creating anything."""
+    bookmark: str | None = None
+    seen_bookmarks: set[str] = set()
+    for _page in range(100):
+        query = {"page_size": 100}
+        if bookmark:
+            query["bookmark"] = bookmark
+        _, response = _pinterest_request("GET", f"/boards?{urlencode(query)}", token)
+        if not isinstance(response, dict):
+            raise HTTPException(status_code=502, detail="Pinterest returned an invalid board-list response; refusing to create a possible duplicate.")
+        items = response.get("items", [])
+        if not isinstance(items, list):
+            raise HTTPException(status_code=502, detail="Pinterest returned an invalid board list; refusing to create a possible duplicate.")
+        for board in items:
+            if isinstance(board, dict) and str(board.get("name") or "").casefold() == name.casefold() and board.get("id"):
+                return str(board["id"])
+        next_bookmark = response.get("bookmark")
+        if not next_bookmark:
+            break
+        next_bookmark = str(next_bookmark)
+        if next_bookmark in seen_bookmarks:
+            raise HTTPException(status_code=502, detail="Pinterest repeated a board pagination cursor; refusing to create a possible duplicate.")
+        seen_bookmarks.add(next_bookmark)
+        bookmark = next_bookmark
+    else:
+        raise HTTPException(status_code=502, detail="Pinterest board pagination exceeded the safety limit; refusing to create a possible duplicate.")
+
     _, created = _pinterest_request("POST", "/boards", token, body={"name": name, "description": description})
     board_id = created.get("id") if isinstance(created, dict) else None
     if not isinstance(board_id, str) or not board_id:
