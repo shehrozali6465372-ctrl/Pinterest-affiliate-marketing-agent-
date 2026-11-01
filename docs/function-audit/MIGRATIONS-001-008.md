@@ -1,0 +1,14 @@
+# SQL migration audit — 001 through 008
+
+Baseline: application source commit `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`. All eight migration files were fetched from that commit and reviewed statement-by-statement. This is static SQL review; migrations were not executed.
+
+1. `001_create_products.sql`: creates BIGSERIAL product ID; required name/details with length CHECK constraints; required image and affiliate URLs; timestamp default. Later migration 008 relaxes image_url NOT NULL.
+2. `002_create_content_versions.sql`: content versions reference products with ON DELETE CASCADE; positive version number; provider/model/prompt identifiers and generated Pin text are required; unique product/version; descending product-created index.
+3. `003_create_publish_records.sql`: publication rows reference product and content version with cascade; constrain status to pending/succeeded/failed/unknown; positive attempt count; store Pin ID, HTTP/error metadata and JSONB response metadata; unique content-version/board; succeeded requires non-null Pin ID; product/updated index. The database does not require non-succeeded rows to have a null Pin ID.
+4. `004_create_pinterest_credentials.sql`: unique account ID; Pinterest user ID; encrypted access-token bytes required; encrypted refresh token optional; token metadata/expiry/status; status constrained to connected/revoked; index by Pinterest user. Encryption itself is application responsibility, not SQL-enforced.
+5. `005_add_product_idempotency_key.sql`: adds nullable key and partial unique index for non-null values. Legacy products can remain without keys; uniqueness is only guaranteed for populated keys.
+6. `006_create_pin_analytics.sql`: snapshots reference publication; store Pin ID, date period and JSONB metrics; unique Pin/period; index Pin/fetch time. There is no CHECK enforcing period_start <= period_end or a specific metric schema.
+7. `007_add_publication_account_id.sql`: adds nullable account_id and account/status/update index. Legacy rows remain NULL; no foreign key or non-null constraint is added.
+8. `008_products_image_url_nullable.sql`: drops NOT NULL from products.image_url, allowing metadata-only rows because generated image bytes are sent to Pinterest rather than persisted in Neon.
+
+Cross-migration observations: the sequence relies on migration runner ordering and its tracking mechanism; this SQL review alone does not prove atomicity or safe concurrent migration execution. Publication uniqueness by content version and board is the principal DB-level duplicate guard. Account ownership of old publication rows cannot be reconstructed from migration 007 alone. No migration was applied during this audit.
