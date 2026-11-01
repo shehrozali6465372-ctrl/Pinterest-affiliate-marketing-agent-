@@ -15,7 +15,7 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
 - GitHub Actions workflows: 5.
 - Audit Markdown files: 242 at docs/function-audit/ root (241 records excluding index); three previously misplaced reports were restored from a nested docs/function-audit/docs/function-audit/ directory.
 - FN-prefixed definition records: 94.
-- TEST-prefixed records: 135.
+- TEST-prefixed records: 136.
 - Top-level test functions documented individually: 119/119.
 - Duplicate FN-/TEST- record IDs: 0.
 
