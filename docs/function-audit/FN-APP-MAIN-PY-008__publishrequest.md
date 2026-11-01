@@ -1,30 +1,10 @@
-# PublishRequest
+# PublishRequest — source-level review
 
-- **Unique ID:** `FN-APP-MAIN-PY-008`
-- **Definition type:** class/schema
-- **Source:** `app/main.py:102-106`
-- **Source blob SHA:** `37f5ccae0d171a8f8d6766cfb26013dbe221391c`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-MAIN-PY-008`; source `app/main.py:104-107`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Pydantic schema requires positive product_id and content_version_id. It does not verify that the content version belongs to the product; route/database lookup enforces that relationship.
 
-Request model for publishing a selected product/content version. Verify required IDs, board/account selection, idempotency controls and that client-supplied content cannot bypass approved persisted content rules.
-
-## Exact isolated source
-
-```python
-class PublishRequest(BaseModel):
-    product_id: int = Field(gt=0)
-    content_version_id: int = Field(gt=0)
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: exact class/schema source retrieved.
-- `VERIFIED — DEFINITION ISOLATION`: adjacent class/function boundaries checked.
-- `UNVERIFIED — VALIDATION CORRECTNESS`: actual accepted/rejected inputs and tests remain to be established.
-
-## Required checks
-
-Review Pydantic version/configuration, each field, defaults, validators, invalid payload tests, route binding, serialization and secret exposure.
+## Callers and tests
+Used by compatibility `POST /publish` wrapper, which delegates to publish_product_content and can create a real Pin. Tests cover invalid/missing publish IDs and wrapper behavior. No publish was invoked.
