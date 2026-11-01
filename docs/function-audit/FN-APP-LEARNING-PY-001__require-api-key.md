@@ -1,31 +1,10 @@
-# _require_api_key
+# _require_api_key — source-level review
 
-- **Unique ID:** `FN-APP-LEARNING-PY-001`
-- **Definition type:** `def`
-- **Source:** `app/learning.py:23-27`
-- **Source blob SHA:** `ea27a7ebf2fbdf58ba1452f4adaf7d56a197e9b9`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-LEARNING-PY-001`; source `app/learning.py:23-27`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Requires APP_API_KEY to be configured and X-API-Key header to be present and constant-time equal. Missing configuration/header or mismatch raises HTTP 401. Unlike main.require_api_key, this dependency fails closed when secret is absent.
 
-FastAPI authentication dependency guarding learning-loop access. Verify whether it requires APP_API_KEY, rejects unset configuration, uses a safe comparison and is attached to the learning route.
-
-## Exact isolated source
-
-```python
-def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    if not settings.app_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: fetched from current source blob.
-- `VERIFIED — DEFINITION ISOLATION`: indentation-aware boundaries checked.
-- `UNVERIFIED — LOGIC`: caller/test/runtime evidence not yet complete.
-- `UNVERIFIED — LIVE BEHAVIOR`: no production execution occurred.
-
-## Required checks
-
-Trace every caller/callee, inspect relevant tests, validate boundary cases and exception behavior, and review security/data side effects. Do not call production services during this audit.
+## Callers and tests
+Applied to Learning Loop router. `tests/test_learning.py` focuses metric and snapshot behavior; diagnostics/auth tests cover similar fail-closed route behavior. Endpoint writes analytics snapshots, so API key protection is essential. No endpoint call or DB write occurred.
