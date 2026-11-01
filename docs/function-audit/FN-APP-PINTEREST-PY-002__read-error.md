@@ -1,14 +1,23 @@
 # PinterestReadError
 
 - **Unique ID:** FN-APP-PINTEREST-PY-002
-- **Source:** app/pinterest.py (current definition retrieved; exact line coordinates pending final inventory)
-- **Status:** VERIFIED — SOURCE RETRIEVED; line coordinates provisional
+- **Definition type:** class
+- **Source:** `app/pinterest.py:60-61`
+- **Source blob SHA:** `6ccc51b2cf8a289f6989e872179a0014cfe6f372`
+- **Status:** VERIFIED — SOURCE RETRIEVED; STATIC LOGIC REVIEWED
+
+## Exact source
+
+```python
+class PinterestReadError(RuntimeError):
+    """A sanitized error from a read-only Pinterest verification request."""
+```
 
 ## Behavior
-A dedicated RuntimeError subtype for sanitized failures from read-only Pinterest verification calls. It communicates a failure category to callers without embedding response bodies or credentials.
+Defines a distinct exception type for sanitized failures in the read-only Pinterest board-list and Pin-detail helpers. It carries no custom fields and does not itself issue a request, mutate a Pin, or access credentials.
 
-## Side effects
-The exception class itself has no side effects. Read-only GET behavior belongs to list_board_pins_read_only and get_pin_read_only.
+## Callers
+Raised by `list_board_pins_read_only` and `get_pin_read_only` for HTTP errors, malformed JSON/response shapes, pagination errors and transport failures. Callers in the publication-verification route translate these failures into controlled API responses.
 
-## Evidence boundary
-Source retrieved from main. Caller handling and tests remain to be mapped. No live Pinterest request was made.
+## Verification boundary
+Source and definition boundary are confirmed. Tests in `tests/test_pinterest_readonly.py` cover read-only GET behavior, bookmark pagination, repeated bookmarks, page-cap behavior and provider-error sanitization. Those tests use fake HTTP clients; they do not prove live Pinterest API behavior.
