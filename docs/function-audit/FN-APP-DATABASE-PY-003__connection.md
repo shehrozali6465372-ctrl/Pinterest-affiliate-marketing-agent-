@@ -1,31 +1,13 @@
-# connection
+# connection — source-level review
 
-- **Unique ID:** `FN-APP-DATABASE-PY-003`
-- **Source:** `app/database.py:43-48`
-- **Source blob SHA:** `7000abf6365c60b4543e353a72bbbcce2c49d2dd`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-DATABASE-PY-003`; source `app/database.py:43-48`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime DB verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+A context manager enters `get_pool().connection()`, yields the leased psycopg connection to the caller, then relies on the pool's context manager to return/release it on normal exit or exception. Transaction commit/rollback behavior is delegated to psycopg_pool's connection context; this wrapper does not issue explicit BEGIN/COMMIT/ROLLBACK and does not catch exceptions.
 
-Context manager that obtains a pooled connection for DB operations. Verify acquire/release behavior on success and exception, transaction semantics (autocommit vs explicit transaction), and whether nested calls share one connection.
+## Callers and tests
+Used by database helpers and credential-vault SQL operations. Unit tests mock pool/connection objects and test lease lifecycle; they do not establish Neon transaction semantics.
 
-## Exact isolated source
-
-```python
-def connection() -> Iterator[psycopg.Connection]:
-    """Yield a pooled PostgreSQL connection."""
-    with get_pool().connection() as conn:
-        yield conn
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: exact current source blob fetched.
-- `VERIFIED — DEFINITION ISOLATION`: source range contains one definition only.
-- `UNVERIFIED — LOGIC CORRECTNESS`: behavior still requires tests, callers and DB contract review.
-- `UNVERIFIED — LIVE DATABASE`: no production database operation executed.
-
-## Required checks
-
-Inspect SQL schema and migrations, every caller, test assertions, transaction scope, parameter binding, race conditions, failure recovery and pool lifecycle. No production data mutation is allowed.
+## Risks
+Nested calls acquire separate leases unless callers pass/reuse a connection explicitly. A thrown exception should propagate through the context manager and trigger psycopg's transaction cleanup. No DB connection was opened in this audit.
