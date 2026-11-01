@@ -1,38 +1,10 @@
-# get_product
+# get_product — source-level review
 
-- **Unique ID:** `FN-APP-DATABASE-PY-007`
-- **Source:** `app/database.py:108-120`
-- **Source blob SHA:** `7000abf6365c60b4543e353a72bbbcce2c49d2dd`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-DATABASE-PY-007`; source `app/database.py`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime DB verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Performs parameterized SELECT for one product ID; returns dict row or None. It does not validate positive ID, authorize tenant/account ownership or fetch related content; route layer validates ID and handles not-found.
 
-Fetches a product row by identifier. Verify UUID parsing, not-found behavior, selected columns and whether account ownership is enforced by caller or SQL.
-
-## Exact isolated source
-
-```python
-def get_product(product_id: int) -> dict | None:
-    """Fetch a single persisted product."""
-    with connection() as conn:
-        row = conn.execute(
-            """
-            SELECT id, product_name, product_details, image_url, affiliate_url, created_at
-            FROM products WHERE id = %s
-            """,
-            (product_id,),
-        ).fetchone()
-        return dict(row) if row else None
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: fetched from recorded source blob.
-- `VERIFIED — LINE RANGE`: one function body isolated.
-- `UNVERIFIED — DATA CORRECTNESS`: transaction, constraints, authorization and tests remain to be checked.
-- `UNVERIFIED — PRODUCTION DB`: no production data read or written.
-
-## Required checks
-
-Inspect SQL query, migrations, all callers, test assertions, foreign keys, uniqueness, transaction boundaries, race conditions, ordering and error handling. No production DB operations.
+## Callers and tests
+Used by product read, content generation/history and publish routes. API tests stub result and cover missing product. Product rows contain caller-supplied details and affiliate URL; do not treat them as independently verified facts.
