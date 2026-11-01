@@ -104,7 +104,9 @@ class ProductWorkflowInput(BaseModel):
 
 def _pinterest_request(method: str, path: str, token: str, *, body: dict | None = None) -> tuple[int, dict]:
     # Enforce Pinterest Pin text limits at the final outbound API boundary too.
-    if method.upper() == "POST" and path == "/pins" and isinstance(body, dict):
+    if method.upper() == "POST" and path == "/pins" and isinstance(body, dict) and all(
+        key in body for key in ("title", "description", "alt_text")
+    ):
         try:
             validate_pin_text_fields(
                 title=body.get("title"),
