@@ -1,34 +1,13 @@
-# token_encryption_key_is_valid
+# token_encryption_key_is_valid — source-level review
 
-- **Unique ID:** `FN-APP-CREDENTIAL-VAULT-PY-003`
-- **Source:** `app/credential_vault.py:31-39`
-- **Source blob SHA:** `cb700abe4ba4c585966c2545d18211fc2035e2b5`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-CREDENTIAL-VAULT-PY-003`; source `app/credential_vault.py:31-39`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime/production verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Calls `_cipher()`. If that helper raises `TokenEncryptionConfigurationError` for absent, malformed Base64 or non-32-byte key, returns `False`; otherwise returns `True`. It does not catch unrelated exceptions, inspect existing ciphertext, or test decryptability of stored tokens. The result is a configuration-format check, not proof that production credentials can be decrypted.
 
-Checks whether configured token-encryption key material can be decoded and is a valid AES key length. Verify accepted encoding, exact byte-length constraints, malformed base64 handling and consistency with _cipher.
+## Callers and tests
+Used by `/readiness` to report encryption-key format validity. Credential storage and retrieval call `_cipher` directly and still raise on invalid configuration. API tests cover absent/invalid key readiness behavior; this is not a live Neon decrypt test.
 
-## Exact isolated source
-
-```python
-def token_encryption_key_is_valid() -> bool:
-    """Validate the configured AES-256-GCM key format without reading or exposing secret material."""
-    try:
-        _cipher()
-    except TokenEncryptionConfigurationError:
-        return False
-    return True
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: confirmed from the source blob.
-- `VERIFIED — DEFINITION RANGE`: isolated to one definition.
-- `UNVERIFIED — CRYPTOGRAPHIC CORRECTNESS`: key, nonce, AAD, decrypt compatibility and tests require proof.
-- `UNVERIFIED — PRODUCTION CREDENTIAL STATE`: no live credential was accessed or changed.
-
-## Required checks
-
-Trace every caller and raise site; inspect unit tests for malformed keys, nonce uniqueness, encryption/decryption round trips, account isolation, token rotation and revocation. Do not inspect or expose actual production secrets.
+## Risk
+Key rotation without re-encrypting existing rows makes old ciphertext unreadable even if the new key passes this format check. No key or ciphertext was accessed in this audit.
