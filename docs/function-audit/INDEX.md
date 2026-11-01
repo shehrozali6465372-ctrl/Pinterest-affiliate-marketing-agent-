@@ -13,9 +13,9 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
 - Test modules: 17.
 - SQL migrations: 8.
 - GitHub Actions workflows: 5.
-- Audit Markdown files: 243 (242 records excluding index), including the reconciled coverage matrix.
+- Audit Markdown files: 242 at docs/function-audit/ root (241 records excluding index); three previously misplaced reports were restored from a nested docs/function-audit/docs/function-audit/ directory.
 - FN-prefixed definition records: 94.
-- TEST-prefixed records: 136.
+- TEST-prefixed records: 135.
 - Top-level test functions documented individually: 119/119.
 - Duplicate FN-/TEST- record IDs: 0.
 
@@ -32,7 +32,7 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
    - PRODUCTION-DETAIL-REMAINING-MODULES.md
    - PRODUCTION-CALL-GRAPH-AND-RISK-REVIEW.md
 3. Documented all 119 top-level test functions individually; reviewed nested helpers/fakes/fixtures in grouped TEST-HELPERS-* documents.
-4. Test-to-production mapping was referenced in earlier audit notes, but the referenced TEST-TO-PRODUCTION-MAP.md path was not retrievable during this verification. Treat cross-module mapping as not independently verified until the document is restored or recreated.
+4. Restored PRODUCTION-DETAIL-REMAINING-MODULES.md and TEST-TO-PRODUCTION-MAP.md from the nested docs/function-audit/docs/function-audit/ directory to the audit root so the index links resolve.
 5. Reviewed all eight SQL migrations statement-by-statement in MIGRATIONS-001-008.md.
 6. Reviewed all five GitHub Actions workflows step-by-step in WORKFLOWS-001-005.md.
 7. Recorded the inventory, counts, call graph, prioritized findings and verification boundaries in COVERAGE-MATRIX-AND-FINAL-FINDINGS.md.
@@ -56,4 +56,4 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
 
 **Runtime/production verification: NOT PERFORMED.** No test suite was run in this continuation, no workflow dispatched, no live provider/OAuth call made, no DB query/migration performed, and no real Pin published. The audit commit had no combined status entries and no commit-associated workflow runs returned at verification time; this is neither a pass nor a fail. The opt-in PostgreSQL recovery test terminates a backend session and was not run. Existing CI run evidence must be checked against an exact run ID/commit before being treated as current proof.
 
-See COVERAGE-MATRIX-AND-FINAL-FINDINGS.md for the reconciled coverage matrix, prioritized remediation order and source findings. The referenced test-to-production map was not retrievable at the checked path and is explicitly treated as an outstanding documentation gap. Do not interpret static source review as proof that Render runs this baseline, Neon schema is current, secrets are configured, provider credentials work, or Pinterest operations succeed live. Any live diagnostic that invokes generation may incur cost and requires separate approval. No production write, deploy, credential mutation or Pin publication is authorized by this audit.
+See COVERAGE-MATRIX-AND-FINAL-FINDINGS.md for the reconciled coverage matrix, prioritized remediation order and source findings. The test-to-production map and remaining-module review are now present at the paths linked by this index. Do not interpret static source review as proof that Render runs this baseline, Neon schema is current, secrets are configured, provider credentials work, or Pinterest operations succeed live. Any live diagnostic that invokes generation may incur cost and requires separate approval. No production write, deploy, credential mutation or Pin publication is authorized by this audit.
