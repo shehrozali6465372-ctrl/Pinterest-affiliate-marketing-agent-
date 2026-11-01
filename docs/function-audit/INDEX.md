@@ -3,7 +3,7 @@
 Repository: shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-
 Branch: main
 Application source baseline: 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0
-Audit documentation baseline before reconciliation: b11ab14dfce4bc2236f67806806914cf219ac5d3; see latest main commit for the reconciled index.
+Audit documentation: latest changes are on main; application source baseline remains 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0.
 Mode: READ-ONLY static source audit and documentation. No application code, production DB, credentials, provider state, deployment or Pinterest Pins changed.
 
 ## Inventory
@@ -22,7 +22,7 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
 ## Completed static audit scope
 
 1. Enumerated Python definitions across all 30 Python files.
-2. Added individual FN records for production classes/functions/helpers and expanded function-specific explanations in:
+2. Completed function-specific static reviews across all 94 FN records, including inputs/outputs, branch/error behavior, direct callers, test evidence, side effects and identified risks. Expanded module-level explanations in:
    - PRODUCTION-DETAIL-MAIN-ROUTES.md
    - PRODUCTION-DETAIL-DATABASE.md
    - PRODUCTION-DETAIL-CREDENTIAL-VAULT.md
@@ -52,7 +52,7 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
 
 ## Completion and evidence boundary
 
-**Static source audit: COMPLETE at module/function level** for the recorded application baseline. Definitions are inventoried; production modules, all top-level test functions, grouped test helpers, migrations, workflows, call graph and prioritized findings are documented. The coverage matrix explicitly records review boundaries and does not claim a separate statement-by-statement trace for every nested helper.
+**Static source audit: COMPLETE at function/module level** for the recorded application baseline. All 94 FN records have function-specific source analysis; 119 top-level test functions have individual assertion records; nested test helpers/fakes/fixtures are reviewed in grouped reports; all migrations/workflows and the call graph are documented. This is a static source review, not runtime proof or a claim that every nested helper method has a separate record.
 
 **Runtime/production verification: NOT PERFORMED.** No test suite was run in this continuation, no workflow dispatched, no live provider/OAuth call made, no DB query/migration performed, and no real Pin published. The audit commit had no combined status entries and no commit-associated workflow runs returned at verification time; this is neither a pass nor a fail. The opt-in PostgreSQL recovery test terminates a backend session and was not run. Existing CI run evidence must be checked against an exact run ID/commit before being treated as current proof.
 
