@@ -1,43 +1,10 @@
-# GeneratedContent
+# GeneratedContent — source-level review
 
-- **Unique ID:** `FN-APP-CONTENT-GENERATION-PY-001`
-- **Definition type:** `class`
-- **Source:** `app/content_generation.py:24-30`
-- **Source blob SHA:** `12d8685abb2883bf4e47526aa99acffc5fd7c36c`
-- **Repository snapshot:** `main@336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-CONTENT-GENERATION-PY-001`; source `app/content_generation.py`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime verification: NOT RUN.
 
-## Logic overview
+## Behavior
+Pydantic model defining four required non-empty string fields: pin_idea (max 500), title (max 100), description (max 2000), alt_text (max 500). Pydantic rejects missing fields, empty strings and over-limit values during model validation. It does not independently verify factual truth, Pinterest policy, disclosure presence or image correspondence; those are handled by generator prompt/post-validation logic.
 
-Defines a model, settings container, or exception type. Inspect inheritance, fields, defaults, constraints and configuration. Each nested method/validator is separately recorded.
-
-## Inputs, outputs and failure paths
-
-The exact signature, annotations, defaults, validators, return statements, and raises are shown in the source below. Caller-side assumptions and undocumented provider behavior are not treated as facts.
-
-## Exact isolated source
-
-```python
-class GeneratedContent(BaseModel):
-    pin_idea: str = Field(min_length=1, max_length=500)
-    title: str = Field(min_length=1, max_length=100)
-    description: str = Field(min_length=1, max_length=2000)
-    alt_text: str = Field(min_length=1, max_length=500)
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: confirmed against the recorded GitHub blob.
-- `VERIFIED — DEFINITION ISOLATION`: adjacent/nested definitions are separated by indentation boundary.
-- `UNVERIFIED — LOGIC CORRECTNESS`: not yet proven.
-- `UNVERIFIED — TEST COVERAGE`: tests and assertions still require mapping/review.
-- `UNVERIFIED — LIVE BEHAVIOR`: no runtime or provider claim is made.
-
-## Required next checks
-
-1. Trace direct callers and relevant dependencies.
-2. Explain every statement, branch, loop, return and exception path.
-3. Inspect tests and map assertions to behavior, including failure and boundary cases.
-4. Review concurrency, retries, database transactions and security invariants where relevant.
-5. Check the actual external API contract and side effects.
-6. No production writes, credential changes, deployments or Pinterest publishing during this audit.
+## Callers and tests
+Constructed by `generate_pin_content` via `GeneratedContent.model_validate(parsed_content)`. Tests in `test_deepseek_completion.py` exercise valid/invalid JSON and schema cases using fake HTTP responses. No live model output was used.
