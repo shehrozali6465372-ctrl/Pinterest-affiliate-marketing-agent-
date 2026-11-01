@@ -1,32 +1,10 @@
-# _safe_cloudflare_error
+# _safe_cloudflare_error — source-level review
 
-- **Unique ID:** `FN-APP-MEDIA-GENERATION-PY-003`
-- **Source:** `app/media_generation.py:34-40`
-- **Source blob SHA:** `e4a62e8ca628ee906bc59915810edc20e3c8f8e7`
-- **Snapshot:** `main source snapshot 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-MEDIA-GENERATION-PY-003`; source `app/media_generation.py`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Calls _cloudflare_error_codes, formats a bounded suffix containing parsed codes when present, logs stage/status/codes, and returns ImageGenerationError containing stage and HTTP status. It does not log raw response body or request headers. The returned exception is raised by caller.
 
-Creates a safe Cloudflare error summary. Verify token/authorization and uploaded image data cannot leak through logs or API error details.
-
-## Exact isolated source
-
-```python
-def _safe_cloudflare_error(stage: str, response: httpx.Response) -> ImageGenerationError:
-    codes = _cloudflare_error_codes(response)
-    suffix = f"; provider_codes={codes}" if codes else ""
-    logger.error("image_generation stage=cloudflare outcome=failed http_status=%s provider_codes=%s", response.status_code, codes)
-    return ImageGenerationError(f"Cloudflare {stage} failed (HTTP {response.status_code}{suffix}).")
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: exact source blob fetched.
-- `VERIFIED — DEFINITION RANGE`: single definition isolated.
-- `UNVERIFIED — LOGIC CORRECTNESS`: tests and call graph still require verification.
-- `UNVERIFIED — LIVE BEHAVIOR`: no external provider call was executed.
-
-## Required checks
-
-Review all call sites, test cases, input boundaries, exception behavior, provider contracts, retry safety and secret redaction.
+## Callers and tests
+Used when Workers AI response is error and no retry delay is authorized. Tests inject provider errors. Provider codes are trusted only as diagnostic strings/numbers; do not treat them as a stable contract without current Cloudflare docs.
