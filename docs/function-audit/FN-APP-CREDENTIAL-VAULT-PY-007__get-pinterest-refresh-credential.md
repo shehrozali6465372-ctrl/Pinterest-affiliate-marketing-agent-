@@ -1,49 +1,17 @@
-# get_pinterest_refresh_credential
+# get_pinterest_refresh_credential — source-level review
 
-- **Unique ID:** `FN-APP-CREDENTIAL-VAULT-PY-007`
-- **Source:** `app/credential_vault.py:102-125`
-- **Source blob SHA:** `cb700abe4ba4c585966c2545d18211fc2035e2b5`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-CREDENTIAL-VAULT-PY-007`; source `app/credential_vault.py:102-125`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime/production verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+1. Builds AES-GCM cipher.
+2. Selects refresh ciphertext, account/user metadata, scope, expiry and status by parameterized account ID.
+3. Raises LookupError if row is absent, revoked/disconnected, or refresh ciphertext is NULL.
+4. Splits first 12 bytes as nonce and decrypts remaining bytes with AAD `{account_id}:refresh`.
+5. Returns plaintext refresh token and metadata to trusted server code.
 
-Retrieves and decrypts the refresh-token credential for an account. Verify token purpose separation, null/missing refresh-token behavior, AAD consistency and that access tokens are not accidentally returned as refresh tokens.
+## Callers and tests
+Used by `refresh_pinterest_credential`. Token-refresh tests cover missing/revoked credentials and mocked rotation/persistence, plus one opt-in disposable-Postgres case. No live Pinterest OAuth refresh occurred.
 
-## Exact isolated source
-
-```python
-def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
-    """Decrypt the refresh token only for a trusted server-side token refresh."""
-    cipher = _cipher()
-    with connection() as conn:
-        row = conn.execute(
-            """SELECT account_id, pinterest_user_id, username, refresh_token_ciphertext,
-                      scope, refresh_token_expires_at, status
-               FROM pinterest_credentials WHERE account_id = %s""",
-            (account_id,),
-        ).fetchone()
-    if not row or row["status"] != "connected" or not row["refresh_token_ciphertext"]:
-        raise LookupError("Pinterest refresh credential is not available")
-    blob = bytes(row["refresh_token_ciphertext"])
-    refresh_token = cipher.decrypt(blob[:12], blob[12:], f"{account_id}:refresh".encode()).decode("utf-8")
-    return {
-        "account_id": row["account_id"],
-        "pinterest_user_id": row["pinterest_user_id"],
-        "username": row["username"],
-        "refresh_token": refresh_token,
-        "scope": row["scope"],
-        "refresh_token_expires_at": row["refresh_token_expires_at"],
-    }
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: confirmed from the source blob.
-- `VERIFIED — DEFINITION RANGE`: isolated to one definition.
-- `UNVERIFIED — CRYPTOGRAPHIC CORRECTNESS`: key, nonce, AAD, decrypt compatibility and tests require proof.
-- `UNVERIFIED — PRODUCTION CREDENTIAL STATE`: no live credential was accessed or changed.
-
-## Required checks
-
-Trace every caller and raise site; inspect unit tests for malformed keys, nonce uniqueness, encryption/decryption round trips, account isolation, token rotation and revocation. Do not inspect or expose actual production secrets.
+## Risks
+Expiry validation occurs in the route, not this helper. There is no row lock or serialization of concurrent refreshes. Returned refresh token is highly sensitive process-memory data.
