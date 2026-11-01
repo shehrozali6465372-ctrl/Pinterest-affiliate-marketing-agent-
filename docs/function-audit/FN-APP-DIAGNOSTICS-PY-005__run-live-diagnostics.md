@@ -1,54 +1,18 @@
 # run_live_diagnostics
 
 - **Unique ID:** `FN-APP-DIAGNOSTICS-PY-005`
-- **Source:** `app/diagnostics.py:108-170`
+- **Source:** `app/diagnostics.py:144-242`
 - **Source blob SHA:** `8a1f7b8092c99f9102565c721967d0fa2b50609a`
 - **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
 - **Status:** `UNVERIFIED`
 
 ## Logic explanation
 
-Orchestrates diagnostics across configured providers. Verify which checks are invoked, side-effect guarantees, concurrency/timeout behavior and sanitized aggregation of failures.
+Orchestrates the selected diagnostic checks and aggregates structured outcomes. Verify request options, which providers run, read-only guarantees, bounded execution, exception isolation and whether optional checks are truly skipped.
 
 ## Exact isolated source
 
 ```python
-                headers={"Authorization": f"Bearer {credential['access_token']}"},
-            )
-    except httpx.HTTPError:
-        raise HTTPException(
-            status_code=503,
-            detail={"stage": "pinterest_request", "error": "pinterest_api_unreachable"},
-        ) from None
-
-    if not response.is_success:
-        status_code = 401 if response.status_code in (401, 403) else 502
-        raise HTTPException(
-            status_code=status_code,
-            detail={
-                "stage": "pinterest_api",
-                "error": "pinterest_api_rejected_credential_or_request",
-                "upstream_http_status": response.status_code,
-            },
-        )
-
-    return {
-        "ok": True,
-        "stage": "pinterest_api",
-        "check": "stored_credential_user_account_read",
-        "http_status": response.status_code,
-        "account_id": account_id,
-        "side_effects": side_effects,
-    }
-
-
-class DiagnosticRunInput(BaseModel):
-    account_id: str = Field(min_length=1, max_length=200)
-    product_name: str = Field(default="Kitchen spice rack organizer", min_length=1, max_length=300)
-    product_details: str = Field(default="A practical organizer for spices in a home kitchen.", min_length=1, max_length=1000)
-
-
-@router.post("/run", dependencies=[Depends(_require_api_key)])
 def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
     """Verify live dependencies without hosting an image or publishing a Pin; provider usage may be billable."""
     from app.database import connection
@@ -76,15 +40,86 @@ def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
                 headers={"Authorization": f"Bearer {credential['access_token']}"},
             )
         checks["pinterest"] = {"ok": response.is_success, "check": "stored_credential_user_account_read", "http_status": response.status_code}
+        if not response.is_success:
+            overall_ok = False
+    except LookupError:
+        checks["pinterest"] = {"ok": False, "error": "credential_not_connected"}
+        overall_ok = False
+    except Exception:
+        checks["pinterest"] = {"ok": False, "error": "credential_decryption_or_request_failed"}
+        overall_ok = False
+
+    media = None
+    # Avoid billable generation/upload if critical read-only connectivity checks fail.
+    prerequisites_ok = bool(checks.get("database", {}).get("ok") and checks.get("pinterest", {}).get("ok"))
+    if prerequisites_ok:
+        try:
+            media = generate_and_host_pin_image(product_name=payload.product_name, product_details=payload.product_details)
+            media_source = image_media_source(media["image_url"])
+            checks["cloudflare_image_generation"] = {
+                "ok": bool(media.get("image_url")) and media_source.get("source_type") == "image_base64",
+                "model": media.get("model"),
+                "media_source_type": media_source.get("source_type"),
+                "image_bytes_persisted": False,
+                "uploaded_to_cloudflare_images": False,
+            }
+            if not checks["cloudflare_image_generation"]["ok"]:
+                overall_ok = False
+        except ImageGenerationError as exc:
+            checks["cloudflare_image_generation"] = {"ok": False, "error": str(exc)[:180]}
+            overall_ok = False
+        except Exception:
+            checks["cloudflare_image_generation"] = {"ok": False, "error": "image_generation_or_media_validation_failed"}
+            overall_ok = False
+    else:
+        checks["cloudflare_image_generation"] = {
+            "ok": False, "skipped": True, "error": "database_or_pinterest_check_failed",
+        }
+
+    if media and settings.llm_api_key:
+        try:
+            generated, model_id = generate_pin_content(
+                product_name=payload.product_name,
+                product_details=payload.product_details,
+                image_url=media["image_url"],
+            )
+            ok = bool(generated.title and generated.description and generated.alt_text)
+            checks["deepseek_multimodal_generation"] = {
+                "ok": ok, "model": model_id,
+                "title_returned": bool(generated.title),
+                "description_returned": bool(generated.description),
+                "alt_text_returned": bool(generated.alt_text),
+            }
+            overall_ok = overall_ok and ok
+        except Exception:
+            checks["deepseek_multimodal_generation"] = {"ok": False, "error": "deepseek_multimodal_completion_failed"}
+            overall_ok = False
+    else:
+        checks["deepseek_multimodal_generation"] = {"ok": False, "error": "llm_key_missing_or_image_generation_failed"}
+        overall_ok = False
+
+    return {
+        "ok": overall_ok,
+        "checks": checks,
+        "side_effects": {
+            "pinterest_pin_created": False,
+            "pinterest_board_created": False,
+            "product_persisted": False,
+            "cloudflare_test_image_uploaded": False,
+            "generated_image_persisted": False,
+            "provider_usage_may_be_billable": bool(prerequisites_ok),
+        },
+        "secrets_returned": False,
+    }
 ```
 
 ## Verification tags
 
-- `VERIFIED — SOURCE PRESENT`: source fetched from current main.
-- `VERIFIED — DEFINITION ISOLATION`: one definition only.
-- `UNVERIFIED — LOGIC`: full call graph, test coverage and failure handling remain to be proven.
-- `UNVERIFIED — LIVE STATE`: no live diagnostic or database operation executed.
+- `VERIFIED — SOURCE PRESENT`: exact current source blob fetched.
+- `VERIFIED — CORRECTED LINE RANGE`: range checked against all definitions in diagnostics.py.
+- `UNVERIFIED — LOGIC`: call graph, tests and runtime behavior remain to be proven.
+- `UNVERIFIED — LIVE STATE`: no live diagnostic was run.
 
 ## Required checks
 
-Inspect callers, provider/SQL contracts, test cases, timeouts, exception paths, secret redaction, read/write guarantees and cleanup behavior. No live diagnostics are triggered here.
+Inspect all callers, API and DB dependencies, tests, timeout/exception behavior, read-only side effects and redaction. Do not run this diagnostic against production during the audit.
