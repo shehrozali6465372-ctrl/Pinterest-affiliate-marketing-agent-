@@ -1,18 +1,20 @@
 # database_diagnostic
 
 - **Unique ID:** `FN-APP-DIAGNOSTICS-PY-002`
-- **Source:** `app/diagnostics.py:24-49`
+- **Source:** `app/diagnostics.py:22-47`
 - **Source blob SHA:** `8a1f7b8092c99f9102565c721967d0fa2b50609a`
 - **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
 - **Status:** `UNVERIFIED`
 
 ## Logic explanation
 
-Runs a database connectivity/read-only diagnostic. Verify that it performs only safe queries, uses bounded timeouts, closes acquired connections and never modifies production rows.
+Uses a PostgreSQL connection and performs a minimal read-only connectivity query, returning structured diagnostic status. Verify connection acquire/release, timeout, exception redaction and that no DDL/DML is executed.
 
 ## Exact isolated source
 
 ```python
+def database_diagnostic() -> dict[str, object]:
+    """Verify the application's configured database connection using a read-only query only."""
     try:
         from app.database import connection
 
@@ -37,17 +39,15 @@ Runs a database connectivity/read-only diagnostic. Verify that it performs only 
 
 
 @router.get("/pinterest", dependencies=[Depends(_require_api_key)])
-def pinterest_read_only_diagnostic(
-    account_id: str = Query(..., min_length=1, max_length=200),
 ```
 
 ## Verification tags
 
-- `VERIFIED — SOURCE PRESENT`: source fetched from current main.
-- `VERIFIED — DEFINITION ISOLATION`: one definition only.
-- `UNVERIFIED — LOGIC`: full call graph, test coverage and failure handling remain to be proven.
-- `UNVERIFIED — LIVE STATE`: no live diagnostic or database operation executed.
+- `VERIFIED — SOURCE PRESENT`: exact current source blob fetched.
+- `VERIFIED — CORRECTED LINE RANGE`: range checked against all definitions in diagnostics.py.
+- `UNVERIFIED — LOGIC`: call graph, tests and runtime behavior remain to be proven.
+- `UNVERIFIED — LIVE STATE`: no live diagnostic was run.
 
 ## Required checks
 
-Inspect callers, provider/SQL contracts, test cases, timeouts, exception paths, secret redaction, read/write guarantees and cleanup behavior. No live diagnostics are triggered here.
+Inspect all callers, API and DB dependencies, tests, timeout/exception behavior, read-only side effects and redaction. Do not run this diagnostic against production during the audit.
