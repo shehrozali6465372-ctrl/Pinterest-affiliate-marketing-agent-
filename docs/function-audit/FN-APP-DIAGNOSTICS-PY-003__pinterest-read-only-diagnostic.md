@@ -1,18 +1,20 @@
 # pinterest_read_only_diagnostic
 
 - **Unique ID:** `FN-APP-DIAGNOSTICS-PY-003`
-- **Source:** `app/diagnostics.py:50-93`
+- **Source:** `app/diagnostics.py:48-136`
 - **Source blob SHA:** `8a1f7b8092c99f9102565c721967d0fa2b50609a`
 - **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
 - **Status:** `UNVERIFIED`
 
 ## Logic explanation
 
-Performs a read-only Pinterest credential/API diagnostic. Verify exact endpoint and scopes, token retrieval/redaction, no board/pin creation, bounded timeout and response handling.
+Loads a stored Pinterest credential and performs read-only API checks. Verify exact endpoint, no create/update/delete calls, token scope, timeout, response parsing and secret redaction.
 
 ## Exact isolated source
 
 ```python
+def pinterest_read_only_diagnostic(
+    account_id: str = Query(..., min_length=1, max_length=200),
 ) -> dict[str, object]:
     """Verify one stored Pinterest credential with a read-only account lookup.
 
@@ -57,15 +59,56 @@ Performs a read-only Pinterest credential/API diagnostic. Verify exact endpoint 
             detail={"stage": "database_configuration", "error": "database_url_missing_or_invalid"},
         ) from None
     except psycopg.Error:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "database", "error": "credential_database_query_failed"},
+        ) from None
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "credential_vault", "error": "credential_lookup_or_decryption_failed"},
+        ) from None
+
+    try:
+        with httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+            response = client.get(
+                f"{settings.pinterest_api_base_url.rstrip('/')}/user_account",
+                headers={"Authorization": f"Bearer {credential['access_token']}"},
+            )
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=503,
+            detail={"stage": "pinterest_request", "error": "pinterest_api_unreachable"},
+        ) from None
+
+    if not response.is_success:
+        status_code = 401 if response.status_code in (401, 403) else 502
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "stage": "pinterest_api",
+                "error": "pinterest_api_rejected_credential_or_request",
+                "upstream_http_status": response.status_code,
+            },
+        )
+
+    return {
+        "ok": True,
+        "stage": "pinterest_api",
+        "check": "stored_credential_user_account_read",
+        "http_status": response.status_code,
+        "account_id": account_id,
+        "side_effects": side_effects,
+    }
 ```
 
 ## Verification tags
 
-- `VERIFIED — SOURCE PRESENT`: source fetched from current main.
-- `VERIFIED — DEFINITION ISOLATION`: one definition only.
-- `UNVERIFIED — LOGIC`: full call graph, test coverage and failure handling remain to be proven.
-- `UNVERIFIED — LIVE STATE`: no live diagnostic or database operation executed.
+- `VERIFIED — SOURCE PRESENT`: exact current source blob fetched.
+- `VERIFIED — CORRECTED LINE RANGE`: range checked against all definitions in diagnostics.py.
+- `UNVERIFIED — LOGIC`: call graph, tests and runtime behavior remain to be proven.
+- `UNVERIFIED — LIVE STATE`: no live diagnostic was run.
 
 ## Required checks
 
-Inspect callers, provider/SQL contracts, test cases, timeouts, exception paths, secret redaction, read/write guarantees and cleanup behavior. No live diagnostics are triggered here.
+Inspect all callers, API and DB dependencies, tests, timeout/exception behavior, read-only side effects and redaction. Do not run this diagnostic against production during the audit.
