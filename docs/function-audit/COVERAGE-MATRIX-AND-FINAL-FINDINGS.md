@@ -2,7 +2,7 @@
 
 Repository: `shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-`
 Branch: `main`
-Audit documentation commit at preparation: `b11ab14dfce4bc2236f67806806914cf219ac5d3`
+Audit documentation: reconciled and committed on `main` after source-level review; application baseline remains `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
 Application source baseline reviewed: `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
 Mode: read-only source review. No code behavior, production data, credentials, deployment or Pins changed.
 
@@ -10,12 +10,12 @@ Mode: read-only source review. No code behavior, production data, credentials, d
 
 | Area | Inventory | Review evidence | Runtime evidence |
 |---|---:|---|---|
-| Python | 30 files under app/, scripts/, tests/ | Definitions inventoried; production modules reviewed in dedicated detail reports; 119 top-level test functions have individual TEST records | Not run in this audit |
+| Python | 30 files under app/, scripts/, tests/ | All 94 FN records have function-specific source analysis; 119 top-level test functions have individual assertion records; module-level call graph and test map available | Not run in this audit |
 | Production Python | 13 files under app/ and scripts/ | Dedicated reviews for main routes, database, credential vault, workflow, learning, content/media/Pinterest and remaining modules | Not live-verified |
 | Tests | 17 modules; 119 top-level test functions | TEST records and grouped helper/fake/fixture reviews; TEST-TO-PRODUCTION-MAP.md was restored to the audit root and is now available | No test suite run |
 | SQL | 8 migrations | MIGRATIONS-001-008.md reviewed statement-by-statement | No migration executed |
 | GitHub Actions | 5 workflows | WORKFLOWS-001-005.md reviewed step-by-step | No workflow dispatched |
-| Audit documents | Index reports 242 Markdown files (241 records excluding index) | Counts are index-reported; this audit refresh did not independently enumerate the complete Git tree | N/A |
+| Audit documents | 242 Markdown files at audit root (241 records excluding index); 94 FN records; 136 TEST records | Root directory listing independently enumerated; misplaced reports restored and duplicate nested copies removed | N/A |
 
 ## Production call-path summary
 
@@ -81,7 +81,7 @@ The reviewed media implementation calls Cloudflare Workers AI and returns a Base
 
 ## Completion boundary
 
-The source review and audit documentation are complete at module/function level for the recorded source baseline. This is not a claim that every nested helper method has an independent record, that every FN record is a statement-by-statement trace, or that the current Render deployment runs this source.
+The static function-level source review is complete for the recorded source baseline: all 94 FN records now contain function-specific behavior, caller/test context and relevant risks; production module reports, test mapping, migrations and workflows are present. Some nested test helper methods remain grouped rather than individually recorded. This does not establish runtime correctness or prove that current Render deployment runs this source.
 
 Runtime tests, production DB checks, provider calls, OAuth refresh, deployment and Pinterest publishing are not included. No real Pin was published. No production mutation or deployment is authorized by this audit.
 
