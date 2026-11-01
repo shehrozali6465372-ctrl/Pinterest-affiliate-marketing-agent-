@@ -1,32 +1,10 @@
-# health
+# health — source-level review
 
-- **Unique ID:** `FN-APP-MAIN-PY-010`
-- **Source:** `app/main.py:116-120`
-- **Source blob SHA:** `37f5ccae0d171a8f8d6766cfb26013dbe221391c`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-MAIN-PY-010`; source `app/main.py`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Returns static JSON `status=ok` and service identifier. It performs no DB, provider, credential or Pinterest request and proves only that the FastAPI process can answer this route. It is a liveness signal, not readiness or end-to-end health.
 
-Basic liveness endpoint. Verify it has no dependency on DB/provider readiness and returns stable status without leaking deployment details.
-
-## Exact isolated source
-
-```python
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "pinterest-affiliate-model-1"}
-
-
-@app.get("/readiness", dependencies=[Depends(require_api_key)])
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: exact source blob fetched.
-- `VERIFIED — DEFINITION ISOLATION`: boundaries checked against neighboring definitions.
-- `UNVERIFIED — LOGIC`: tests, callers and behavior remain to be verified.
-- `UNVERIFIED — LIVE BEHAVIOR`: no API endpoint was called.
-
-## Required checks
-
-Inspect request/response schema, authentication, direct callees, database query, tests, validation boundaries, failure mapping and secret/data exposure.
+## Caller and operational note
+Used by uptime/platform health checks. Do not infer Neon, OAuth, DeepSeek or Cloudflare connectivity from HTTP 200 on /health.
