@@ -10,9 +10,9 @@ Mode: read-only source review. No code behavior, production data, credentials, d
 
 | Area | Inventory | Review evidence | Runtime evidence |
 |---|---:|---|---|
-| Python | 30 files under app/, scripts/, tests/ | All 94 FN records have function-specific source analysis; 119 top-level test functions have individual assertion records; module-level call graph and test map available | Not run in this audit |
+| Python | 30 files under app/, scripts/, tests/ | All 94 FN records have function-specific source analysis; 119 top-level test functions have individual assertion records; module-level call graph and test map available | Python CI: 119 passed, 1 skipped; Python tests: 114 passed, 6 skipped on exact commit 7771809... |
 | Production Python | 13 files under app/ and scripts/ | Dedicated reviews for main routes, database, credential vault, workflow, learning, content/media/Pinterest and remaining modules | Not live-verified |
-| Tests | 17 modules; 119 top-level test functions | TEST records and grouped helper/fake/fixture reviews; TEST-TO-PRODUCTION-MAP.md was restored to the audit root and is now available | No test suite run |
+| Tests | 17 modules; 119 top-level test functions | TEST records and grouped helper/fake/fixture reviews; TEST-TO-PRODUCTION-MAP.md restored at root | GitHub Actions run 41304453541: 119 passed/1 skipped; run 41304453506: 114 passed/6 skipped |
 | SQL | 8 migrations | MIGRATIONS-001-008.md reviewed statement-by-statement | No migration executed |
 | GitHub Actions | 5 workflows | WORKFLOWS-001-005.md reviewed step-by-step | No workflow dispatched |
 | Audit documents | 242 Markdown files at audit root (241 records excluding index); 94 FN records; 136 TEST records | Root directory listing independently enumerated; misplaced reports restored and duplicate nested copies removed | N/A |
@@ -73,7 +73,9 @@ The reviewed media implementation calls Cloudflare Workers AI and returns a Base
 
 ## Test and workflow evidence limits
 
-- The 119 individual test-function count is recorded in INDEX.md; this refresh did not execute pytest. The test-to-production mapping is now restored at the root path and available for review.
+- On commit `77718098bd669982a2c024096c667b826b86c8df`, Python CI run `41304453541` completed successfully: 119 passed, 1 skipped, 1 warning. It provisioned ephemeral PostgreSQL 16 and executed pytest; the dedicated PB10 Neon backend-termination test skipped because PB10_TEST_DATABASE_URL was not configured.
+- Python tests run `41304453506` completed successfully: 114 passed, 6 skipped, 1 warning; this workflow did not provision PostgreSQL, so DB-gated integration tests were skipped.
+- These are CI/test-environment results only, not proof of production DB/provider behavior. The test-to-production mapping is restored at the root path.
 - Fake clients/cursors cannot prove PostgreSQL advisory-lock, transaction, pool recovery or concurrent refresh semantics.
 - The opt-in PostgreSQL recovery test is destructive to a backend session and must only run against a disposable test database.
 - CI workflows differ in Python version and PostgreSQL service availability. A green result must be tied to the exact workflow run and commit.
@@ -83,7 +85,7 @@ The reviewed media implementation calls Cloudflare Workers AI and returns a Base
 
 The static function-level source review is complete for the recorded source baseline: all 94 FN records now contain function-specific behavior, caller/test context and relevant risks; production module reports, test mapping, migrations and workflows are present. Some nested test helper methods remain grouped rather than individually recorded. This does not establish runtime correctness or prove that current Render deployment runs this source.
 
-Runtime tests, production DB checks, provider calls, OAuth refresh, deployment and Pinterest publishing are not included. No real Pin was published. No production mutation or deployment is authorized by this audit.
+CI tests ran against the repository's isolated test environment. Production DB checks, live provider calls, OAuth refresh, deployment and Pinterest publishing are not included. No real Pin was published. No production mutation or deployment is authorized by this audit.
 
 ## Required remediation order
 
