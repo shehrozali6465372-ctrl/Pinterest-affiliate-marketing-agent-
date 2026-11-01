@@ -88,7 +88,7 @@ def test_missing_requested_metric_is_persisted_as_unknown(monkeypatch):
                     "publication_id": 7, "product_id": 2, "content_version_id": 3,
                     "pinterest_pin_id": "pin-incomplete",
                 }]})()
-            writes.append(query)
+            writes.append((query, params))
             return type("Result", (), {})()
 
     class Response:
@@ -115,7 +115,7 @@ def test_missing_requested_metric_is_persisted_as_unknown(monkeypatch):
     assert result["aggregate_metrics"]["outbound_clicks"] is None
     assert "private-token" not in str(result)
     assert len(writes) == 1
-    assert '"save": null' in writes[0]
+    assert '"save": null' in writes[0][1][4]
 
 
 def test_learning_loop_parses_top_level_summary_metrics_and_keeps_omitted_metrics_unknown(monkeypatch):
