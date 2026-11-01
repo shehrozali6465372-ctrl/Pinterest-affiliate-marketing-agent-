@@ -74,7 +74,7 @@ def test_learning_loop_parses_documented_pinterest_summary_metrics(monkeypatch):
     assert result["model_trained"] is False
 
 
-def test_missing_requested_metric_is_not_persisted(monkeypatch):
+def test_missing_requested_metric_is_persisted_as_unknown(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
     monkeypatch.setattr(learning, "get_pinterest_credential", lambda account_id: {"access_token": "unit-test"})
     writes = []
@@ -105,15 +105,20 @@ def test_missing_requested_metric_is_not_persisted(monkeypatch):
     monkeypatch.setattr(database, "connection", lambda: Conn())
     monkeypatch.setattr(learning.httpx, "Client", Client)
     result = learning.run_learning_loop(learning.LearningRequest(account_id="pinterest:account-a"))
-    assert result["ok"] is False
-    assert result["snapshots_saved"] == 0
-    assert result["pin_results"][0]["ok"] is False
-    assert result["pin_results"][0]["failure_stage"] == "analytics_payload"
+    assert result["ok"] is True
+    assert result["snapshots_saved"] == 1
+    assert result["pin_results"][0]["ok"] is True
+    assert result["pin_results"][0]["metrics"]["impression"] == 100
+    assert result["pin_results"][0]["metrics"]["save"] is None
+    assert result["pin_results"][0]["metrics"]["outbound_click"] is None
+    assert result["aggregate_metrics"]["saves"] is None
+    assert result["aggregate_metrics"]["outbound_clicks"] is None
     assert "private-token" not in str(result)
-    assert writes == []
+    assert len(writes) == 1
+    assert '"save": null' in writes[0]
 
 
-def test_learning_loop_parses_top_level_summary_metrics_and_omitted_zero_metrics(monkeypatch):
+def test_learning_loop_parses_top_level_summary_metrics_and_keeps_omitted_metrics_unknown(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
     monkeypatch.setattr(learning, "get_pinterest_credential", lambda account_id: {"access_token": "test-only"})
     writes = []
@@ -152,5 +157,7 @@ def test_learning_loop_parses_top_level_summary_metrics_and_omitted_zero_metrics
     assert result["snapshots_saved"] == 1
     assert result["aggregate_metrics"]["impressions"] == 120
     assert result["aggregate_metrics"]["saves"] == 9
-    assert result["pin_results"][0]["metrics"]["outbound_click"] == 0
+    assert result["pin_results"][0]["metrics"]["outbound_click"] is None
+    assert result["aggregate_metrics"]["outbound_clicks"] is None
     assert len(writes) == 1
+    assert '"outbound_click": null' in writes[0][1][4]
