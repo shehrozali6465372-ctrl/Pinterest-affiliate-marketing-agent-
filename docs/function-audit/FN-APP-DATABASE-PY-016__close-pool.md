@@ -1,33 +1,13 @@
-# close_pool
+# close_pool — source-level review
 
-- **Unique ID:** `FN-APP-DATABASE-PY-016`
-- **Source:** `app/database.py:394-400`
-- **Source blob SHA:** `7000abf6365c60b4543e353a72bbbcce2c49d2dd`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-DATABASE-PY-016`; source `app/database.py:394-400`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime DB verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Reads module-global `_pool`; if non-None, calls `_pool.close()` then sets global to None. If pool is absent, returns without action. Close exceptions propagate and prevent assignment to None. The helper returns None.
 
-Closes the shared PostgreSQL connection pool and resets module state. Verify idempotency, in-flight connection behavior, concurrent shutdown/startup races and whether callers can safely reinitialize the pool.
+## Callers and tests
+Called by FastAPI lifespan shutdown and migration script finally block. Tests mock close_pool/pool close to assert shutdown lifecycle. No live pool was closed in this audit.
 
-## Exact isolated source
-
-```python
-def close_pool() -> None:
-    """Close the connection pool during application shutdown."""
-    global _pool
-    if _pool is not None:
-        _pool.close()
-        _pool = None
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: source fetched from current main.
-- `VERIFIED — DEFINITION ISOLATION`: one definition only.
-- `UNVERIFIED — LOGIC`: full call graph, test coverage and failure handling remain to be proven.
-- `UNVERIFIED — LIVE STATE`: no live diagnostic or database operation executed.
-
-## Required checks
-
-Inspect callers, provider/SQL contracts, test cases, timeouts, exception paths, secret redaction, read/write guarantees and cleanup behavior. No live diagnostics are triggered here.
+## Risks
+No lock coordinates close with concurrent connection acquisition or another close call. If close raises, stale global reference remains. Reinitialization is possible only after successful close resets it. Verify multi-worker shutdown separately; each process has its own pool.
