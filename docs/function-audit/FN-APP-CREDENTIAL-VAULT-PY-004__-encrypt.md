@@ -1,30 +1,13 @@
-# _encrypt
+# _encrypt — source-level review
 
-- **Unique ID:** `FN-APP-CREDENTIAL-VAULT-PY-004`
-- **Source:** `app/credential_vault.py:40-44`
-- **Source blob SHA:** `cb700abe4ba4c585966c2545d18211fc2035e2b5`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-CREDENTIAL-VAULT-PY-004`; source `app/credential_vault.py:42-44`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime/production verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Generates a fresh 12-byte nonce with `os.urandom(12)`, UTF-8 encodes plaintext, calls AES-GCM `encrypt(nonce, plaintext, aad)`, and concatenates nonce + authenticated ciphertext/tag into one byte string. It does not persist data or log plaintext. Callers supply AAD.
 
-Encrypts a token using the configured authenticated cipher, nonce and associated data. Verify nonce generation uniqueness, ciphertext format, AAD binding, exception propagation and compatibility with decryption.
+## Callers and tests
+`store_pinterest_credential` calls it separately for access and non-empty refresh tokens, using account-specific AAD strings `{account_id}:access` and `{account_id}:refresh`. Unit tests exercise local encryption/decryption round-trip and ciphertext separation; no production ciphertext was read.
 
-## Exact isolated source
-
-```python
-def _encrypt(cipher: AESGCM, value: str, aad: bytes) -> bytes:
-    nonce = os.urandom(12)
-    return nonce + cipher.encrypt(nonce, value.encode("utf-8"), aad)
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: confirmed from the source blob.
-- `VERIFIED — DEFINITION RANGE`: isolated to one definition.
-- `UNVERIFIED — CRYPTOGRAPHIC CORRECTNESS`: key, nonce, AAD, decrypt compatibility and tests require proof.
-- `UNVERIFIED — PRODUCTION CREDENTIAL STATE`: no live credential was accessed or changed.
-
-## Required checks
-
-Trace every caller and raise site; inspect unit tests for malformed keys, nonce uniqueness, encryption/decryption round trips, account isolation, token rotation and revocation. Do not inspect or expose actual production secrets.
+## Risks
+Readers assume first 12 bytes are nonce; changing the layout requires versioning/migration. Nonce uniqueness depends on secure random generation. No secrets were changed.
