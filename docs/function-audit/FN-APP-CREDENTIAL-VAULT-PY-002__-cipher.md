@@ -1,40 +1,32 @@
-# _cipher
+# _cipher — source-level review
 
-- **Unique ID:** `FN-APP-CREDENTIAL-VAULT-PY-002`
+- **ID:** `FN-APP-CREDENTIAL-VAULT-PY-002`
 - **Source:** `app/credential_vault.py:18-30`
-- **Source blob SHA:** `cb700abe4ba4c585966c2545d18211fc2035e2b5`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- **Source blob:** `cb700abe4ba4c585966c2545d18211fc2035e2b5`
+- **Baseline:** `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
+- **Source review:** COMPLETE
+- **Runtime verification:** NOT RUN
 
-## Logic analysis
+## Statement-level behavior
 
-Constructs the authenticated-encryption cipher from configured key material. Verify key decoding/length validation, AES-GCM usage, failure behavior and that no plaintext key/token is logged.
+1. Reads `settings.pinterest_token_encryption_key`.
+2. If the setting is absent or empty, raises `TokenEncryptionConfigurationError` with a configuration-only message.
+3. Decodes the value using strict Base64 validation; malformed Base64 is caught and translated to the same dedicated configuration error.
+4. Requires the decoded key to be exactly 32 bytes; other lengths fail before cipher construction.
+5. Returns a `cryptography` `AESGCM` instance. The raw key is not returned from this helper or logged here.
 
-## Exact isolated source
+## Callers and security invariants
 
-```python
-def _cipher() -> AESGCM:
-    encoded = settings.pinterest_token_encryption_key
-    if not encoded:
-        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY is not configured")
-    try:
-        key = base64.b64decode(encoded, validate=True)
-    except Exception as exc:
-        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY must be base64-encoded 32-byte key") from exc
-    if len(key) != 32:
-        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes")
-    return AESGCM(key)
+`token_encryption_key_is_valid()` uses this helper as a configuration check. Credential storage and retrieval call it to encrypt/decrypt access and refresh tokens. AES-GCM provides authenticated encryption; the caller-supplied associated data binds token ciphertext to account ID and token type. Nonce generation and AAD construction occur in the higher-level helpers, not here.
 
+## Failure paths and limitations
 
-```
+The function validates encoding and key length only. It does not prove that the key can decrypt existing database ciphertext, that the key is securely provisioned, or that rotation has been performed. Replacing the key without re-encrypting stored rows will make existing credentials undecryptable. No plaintext token or key should be logged by callers.
 
-## Verification tags
+## Tests and evidence
 
-- `VERIFIED — SOURCE PRESENT`: fetched from current main source blob.
-- `VERIFIED — LINE RANGE`: source lines isolated as a single definition.
-- `UNVERIFIED — LOGIC`: caller/callee, tests, concurrency and failure behavior remain to be proven.
-- `UNVERIFIED — LIVE DATABASE`: no production DB writes or state transitions executed.
+Unit tests cover invalid/missing key configuration and encryption/decryption behavior in mocked/local contexts. Production Neon ciphertext was not read or decrypted.
 
-## Remaining evidence
+## Finding
 
-Review all call sites, SQL schema/migrations, transaction boundaries, integration tests, race-condition tests, failure injection and production logs without changing data.
+No direct defect in this helper's length/decoding gate was established from static review. Key lifecycle/rotation and live ciphertext compatibility remain operational controls outside this function. No key or credential was changed.
