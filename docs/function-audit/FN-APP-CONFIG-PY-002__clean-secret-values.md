@@ -1,46 +1,10 @@
-# clean_secret_values
+# clean_secret_values — source-level review
 
-- **Unique ID:** `FN-APP-CONFIG-PY-002`
-- **Definition type:** `def`
-- **Source:** `app/config.py:25-33`
-- **Source blob SHA:** `71805b65766c198a428f5418bd2eec5b7f74953f`
-- **Repository snapshot:** `main@336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-CONFIG-PY-002`; source `app/config.py:30-38`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime verification: NOT RUN.
 
-## Logic overview
+## Behavior
+Pydantic before-validator receives optional string. None remains None. Otherwise removes every Unicode character whose category is Cf, then trims leading/trailing whitespace. It is attached only to llm_api_key, cloudflare_api_token and app_api_key. It does not validate token authenticity, preserve whitespace intentionally included in secrets, or sanitize Pinterest credential-ingest/encryption key settings.
 
-Read the complete body below in source order and trace inputs, outputs, validation, dependencies, branches, loops, returns, raised exceptions, persistence and external side effects. This remains unverified until direct callers, callees, tests and runtime behavior are corroborated.
-
-## Inputs, outputs and failure paths
-
-The exact signature, annotations, defaults, validators, return statements, and raises are shown in the source below. Caller-side assumptions and undocumented provider behavior are not treated as facts.
-
-## Exact isolated source
-
-```python
-    def clean_secret_values(cls, value: str | None) -> str | None:
-        """Remove invisible Unicode formatting characters accidentally pasted into secrets."""
-        if value is None:
-            return None
-        return "".join(ch for ch in value if unicodedata.category(ch) != "Cf").strip()
-
-
-settings = Settings()
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: confirmed against the recorded GitHub blob.
-- `VERIFIED — DEFINITION ISOLATION`: adjacent/nested definitions are separated by indentation boundary.
-- `UNVERIFIED — LOGIC CORRECTNESS`: not yet proven.
-- `UNVERIFIED — TEST COVERAGE`: tests and assertions still require mapping/review.
-- `UNVERIFIED — LIVE BEHAVIOR`: no runtime or provider claim is made.
-
-## Required next checks
-
-1. Trace direct callers and relevant dependencies.
-2. Explain every statement, branch, loop, return and exception path.
-3. Inspect tests and map assertions to behavior, including failure and boundary cases.
-4. Review concurrency, retries, database transactions and security invariants where relevant.
-5. Check the actual external API contract and side effects.
-6. No production writes, credential changes, deployments or Pinterest publishing during this audit.
+## Tests and limitations
+Config tests exercise invisible formatting characters and normalization. This normalization can alter a secret containing meaningful leading/trailing whitespace (typically not expected for API keys); it does not rotate or redact values. Never print the returned secret.
