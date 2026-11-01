@@ -1,0 +1,10 @@
+# Test helper audit — disposable PostgreSQL pool recovery
+
+Source: `tests/test_database_pool_recovery_integration.py` (158 lines), exact source retrieved from main.
+
+- `_is_dedicated_disposable_uri(conninfo)` (lines 23–56): parses a PostgreSQL URI; requires the dedicated Neon host, expected database path, username, no explicit port, no multi-host or routing overrides, only an allowlist of query parameters, exactly one secure sslmode and channel_binding=require, and bounded numeric connect_timeout when supplied. Parse errors and policy mismatches return false. This is a safety gate, not proof that the remote database is disposable or that credentials are authorized.
+- `check_connection(conn)` (nested in integration test, lines 110–111): executes an empty statement as the psycopg_pool health-check callback. Verify against installed psycopg behavior when running; this audit did not execute it.
+
+The first integration test checks rejection of routing/TLS/fallback URI variants and acceptance of the designated secure host pattern. It also sets PGHOSTADDR and PGSSLMODE to demonstrate that environment overrides exist; those values are removed only in the second test before opening its pool.
+
+The opt-in integration test skips unless PB10_TEST_DATABASE_URL passes the strict guard. It strips libpq target/TLS override variables, opens a small psycopg pool, obtains a backend PID, terminates that backend using a separate admin connection, then retries pool checkout up to eight times and asserts a different PID can execute SELECT 1. It closes the pool in finally. This is the only test in these two modules designed to exercise real PostgreSQL backend loss/recovery; it was not run during this read-only audit. The test is destructive to one backend session on the configured test database, so it must remain restricted to the dedicated disposable branch.
