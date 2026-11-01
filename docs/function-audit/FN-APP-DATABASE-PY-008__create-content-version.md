@@ -1,63 +1,13 @@
-# create_content_version
+# create_content_version — source-level review
 
-- **Unique ID:** `FN-APP-DATABASE-PY-008`
-- **Source:** `app/database.py:121-159`
-- **Source blob SHA:** `7000abf6365c60b4543e353a72bbbcce2c49d2dd`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-DATABASE-PY-008`; source `app/database.py:121-159`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime DB verification: NOT RUN.
 
-## Logic explanation
+## Control flow
+Opens a connection, takes a transaction-scoped advisory lock keyed by product ID, queries MAX(version_number) for that product, computes next version as max-or-zero plus one, inserts provider/model/prompt version and generated Pin fields, then returns the inserted row as dict. Parameterized values prevent SQL interpolation of product/content fields.
 
-Persists a versioned Pin content record associated with a product. Verify version numbering under concurrent writers, immutable history guarantees, foreign-key behavior and whether title/description/alt text are validated before insert.
+## Callers and invariants
+Called by content-generation route and product+initial-content persistence helper. Unique product/version constraint is a second guard. Lock serializes version allocation for same product if the DB transaction is active for the context duration.
 
-## Exact isolated source
-
-```python
-def create_content_version(
-    *,
-    product_id: int,
-    provider: str,
-    model_id: str,
-    prompt_version: str,
-    pin_idea: str,
-    title: str,
-    description: str,
-    alt_text: str,
-) -> dict:
-    """Persist generated content as an auditable version for the supplied product."""
-    with connection() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(%s)", (product_id,))
-        version_number = conn.execute(
-            """
-            SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version
-            FROM content_versions WHERE product_id = %s
-            """,
-            (product_id,),
-        ).fetchone()["next_version"]
-        row = conn.execute(
-            """
-            INSERT INTO content_versions
-                (product_id, version_number, provider, model_id, prompt_version,
-                 pin_idea, title, description, alt_text)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, product_id, version_number, provider, model_id, prompt_version,
-                      pin_idea, title, description, alt_text, created_at
-            """,
-            (
-                product_id, version_number, provider, model_id, prompt_version,
-                pin_idea, title, description, alt_text,
-            ),
-        ).fetchone()
-        return dict(row)
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: fetched from recorded source blob.
-- `VERIFIED — LINE RANGE`: one function body isolated.
-- `UNVERIFIED — DATA CORRECTNESS`: transaction, constraints, authorization and tests remain to be checked.
-- `UNVERIFIED — PRODUCTION DB`: no production data read or written.
-
-## Required checks
-
-Inspect SQL query, migrations, all callers, test assertions, foreign keys, uniqueness, transaction boundaries, race conditions, ordering and error handling. No production DB operations.
+## Risks and tests
+No explicit content-field validation is done in this helper; route/schema/provider layer is responsible. Fake cursor tests cannot prove lock behavior under concurrent writers. PostgreSQL integration is required; none was run against production.
