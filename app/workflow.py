@@ -9,10 +9,10 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
-from app.content_generation import ContentGenerationError, generate_pin_content
+from app.content_generation import AFFILIATE_DISCLOSURE, ContentGenerationError, generate_pin_content
 from app.credential_vault import get_pinterest_credential
 from app.database import (
     begin_publish_attempt, create_product_with_content_version,
@@ -27,6 +27,39 @@ router = APIRouter(prefix="/workflow", tags=["end-to-end"])
 def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
     if not settings.app_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+
+
+def _require_credential_ingest_key(
+    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
+) -> None:
+    expected = settings.pinterest_credential_ingest_key
+    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
+        raise HTTPException(status_code=401, detail="Valid service credential required.")
+
+
+class HubPinPublishInput(BaseModel):
+    account_id: str = Field(min_length=1, max_length=200)
+    board_id: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=2000)
+    alt_text: str = Field(min_length=1, max_length=500)
+    image_url: HttpUrl
+    destination_url: str = Field(min_length=8, max_length=4096)
+
+    @field_validator("account_id", "board_id", "title", "alt_text")
+    @classmethod
+    def required_values_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value.strip()
+
+    @field_validator("destination_url")
+    @classmethod
+    def preserve_valid_destination(cls, value: str) -> str:
+        parts = urlsplit(value)
+        if value != value.strip() or parts.scheme.lower() not in {"http", "https"} or not parts.netloc or parts.username or parts.password:
+            raise ValueError("destination_url must be an absolute HTTP(S) URL without embedded credentials or surrounding whitespace")
+        return value
 
 
 def _log_workflow_failure(stage: str, exc: Exception, request_id: str, *, http_status: int | None = None) -> None:
@@ -117,6 +150,123 @@ def _ensure_board(token: str, name: str, description: str) -> str:
     if not isinstance(board_id, str) or not board_id:
         raise HTTPException(status_code=502, detail="Pinterest did not return a board ID; board creation was not confirmed.")
     return board_id
+
+
+@router.post("/publish-hub-pin", dependencies=[Depends(_require_credential_ingest_key)])
+def publish_hub_pin(
+    payload: HubPinPublishInput,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+) -> dict[str, object]:
+    """Canonical Hub publishing gateway: enforce disclosure and persist the ledger before Pinterest writes."""
+    from app.content_generation import PROMPT_VERSION
+    from app.database import create_product_with_content_version
+
+    description = payload.description.strip()
+    if AFFILIATE_DISCLOSURE.casefold() not in description.casefold():
+        description = f"{description}\n\n{AFFILIATE_DISCLOSURE}" if description else AFFILIATE_DISCLOSURE
+    if len(description) > 2000:
+        raise HTTPException(status_code=422, detail="Description exceeds the maximum length after required affiliate disclosure.")
+
+    try:
+        existing = get_product_by_idempotency_key(idempotency_key)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not verify the publication idempotency state; refusing to publish.") from exc
+    if existing:
+        raise HTTPException(status_code=409, detail={
+            "code": "idempotency_key_reused",
+            "message": "This request key was already accepted. Reconcile the existing product/publication before attempting another Pin.",
+            "product_id": existing["id"],
+        })
+
+    try:
+        credential = get_pinterest_credential(payload.account_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Pinterest account is not connected in the credential vault.") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="Stored Pinterest credential could not be read.") from None
+
+    # A 401 here occurs before any product or publication is created and before a Pin write.
+    _pinterest_request("GET", "/user_account", credential["access_token"])
+
+    try:
+        product, content = create_product_with_content_version(
+            product_name=payload.title,
+            product_details=description,
+            image_url=str(payload.image_url),
+            affiliate_url=payload.destination_url,
+            idempotency_key=idempotency_key,
+            provider="hub_manual",
+            model_id="user_supplied",
+            prompt_version="hub-manual-v1",
+            pin_idea=payload.title,
+            title=payload.title,
+            description=description,
+            alt_text=payload.alt_text,
+        )
+        attempt = begin_publish_attempt(
+            product_id=product["id"],
+            content_version_id=content["id"],
+            board_id=payload.board_id,
+            account_id=payload.account_id,
+        )
+    except Exception as exc:
+        _log_workflow_failure("hub_publication_persistence", exc, idempotency_key)
+        raise HTTPException(status_code=503, detail="Could not persist the Hub publication and idempotency record; no Pin was intentionally sent.") from exc
+
+    if attempt.get("blocked"):
+        raise HTTPException(status_code=409, detail="A previous publication attempt exists; inspect its stored status before retrying.")
+
+    body = {
+        "board_id": payload.board_id,
+        "title": payload.title,
+        "description": description,
+        "alt_text": payload.alt_text,
+        "media_source": image_media_source(str(payload.image_url)),
+        "link": payload.destination_url,
+    }
+    try:
+        http_status, result = _pinterest_request("POST", "/pins", credential["access_token"], body=body)
+        pin_id = result.get("id") if isinstance(result, dict) else None
+        if not isinstance(pin_id, str) or not pin_id:
+            finish_publish_attempt(attempt["id"], status="unknown", http_status=http_status, error_code="missing_pin_id", response_metadata={})
+            raise HTTPException(status_code=502, detail="Pinterest returned no Pin ID; publication outcome is uncertain. Do not retry blindly.")
+        saved = finish_publish_attempt(
+            attempt["id"], status="succeeded", pinterest_pin_id=pin_id,
+            http_status=http_status,
+            response_metadata={"id": pin_id, "board_id": payload.board_id, "created_at": result.get("created_at")},
+        )
+    except HTTPException as exc:
+        try:
+            finish_publish_attempt(
+                attempt["id"],
+                status="unknown" if exc.status_code >= 500 else "failed",
+                http_status=exc.status_code,
+                error_code="pinterest_outcome_uncertain" if exc.status_code >= 500 else "pinterest_request_rejected",
+                response_metadata={},
+            )
+        except Exception:
+            pass
+        raise
+    except Exception as exc:
+        try:
+            finish_publish_attempt(attempt["id"], status="unknown", error_code="publish_recording_error", response_metadata={})
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail="Pin publication outcome may be uncertain; inspect Pinterest and the publication record before retrying.") from exc
+
+    return {
+        "published": True,
+        "already_published": False,
+        "pin_id": saved["pinterest_pin_id"],
+        "product_id": product["id"],
+        "content_version_id": content["id"],
+        "board_id": payload.board_id,
+        "title": payload.title,
+        "description": description,
+        "alt_text": payload.alt_text,
+        "affiliate_url": payload.destination_url,
+        "http_status": saved["http_status"],
+    }
 
 
 @router.post("/publish-product", dependencies=[Depends(_require_api_key)])
