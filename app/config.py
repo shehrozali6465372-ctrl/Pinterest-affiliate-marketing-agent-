@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     app_api_key: str | None = None
     database_url: str | None = None
     pinterest_access_token: str | None = None
-    pinterest_sandbox_access_token: str | None = None
     pinterest_board_id: str | None = None
     pinterest_api_base_url: str = "https://api.pinterest.com/v5"
     cloudflare_api_token: str | None = None
