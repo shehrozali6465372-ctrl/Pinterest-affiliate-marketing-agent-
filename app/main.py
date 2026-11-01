@@ -397,7 +397,6 @@ def pinterest_account_operation(
         "account": ("GET", "/user_account", None),
         "boards": ("GET", "/boards?page_size=100", None),
         "create_board": ("POST", "/boards", {"name": str(data.get("name") or ""), "description": str(data.get("description") or "")}),
-        "create_pin": ("POST", "/pins", {"board_id": str(data.get("board_id") or ""), "title": str(data.get("title") or ""), "description": str(data.get("description") or ""), "alt_text": str(data.get("alt_text") or ""), "media_source": {"source_type": "image_url", "url": str(data.get("image_url") or ""), "is_standard": True}, "link": str(data.get("destination_url") or "")}),
     }
     if operation == "disconnect":
         revoke_pinterest_credential(payload.account_id)
@@ -407,8 +406,8 @@ def pinterest_account_operation(
     method, path, body = allowed[operation]
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
-    if operation == "create_pin" and not all(body.get(k) for k in ("board_id", "title", "link", "media_source")):
-        raise HTTPException(status_code=400, detail="Board, title, image URL, and destination URL are required.")
+    if operation == "create_pin":
+        raise HTTPException(status_code=400, detail="Pin writes must use the canonical idempotent /workflow/publish-hub-pin gateway.")
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
             response = client.request(method, f"{base}{path}", headers=headers, json=body)
