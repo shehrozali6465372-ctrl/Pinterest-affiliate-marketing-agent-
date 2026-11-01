@@ -12,7 +12,10 @@ from app.content_generation import (
 from app.main import app
 from app.pinterest import PinterestPublishError, publish_image_pin
 
-client = TestClient(app)
+# Every test request uses an explicit test-only key; production dependencies
+# are intentionally fail-closed when APP_API_KEY is absent.
+settings.app_api_key = "test-api-key"
+client = TestClient(app, headers={"X-API-Key": "test-api-key"})
 
 VALID_PRODUCT = {
     "product_name": "Wooden spice rack",
