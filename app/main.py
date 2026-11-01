@@ -42,9 +42,9 @@ app.include_router(learning_router)
 
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    """Protect operational endpoints when APP_API_KEY is configured."""
+    """Fail closed: operational endpoints are unavailable until API authentication is configured."""
     if not settings.app_api_key:
-        return
+        raise HTTPException(status_code=503, detail="API authentication is not configured.")
     if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
         raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
