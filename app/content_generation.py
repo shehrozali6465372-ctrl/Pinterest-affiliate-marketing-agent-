@@ -34,7 +34,7 @@ def _with_affiliate_disclosure(description: str) -> str:
     """Append the mandatory disclosure while staying inside Pinterest's 800-char limit."""
     if AFFILIATE_DISCLOSURE.lower() in description.lower():
         return description
-    separator = "\\n\\n"
+    separator = "\n\n"
     available_copy_length = PIN_DESCRIPTION_MAX_LENGTH - len(separator) - len(AFFILIATE_DISCLOSURE)
     return f"{description[:available_copy_length].rstrip()}{separator}{AFFILIATE_DISCLOSURE}"
 
