@@ -3,7 +3,7 @@
 Repository: shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-
 Branch: main
 Application source baseline: 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0
-Audit documentation HEAD at this refresh: 6faa0e246a84a48b8f5161a2c7e23e178ff89271
+Audit documentation HEAD at this refresh: b11ab14dfce4bc2236f67806806914cf219ac5d3 (index metadata refreshed in subsequent commit)
 Mode: READ-ONLY static source audit and documentation. No application code, production DB, credentials, provider state, deployment or Pinterest Pins changed.
 
 ## Inventory
@@ -13,7 +13,7 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
 - Test modules: 17.
 - SQL migrations: 8.
 - GitHub Actions workflows: 5.
-- Audit Markdown files: 242 (241 records excluding index).
+- Audit Markdown files: 243 (242 records excluding index), including the reconciled coverage matrix.
 - FN-prefixed definition records: 94.
 - TEST-prefixed records: 136.
 - Top-level test functions documented individually: 119/119.
@@ -51,8 +51,8 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
 
 ## Completion and evidence boundary
 
-**Static source audit: COMPLETE** for the recorded application baseline: definitions inventoried and reviewed at module/function level; test functions and helpers reviewed; call graph, test mapping, migrations, workflows and prioritized findings documented.
+**Static source audit: COMPLETE at module/function level** for the recorded application baseline. Definitions are inventoried; production modules, all top-level test functions, grouped test helpers, migrations, workflows, call graph and prioritized findings are documented. The coverage matrix explicitly records review boundaries and does not claim a separate statement-by-statement trace for every nested helper.
 
-**Runtime/production verification: NOT PERFORMED.** No test suite was run in this continuation, no workflow dispatched, no live provider/OAuth call made, no DB query/migration performed, and no real Pin published. The opt-in PostgreSQL recovery test terminates a backend session and was not run. Existing CI run evidence must be checked against an exact run ID/commit before being treated as current proof.
+**Runtime/production verification: NOT PERFORMED.** No test suite was run in this continuation, no workflow dispatched, no live provider/OAuth call made, no DB query/migration performed, and no real Pin published. The audit commit had no combined status entries and no commit-associated workflow runs returned at verification time; this is neither a pass nor a fail. The opt-in PostgreSQL recovery test terminates a backend session and was not run. Existing CI run evidence must be checked against an exact run ID/commit before being treated as current proof.
 
-Do not interpret static source review as proof that Render runs this baseline, Neon schema is current, secrets are configured, provider credentials work, or Pinterest operations succeed live. Any live diagnostic that invokes generation may incur cost and requires separate approval. No production write, deploy, credential mutation or Pin publication is authorized by this audit.
+See COVERAGE-MATRIX-AND-FINAL-FINDINGS.md for the reconciled coverage matrix, prioritized remediation order and additional source findings, including fail-closed authentication gaps and refresh-token concurrency risk. Do not interpret static source review as proof that Render runs this baseline, Neon schema is current, secrets are configured, provider credentials work, or Pinterest operations succeed live. Any live diagnostic that invokes generation may incur cost and requires separate approval. No production write, deploy, credential mutation or Pin publication is authorized by this audit.
