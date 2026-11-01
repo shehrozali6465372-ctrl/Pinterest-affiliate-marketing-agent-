@@ -115,7 +115,8 @@ def generate_and_host_pin_image(*, product_name: str, product_details: str) -> d
             image_url = variants[0] if isinstance(variants, list) and variants else None
             parts = urlsplit(image_url) if isinstance(image_url, str) else None
             if (
-                not isinstance(image_id, str) or not image_id
+                not isinstance(upload_body, dict)
+                or not isinstance(image_id, str) or not image_id
                 or not isinstance(image_url, str)
                 or parts is None or parts.scheme != "https" or not parts.netloc
                 or upload_body.get("success") is not True
