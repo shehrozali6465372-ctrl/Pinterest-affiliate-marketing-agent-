@@ -43,7 +43,7 @@ def test_cloudflare_503_retries_once_then_returns_image(monkeypatch):
     image_bytes = b"\x89PNG\r\n\x1a\n" + b"x" * 2048
     success = FakeResponse(200, body={"result": {"image": base64.b64encode(image_bytes).decode()}})
     failures = FakeResponse(503, body={"errors": [{"code": 1234}]})
-    responses = [failures, success, FakeResponse(200, body={"success": True, "result": {"id": "cloudflare-image-test", "variants": ["https://imagedelivery.net/test-account/test-image/public"]}})]
+    responses = [failures, success]
     calls = []
 
     class FakeClient:
@@ -57,9 +57,9 @@ def test_cloudflare_503_retries_once_then_returns_image(monkeypatch):
     monkeypatch.setattr("app.media_generation.httpx.Client", FakeClient)
     monkeypatch.setattr("app.media_generation.time.sleep", lambda seconds: None)
     result = generate_and_host_pin_image(product_name="Rack", product_details="Wood")
-    assert result["image_url"] == "https://imagedelivery.net/test-account/test-image/public"
-    assert result["cloudflare_image_id"] == "cloudflare-image-test"
-    assert len(calls) == 3
+    assert result["image_url"].startswith("data:image/png;base64,")
+    assert "cloudflare_image_id" not in result
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize("code", [3036, 9999])
@@ -89,7 +89,6 @@ def test_cloudflare_capacity_429_retries_once(monkeypatch):
     responses = [
         FakeResponse(429, body={"errors": [{"code": 3040}]}),
         FakeResponse(200, body={"result": {"image": base64.b64encode(image_bytes).decode()}}),
-        FakeResponse(200, body={"success": True, "result": {"id": "cloudflare-image-test", "variants": ["https://imagedelivery.net/test-account/test-image/public"]}}),
     ]
     calls = []
 
@@ -103,5 +102,7 @@ def test_cloudflare_capacity_429_retries_once(monkeypatch):
 
     monkeypatch.setattr("app.media_generation.httpx.Client", FakeClient)
     monkeypatch.setattr("app.media_generation.time.sleep", lambda seconds: None)
-    assert generate_and_host_pin_image(product_name="Rack", product_details="Wood")["model"] == "@cf/test-model"
-    assert len(calls) == 3
+    result = generate_and_host_pin_image(product_name="Rack", product_details="Wood")
+    assert result["model"] == "@cf/test-model"
+    assert result["image_url"].startswith("data:image/png;base64,")
+    assert len(calls) == 2

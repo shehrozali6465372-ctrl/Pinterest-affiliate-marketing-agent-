@@ -11,7 +11,7 @@
 4. GETs Pinterest /user_account before billable generation.
 5. Calls _ensure_board; it inspects only first 100 boards and may POST /boards before the remaining workflow succeeds.
 6. Calls Cloudflare Workers AI image generation, then DeepSeek content generation. These are external provider calls and may be billable.
-7. Atomically persists product and first content version through one DB helper; generated image URL is not stored as a hosted Cloudflare Images asset.
+7. Atomically persists product and first content version through one DB helper; generated image bytes are sent to Pinterest using `image_base64`; `products.image_url` is explicitly NULL so Base64 bytes are not persisted in Neon.
 8. Reserves publication attempt through database state machine.
 9. POSTs /pins with title, description, alt text, media source and affiliate URL in Pinterest `link`.
 10. Requires returned Pin ID and records success. Missing ID, 5xx/transport uncertainty or persistence failure after provider write must remain unknown and require operator reconciliation.

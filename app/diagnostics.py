@@ -184,14 +184,14 @@ def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
         try:
             media = generate_and_host_pin_image(product_name=payload.product_name, product_details=payload.product_details)
             media_source = image_media_source(media["image_url"])
-            image_persisted = bool(media.get("cloudflare_image_id") and media.get("image_url"))
+            image_is_ephemeral = bool(media.get("image_url")) and media_source.get("source_type") == "image_base64"
             checks["cloudflare_image_generation"] = {
-                "ok": image_persisted and media_source.get("source_type") == "image_url",
+                "ok": image_is_ephemeral,
                 "model": media.get("model"),
                 "media_source_type": media_source.get("source_type"),
-                "cloudflare_image_id": media.get("cloudflare_image_id"),
-                "image_bytes_persisted": image_persisted,
-                "uploaded_to_cloudflare_images": image_persisted,
+                "image_bytes_persisted": False,
+                "uploaded_to_cloudflare_images": False,
+                "image_bytes_kept_in_memory": image_is_ephemeral,
             }
             if not checks["cloudflare_image_generation"]["ok"]:
                 overall_ok = False
@@ -235,8 +235,8 @@ def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
             "pinterest_pin_created": False,
             "pinterest_board_created": False,
             "product_persisted": False,
-            "cloudflare_test_image_uploaded": bool(media and media.get("cloudflare_image_id")),
-            "generated_image_persisted": bool(media and media.get("cloudflare_image_id")),
+            "cloudflare_test_image_uploaded": False,
+            "generated_image_persisted": False,
             "provider_usage_may_be_billable": bool(prerequisites_ok),
         },
         "secrets_returned": False,

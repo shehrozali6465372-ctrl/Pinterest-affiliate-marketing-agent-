@@ -1,6 +1,6 @@
 # generate_and_host_pin_image — source-level review
 
-- ID: `FN-APP-MEDIA-GENERATION-PY-004`; source `app/media_generation.py`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- ID: `FN-APP-MEDIA-GENERATION-PY-004`; source `app/media_generation.py`.
 - Source review: COMPLETE. Runtime/provider verification: NOT RUN; provider use may be billable.
 
 ## Control flow
@@ -12,4 +12,4 @@
 6. Base64 encodes bytes and returns a data URL plus model ID.
 
 ## Important distinction and risks
-Despite function name, it does not upload to Cloudflare Images or persist a hosted asset. Returned data URL is later converted to Pinterest image_base64. Retry can incur another provider charge. Fake tests do not prove live model availability/permissions. No generation call was made.
+Despite the legacy function name, this implementation does not upload to Cloudflare Images or persist a hosted asset. Returned data URL is converted to Pinterest `image_base64`; the end-to-end workflow stores `products.image_url = NULL` and persists only product/content/publication metadata. Retry can incur another provider charge. Fake tests do not prove live model availability/permissions. No live generation call is made by unit tests.
