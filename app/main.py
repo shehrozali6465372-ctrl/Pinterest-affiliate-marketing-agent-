@@ -3,13 +3,10 @@
 External integrations only report success after real operations complete.
 """
 import hmac
-import os
-import uuid
 from contextlib import asynccontextmanager
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
-import httpx
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
@@ -113,113 +110,6 @@ def _serialize_row(row: dict) -> dict[str, object]:
     if created_at:
         result["created_at"] = created_at.isoformat()
     return result
-
-
-
-def _pinterest_sandbox_token() -> str | None:
-    """Read only dedicated Sandbox credentials; never fall back to production OAuth."""
-    return (
-        settings.pinterest_sandbox_access_token
-        or os.getenv("PINTEREST_SANDBOX_ACCESS_TOKEN")
-        or os.getenv("PINTEREST_SANDBOX_TOKEN")
-        or os.getenv("PINTEREST_SANDBOX_API_TOKEN")
-    )
-
-
-@app.post("/diagnostics/pinterest/catalog-sandbox", dependencies=[Depends(require_configured_api_key)])
-def create_pinterest_catalog_sandbox_test_item() -> dict[str, object]:
-    """Create one disposable item in Pinterest Sandbox only; never touches production."""
-    token = _pinterest_sandbox_token()
-    if not token:
-        raise HTTPException(status_code=503, detail="Pinterest Sandbox token is not configured.")
-
-    base_url = "https://api-sandbox.pinterest.com/v5"
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    timeout = httpx.Timeout(20.0, connect=5.0)
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            # First validate that this is a valid Sandbox token, not a production token.
-            validation = client.get(f"{base_url}/catalogs", headers=headers)
-            if validation.status_code in (401, 403):
-                raise HTTPException(status_code=502, detail={"stage": "sandbox_token_validation", "provider_status": validation.status_code, "message": "Pinterest rejected the Sandbox token."})
-            validation.raise_for_status()
-            item_id = f"model1-sandbox-{uuid.uuid4().hex[:16]}"
-            payload = {
-                "catalog_type": "RETAIL",
-                "country": "US",
-                "language": "EN",
-                "items": [{
-                    "item_id": item_id,
-                    "operation": "CREATE",
-                    "attributes": {
-                        "image_link": ["https://picsum.photos/200/300"],
-                        "availability": "in stock",
-                        "condition": "new",
-                        "description": "Disposable Model 1 Pinterest API Sandbox validation item.",
-                        "id": item_id,
-                        "item_group_id": "model1-sandbox-validation",
-                        "link": "https://www.example.com/sandbox/model1-test-item",
-                        "price": "24.99 USD",
-                        "title": "Model 1 Sandbox Validation Item"
-                    }
-                }]
-            }
-            created = client.post(f"{base_url}/catalogs/items/batch", headers={**headers, "Content-Type": "application/json"}, json=payload)
-            created.raise_for_status()
-            result = created.json()
-            batch_id = result.get("batch_id")
-            if not batch_id:
-                raise HTTPException(status_code=502, detail={"stage": "sandbox_batch_create", "message": "Pinterest response did not include batch_id."})
-            return {
-                "ok": True,
-                "environment": "pinterest_sandbox",
-                "token_validation": "accepted",
-                "item_id": item_id,
-                "batch_id": str(batch_id),
-                "batch_status": result.get("status"),
-                "item_status": (result.get("items") or [{}])[0].get("status"),
-                "production_touched": False,
-                "pin_published": False,
-                "token_exposed": False
-            }
-    except HTTPException:
-        raise
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail={"stage": "sandbox_catalog_batch", "provider_status": exc.response.status_code, "message": "Pinterest Sandbox rejected the catalog batch request."}) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail={"stage": "sandbox_catalog_batch", "message": f"Pinterest Sandbox request failed: {type(exc).__name__}."}) from exc
-
-
-@app.get("/diagnostics/pinterest/catalog-sandbox/{batch_id}", dependencies=[Depends(require_configured_api_key)])
-def get_pinterest_catalog_sandbox_batch_status(batch_id: str) -> dict[str, object]:
-    """Read status of a previously submitted Sandbox batch."""
-    token = _pinterest_sandbox_token()
-    if not token:
-        raise HTTPException(status_code=503, detail="Pinterest Sandbox token is not configured.")
-    if not batch_id.isdigit():
-        raise HTTPException(status_code=422, detail="batch_id must contain digits only.")
-    try:
-        response = httpx.get(
-            f"https://api-sandbox.pinterest.com/v5/catalogs/items/batch/{batch_id}",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            timeout=httpx.Timeout(20.0, connect=5.0),
-        )
-        response.raise_for_status()
-        data = response.json()
-        return {
-            "ok": True,
-            "environment": "pinterest_sandbox",
-            "batch_id": str(data.get("batch_id", batch_id)),
-            "batch_status": data.get("status"),
-            "items": data.get("items", []),
-            "production_touched": False,
-            "pin_published": False,
-            "token_exposed": False
-        }
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail={"stage": "sandbox_batch_status", "provider_status": exc.response.status_code, "message": "Pinterest Sandbox rejected the batch-status request."}) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail={"stage": "sandbox_batch_status", "message": f"Pinterest Sandbox request failed: {type(exc).__name__}."}) from exc
 
 
 @app.get("/health")
@@ -503,32 +393,9 @@ def pinterest_account_operation(
     data = payload.payload
     base = settings.pinterest_api_base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
-    if operation in {"product_tags", "add_product_tags"}:
-        pin_id = str(data.get("pin_id") or "").strip()
-        if not pin_id:
-            raise HTTPException(status_code=400, detail="Hero Pin ID is required.")
-        if operation == "product_tags":
-            method, path, body = "GET", f"/pins/{quote(pin_id, safe='')}/product_tags", None
-        else:
-            product_pin_ids = data.get("product_pin_ids")
-            if not isinstance(product_pin_ids, list) or not 1 <= len(product_pin_ids) <= 24:
-                raise HTTPException(status_code=400, detail="Between 1 and 24 product Pin IDs are required.")
-            if any(not isinstance(item, str) or not item.strip() for item in product_pin_ids) or len(set(product_pin_ids)) != len(product_pin_ids):
-                raise HTTPException(status_code=400, detail="Product Pin IDs must be nonblank and unique.")
-            method, path, body = "POST", f"/pins/{quote(pin_id, safe='')}/product_tags", {"product_tags": [{"pin_id": item.strip()} for item in product_pin_ids]}
-        try:
-            with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-                response = client.request(method, f"{base}{path}", headers=headers, json=body, params=query)
-            result = response.json() if response.content else {}
-        except (httpx.HTTPError, ValueError) as exc:
-            raise HTTPException(status_code=502, detail="Pinterest product-tag request failed; read current tags before retrying a write.") from exc
-        if not response.is_success:
-            raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail="Pinterest rejected product-tag operation.")
-        return {"data": result}
     allowed = {
         "account": ("GET", "/user_account", None),
-        "boards": ("GET", "/boards", None),
-        "list_pins": ("GET", "/pins", None),
+        "boards": ("GET", "/boards?page_size=100", None),
         "create_board": ("POST", "/boards", {"name": str(data.get("name") or ""), "description": str(data.get("description") or "")}),
         "create_pin": ("POST", "/pins", {"board_id": str(data.get("board_id") or ""), "title": str(data.get("title") or ""), "description": str(data.get("description") or ""), "alt_text": str(data.get("alt_text") or ""), "media_source": {"source_type": "image_url", "url": str(data.get("image_url") or ""), "is_standard": True}, "link": str(data.get("destination_url") or "")}),
     }
@@ -538,24 +405,13 @@ def pinterest_account_operation(
     if operation not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported Pinterest operation.")
     method, path, body = allowed[operation]
-    query = None
-    if operation == "list_pins":
-        page_size = data.get("page_size", 100)
-        if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 100:
-            raise HTTPException(status_code=422, detail="page_size must be an integer from 1 to 100.")
-        query = {"page_size": page_size}
-        bookmark = data.get("bookmark")
-        if bookmark is not None:
-            if not isinstance(bookmark, str) or not bookmark.strip() or len(bookmark) > 2000:
-                raise HTTPException(status_code=422, detail="bookmark must be a non-empty string up to 2000 characters.")
-            query["bookmark"] = bookmark
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
     if operation == "create_pin" and not all(body.get(k) for k in ("board_id", "title", "link", "media_source")):
         raise HTTPException(status_code=400, detail="Board, title, image URL, and destination URL are required.")
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
-            response = client.request(method, f"{base}{path}", headers=headers, json=body, params=query)
+            response = client.request(method, f"{base}{path}", headers=headers, json=body)
         result = response.json() if response.content else {}
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Pinterest API request failed.") from exc
@@ -659,112 +515,6 @@ def list_product_content(product_id: int) -> dict[str, object]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Content history is unavailable. Check database migrations and connectivity.") from exc
-
-
-class ProductTaggingInput(BaseModel):
-    product_pin_ids: list[str] = Field(min_length=1, max_length=24)
-
-    @field_validator("product_pin_ids")
-    @classmethod
-    def product_pin_ids_must_be_unique_and_nonblank(cls, value: list[str]) -> list[str]:
-        cleaned = [item.strip() for item in value]
-        if any(not item for item in cleaned):
-            raise ValueError("product_pin_ids must contain nonblank Pinterest product Pin IDs")
-        if len(set(cleaned)) != len(cleaned):
-            raise ValueError("product_pin_ids must not contain duplicates")
-        return cleaned
-
-
-@app.post("/publications/{publication_id}/product-tags", dependencies=[Depends(require_configured_api_key)])
-def attach_product_tags_to_publication(publication_id: int, payload: ProductTaggingInput) -> dict[str, object]:
-    """Attach existing Pinterest product Pins to an already-published hero Pin."""
-    if publication_id <= 0:
-        raise HTTPException(status_code=422, detail="publication_id must be positive")
-    from app.database import get_publication
-    from app.credential_vault import get_pinterest_credential
-    from app.pinterest import (
-        PinterestProductTagError, PinterestReadError, add_product_tags_to_pin,
-        get_pin_read_only, list_product_tags_read_only,
-    )
-    try:
-        publication = get_publication(publication_id)
-        if publication is None:
-            raise HTTPException(status_code=404, detail="Publication not found")
-        if publication.get("status") != "succeeded" or not publication.get("pinterest_pin_id"):
-            raise HTTPException(status_code=409, detail="Only a confirmed successful publication can receive product tags")
-        account_id = publication.get("account_id")
-        board_id = publication.get("board_id")
-        if not account_id or not board_id:
-            raise HTTPException(status_code=409, detail="Publication lacks the account or board reference required for tagging")
-        credential = get_pinterest_credential(str(account_id))
-        hero_pin_id = str(publication["pinterest_pin_id"])
-        hero = get_pin_read_only(pin_id=hero_pin_id, access_token=credential["access_token"])
-        if str(hero.get("id")) != hero_pin_id or str(hero.get("board_id")) != str(board_id):
-            raise HTTPException(status_code=409, detail="Pinterest hero Pin does not match the stored publication and board")
-
-        existing = set(list_product_tags_read_only(pin_id=hero_pin_id, access_token=credential["access_token"]))
-        requested = payload.product_pin_ids
-        missing = [item for item in requested if item not in existing]
-        if missing:
-            add_product_tags_to_pin(pin_id=hero_pin_id, product_pin_ids=missing, access_token=credential["access_token"])
-        verified = set(list_product_tags_read_only(pin_id=hero_pin_id, access_token=credential["access_token"]))
-        not_verified = [item for item in requested if item not in verified]
-        if not_verified:
-            raise HTTPException(status_code=502, detail={"code": "product_tag_verification_incomplete", "message": "Pinterest write completed or may have completed, but read-back did not confirm every requested product tag. Inspect current tags before retrying.", "missing_product_pin_ids": not_verified})
-        return {
-            "tagged": True, "publication_id": publication_id, "hero_pin_id": hero_pin_id,
-            "requested_product_pin_ids": requested,
-            "newly_attached_product_pin_ids": missing,
-            "already_attached_product_pin_ids": [item for item in requested if item in existing],
-            "verified_product_pin_ids": requested,
-            "verification": "read_after_write",
-        }
-    except HTTPException:
-        raise
-    except PinterestProductTagError as exc:
-        status_code = 502 if exc.outcome_uncertain or exc.http_status is None or exc.http_status >= 500 else exc.http_status
-        raise HTTPException(status_code=status_code, detail={"code": "pinterest_product_tag_write_failed", "message": str(exc), "outcome_uncertain": exc.outcome_uncertain, "verify_before_retry": exc.outcome_uncertain}) from exc
-    except PinterestReadError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=409, detail="Stored Pinterest account credential is unavailable") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Product tagging could not be completed; inspect the hero Pin tags before retrying") from exc
-
-
-@app.get("/publications/{publication_id}/product-tags", dependencies=[Depends(require_configured_api_key)])
-def verify_publication_product_tags(publication_id: int) -> dict[str, object]:
-    """Read-only product-tag verification for an existing publication."""
-    if publication_id <= 0:
-        raise HTTPException(status_code=422, detail="publication_id must be positive")
-    from app.database import get_publication
-    from app.credential_vault import get_pinterest_credential
-    from app.pinterest import PinterestReadError, get_pin_read_only, list_product_tags_read_only
-    try:
-        publication = get_publication(publication_id)
-        if publication is None:
-            raise HTTPException(status_code=404, detail="Publication not found")
-        if publication.get("status") != "succeeded" or not publication.get("pinterest_pin_id"):
-            raise HTTPException(status_code=409, detail="Only a confirmed successful publication can be verified")
-        account_id = publication.get("account_id")
-        board_id = publication.get("board_id")
-        if not account_id or not board_id:
-            raise HTTPException(status_code=409, detail="Publication lacks the account or board reference required for verification")
-        credential = get_pinterest_credential(str(account_id))
-        pin_id = str(publication["pinterest_pin_id"])
-        hero = get_pin_read_only(pin_id=pin_id, access_token=credential["access_token"])
-        if str(hero.get("id")) != pin_id or str(hero.get("board_id")) != str(board_id):
-            raise HTTPException(status_code=409, detail="Pinterest hero Pin does not match the stored publication and board")
-        tags = list_product_tags_read_only(pin_id=pin_id, access_token=credential["access_token"])
-        return {"publication_id": publication_id, "hero_pin_id": pin_id, "product_pin_ids": tags, "verified": True, "read_only": True}
-    except HTTPException:
-        raise
-    except PinterestReadError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=409, detail="Stored Pinterest account credential is unavailable") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Pinterest product-tag verification could not be completed") from exc
 
 
 class PublicationReconciliationInput(BaseModel):
