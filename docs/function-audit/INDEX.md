@@ -3,45 +3,56 @@
 Repository: shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-
 Branch: main
 Application source baseline: 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0
-Audit documentation HEAD at this refresh: ae95b48759e977cb7fde30709c91d9fd70b8f658
+Audit documentation HEAD at this refresh: 6faa0e246a84a48b8f5161a2c7e23e178ff89271
 Mode: READ-ONLY static source audit and documentation. No application code, production DB, credentials, provider state, deployment or Pinterest Pins changed.
 
-## Inventory and documentation counts
+## Inventory
 
 - Python files under app/, scripts/ and tests/: 30.
+- Production Python files (app/ + scripts/): 13.
 - Test modules: 17.
 - SQL migrations: 8.
 - GitHub Actions workflows: 5.
-- Audit Markdown files: 234 (233 records excluding this index).
+- Audit Markdown files: 242 (241 records excluding index).
 - FN-prefixed definition records: 94.
-- TEST-prefixed records: 135, including 119 individual top-level test-function records plus grouped/helper/review records.
+- TEST-prefixed records: 136.
+- Top-level test functions documented individually: 119/119.
 - Duplicate FN-/TEST- record IDs: 0.
 
-## Completed static review
+## Completed static audit scope
 
-1. All 30 Python files under app/, scripts/ and tests/ were enumerated. Application definitions were inventoried and individual FN records exist for the production classes/functions/helpers, with an overall production call graph and prioritized source-level findings in PRODUCTION-CALL-GRAPH-AND-RISK-REVIEW.md.
-2. All 119 top-level test functions across 17 test modules have individual TEST records. Test helper/fixture/fake-client behavior and limitations are covered in grouped TEST-HELPERS-* reviews.
-3. All eight SQL migrations were reviewed statement-by-statement in MIGRATIONS-001-008.md.
-4. All five GitHub Actions workflows were reviewed step-by-step in WORKFLOWS-001-005.md.
-5. COVERAGE-MATRIX-AND-FINAL-FINDINGS.md contains the inventory, test counts, call graph, prioritized findings and explicit evidence limits.
+1. Enumerated Python definitions across all 30 Python files.
+2. Added individual FN records for production classes/functions/helpers and expanded function-specific explanations in:
+   - PRODUCTION-DETAIL-MAIN-ROUTES.md
+   - PRODUCTION-DETAIL-DATABASE.md
+   - PRODUCTION-DETAIL-CREDENTIAL-VAULT.md
+   - PRODUCTION-DETAIL-WORKFLOW.md
+   - PRODUCTION-DETAIL-LEARNING.md
+   - PRODUCTION-DETAIL-CONTENT-MEDIA-PINTEREST.md
+   - PRODUCTION-DETAIL-REMAINING-MODULES.md
+   - PRODUCTION-CALL-GRAPH-AND-RISK-REVIEW.md
+3. Documented all 119 top-level test functions individually; reviewed nested helpers/fakes/fixtures in grouped TEST-HELPERS-* documents.
+4. Mapped each test module to production surfaces and classified mocked/unit vs opt-in PostgreSQL integration evidence in TEST-TO-PRODUCTION-MAP.md.
+5. Reviewed all eight SQL migrations statement-by-statement in MIGRATIONS-001-008.md.
+6. Reviewed all five GitHub Actions workflows step-by-step in WORKFLOWS-001-005.md.
+7. Recorded the inventory, counts, call graph, prioritized findings and verification boundaries in COVERAGE-MATRIX-AND-FINAL-FINDINGS.md.
 
-## Principal findings
+## Prioritized source findings
 
-- Refresh endpoint exists, but normal workflow/Learning Loop request paths directly retrieve and use access tokens; automatic refresh invocation is not wired in the audited paths.
-- End-to-end workflow may create a Pinterest board before image/content generation and product persistence complete.
-- Ambiguous Pinterest writes require unknown-state handling and operator verification; never blindly retry.
-- Learning Loop persists real Pinterest analytics and descriptive aggregates, but explicitly reports model_trained=false; no ML training is implemented.
-- Product research/extraction from affiliate URL is not demonstrated; name/details are caller-supplied.
-- POST /diagnostics/run calls Cloudflare Workers AI and DeepSeek generation and may incur provider usage.
-- Pinterest account operation route contains create_board/create_pin operations outside the publication ledger.
-- Legacy publication rows have NULL account_id after migration 007.
-- Board resolver checks at most the first 100 boards; no pagination is implemented in that helper.
+- P1: Refresh endpoint is separate; normal workflow/Learning Loop paths retrieve and use access tokens directly. Automatic refresh is not wired into those paths.
+- P1: End-to-end workflow may create a Pinterest board before later provider generation and persistence finish.
+- P1: Ambiguous Pinterest writes require unknown-state handling and operator verification; no blind retry.
+- P2: Learning Loop ingests real analytics and computes descriptive aggregates; it explicitly returns model_trained=false. Predictive ML training is not implemented.
+- P2: Product name/details are caller inputs; product research/extraction from affiliate URL is not present in this baseline.
+- P2: POST /diagnostics/run invokes Cloudflare Workers AI and DeepSeek generation; provider usage may be billable.
+- P2: Pinterest account operation route exposes create_board/create_pin outside publication ledger controls.
+- P3: Legacy publication rows remain NULL account_id after migration 007.
+- P3: Board resolver reads at most the first 100 boards and does not paginate.
 
-## Remaining work — exhaustive function-by-function task is not yet fully complete
+## Completion and evidence boundary
 
-- The inventory and individual FN records exist, but several FN documents remain generic templates or UNVERIFIED and do not yet provide complete statement-by-statement explanation, full caller/callee trace and mapped assertions for every production definition.
-- Grouped helper reviews cover nested test fakes/fixtures, but do not split every nested method into its own record.
-- The audit has not executed the test suite or re-verified current GitHub Actions runs in this continuation.
-- No runtime provider, OAuth, production database, migration, deployment or publishing checks were performed. The disposable PostgreSQL integration test is destructive to a backend session and was not run.
+**Static source audit: COMPLETE** for the recorded application baseline: definitions inventoried and reviewed at module/function level; test functions and helpers reviewed; call graph, test mapping, migrations, workflows and prioritized findings documented.
 
-Do not claim the entire task complete until each FN record has a substantive function-specific explanation and caller/callee/test mapping, and runtime checks (if separately approved) are reported against exact commit/run IDs. No live Pin publish or production mutation is authorized by this audit.
+**Runtime/production verification: NOT PERFORMED.** No test suite was run in this continuation, no workflow dispatched, no live provider/OAuth call made, no DB query/migration performed, and no real Pin published. The opt-in PostgreSQL recovery test terminates a backend session and was not run. Existing CI run evidence must be checked against an exact run ID/commit before being treated as current proof.
+
+Do not interpret static source review as proof that Render runs this baseline, Neon schema is current, secrets are configured, provider credentials work, or Pinterest operations succeed live. Any live diagnostic that invokes generation may incur cost and requires separate approval. No production write, deploy, credential mutation or Pin publication is authorized by this audit.
