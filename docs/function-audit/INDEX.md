@@ -3,7 +3,7 @@
 Repository: shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-
 Branch: main
 Application source baseline: 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0
-Audit documentation HEAD at this refresh: b11ab14dfce4bc2236f67806806914cf219ac5d3 (index metadata refreshed in subsequent commit)
+Audit documentation baseline before reconciliation: b11ab14dfce4bc2236f67806806914cf219ac5d3; see latest main commit for the reconciled index.
 Mode: READ-ONLY static source audit and documentation. No application code, production DB, credentials, provider state, deployment or Pinterest Pins changed.
 
 ## Inventory
@@ -32,14 +32,15 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
    - PRODUCTION-DETAIL-REMAINING-MODULES.md
    - PRODUCTION-CALL-GRAPH-AND-RISK-REVIEW.md
 3. Documented all 119 top-level test functions individually; reviewed nested helpers/fakes/fixtures in grouped TEST-HELPERS-* documents.
-4. Mapped each test module to production surfaces and classified mocked/unit vs opt-in PostgreSQL integration evidence in TEST-TO-PRODUCTION-MAP.md.
+4. Test-to-production mapping was referenced in earlier audit notes, but the referenced TEST-TO-PRODUCTION-MAP.md path was not retrievable during this verification. Treat cross-module mapping as not independently verified until the document is restored or recreated.
 5. Reviewed all eight SQL migrations statement-by-statement in MIGRATIONS-001-008.md.
 6. Reviewed all five GitHub Actions workflows step-by-step in WORKFLOWS-001-005.md.
 7. Recorded the inventory, counts, call graph, prioritized findings and verification boundaries in COVERAGE-MATRIX-AND-FINAL-FINDINGS.md.
 
 ## Prioritized source findings
 
-- P1: Refresh endpoint is separate; normal workflow/Learning Loop paths retrieve and use access tokens directly. Automatic refresh is not wired into those paths.
+- P1: Routes using require_api_key are accessible when APP_API_KEY is unset; this dependency is not fail-closed. In particular, product persistence and content-generation routes use it. Publish routes use require_configured_api_key, and diagnostics/learning routers have their own fail-closed checks.
+- P1: Refresh endpoint is separate; normal workflow/Learning Loop paths retrieve and use access tokens directly. Automatic refresh is not wired into those paths. Refresh-token rotation is also not serialized per account.
 - P1: End-to-end workflow may create a Pinterest board before later provider generation and persistence finish.
 - P1: Ambiguous Pinterest writes require unknown-state handling and operator verification; no blind retry.
 - P2: Learning Loop ingests real analytics and computes descriptive aggregates; it explicitly returns model_trained=false. Predictive ML training is not implemented.
@@ -55,4 +56,4 @@ Mode: READ-ONLY static source audit and documentation. No application code, prod
 
 **Runtime/production verification: NOT PERFORMED.** No test suite was run in this continuation, no workflow dispatched, no live provider/OAuth call made, no DB query/migration performed, and no real Pin published. The audit commit had no combined status entries and no commit-associated workflow runs returned at verification time; this is neither a pass nor a fail. The opt-in PostgreSQL recovery test terminates a backend session and was not run. Existing CI run evidence must be checked against an exact run ID/commit before being treated as current proof.
 
-See COVERAGE-MATRIX-AND-FINAL-FINDINGS.md for the reconciled coverage matrix, prioritized remediation order and additional source findings, including fail-closed authentication gaps and refresh-token concurrency risk. Do not interpret static source review as proof that Render runs this baseline, Neon schema is current, secrets are configured, provider credentials work, or Pinterest operations succeed live. Any live diagnostic that invokes generation may incur cost and requires separate approval. No production write, deploy, credential mutation or Pin publication is authorized by this audit.
+See COVERAGE-MATRIX-AND-FINAL-FINDINGS.md for the reconciled coverage matrix, prioritized remediation order and source findings. The referenced test-to-production map was not retrievable at the checked path and is explicitly treated as an outstanding documentation gap. Do not interpret static source review as proof that Render runs this baseline, Neon schema is current, secrets are configured, provider credentials work, or Pinterest operations succeed live. Any live diagnostic that invokes generation may incur cost and requires separate approval. No production write, deploy, credential mutation or Pin publication is authorized by this audit.
