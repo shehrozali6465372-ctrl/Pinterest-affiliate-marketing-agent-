@@ -1,31 +1,10 @@
-# LearningRequest
+# LearningRequest — source-level review
 
-- **Unique ID:** `FN-APP-LEARNING-PY-002`
-- **Definition type:** `class`
-- **Source:** `app/learning.py:28-32`
-- **Source blob SHA:** `ea27a7ebf2fbdf58ba1452f4adaf7d56a197e9b9`
-- **Snapshot:** `main @ 336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`
-- **Status:** `UNVERIFIED`
+- ID: `FN-APP-LEARNING-PY-002`; source `app/learning.py:28-32`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime verification: NOT RUN.
 
-## Logic explanation
+## Behavior
+Pydantic request model requires account_id with length 1–200; period_days defaults to 30 and is constrained 1–90. It does not accept arbitrary metric names; metric types are defined by module constants. Validation bounds API request scope but does not verify account ownership until credential lookup.
 
-Request schema for analytics/learning execution. Verify account ID, requested metric list, date/time filters and metric allowlist; reject arbitrary fields that could cause broad data collection.
-
-## Exact isolated source
-
-```python
-class LearningRequest(BaseModel):
-    account_id: str = Field(min_length=1, max_length=200)
-    period_days: int = Field(default=30, ge=1, le=90)
-```
-
-## Verification tags
-
-- `VERIFIED — SOURCE PRESENT`: fetched from current source blob.
-- `VERIFIED — DEFINITION ISOLATION`: indentation-aware boundaries checked.
-- `UNVERIFIED — LOGIC`: caller/test/runtime evidence not yet complete.
-- `UNVERIFIED — LIVE BEHAVIOR`: no production execution occurred.
-
-## Required checks
-
-Trace every caller/callee, inspect relevant tests, validate boundary cases and exception behavior, and review security/data side effects. Do not call production services during this audit.
+## Callers and tests
+Consumed by `run_learning_loop`; tests construct the model with valid account IDs and default/custom periods. Invalid boundaries are handled by Pydantic/FastAPI 422.
