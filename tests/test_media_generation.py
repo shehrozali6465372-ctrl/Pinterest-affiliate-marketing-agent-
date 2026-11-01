@@ -17,7 +17,9 @@ class FakeResponse:
         return self._body
 
 
-def test_generated_image_is_uploaded_to_cloudflare_images(monkeypatch):
+def test_generated_image_is_returned_as_data_url_without_image_hosting(monkeypatch):
+    import base64
+
     monkeypatch.setattr(settings, "cloudflare_api_token", "test-token")
     monkeypatch.setattr(settings, "cloudflare_account_id", "test-account")
     monkeypatch.setattr(settings, "cloudflare_image_model", "@cf/test-image-model")
@@ -29,15 +31,8 @@ def test_generated_image_is_uploaded_to_cloudflare_images(monkeypatch):
         def __exit__(self, *_args): return False
         def post(self, url, **kwargs):
             calls.append((url, kwargs))
-            if "/ai/run/" in url:
-                return FakeResponse()
-            return FakeResponse(body={
-                "success": True,
-                "result": {
-                    "id": "cloudflare-image-123",
-                    "variants": ["https://imagedelivery.net/account/image-123/public"],
-                },
-            })
+            assert "/ai/run/" in url
+            return FakeResponse()
 
     monkeypatch.setattr(media_generation.httpx, "Client", Client)
     result = media_generation.generate_and_host_pin_image(
@@ -45,17 +40,35 @@ def test_generated_image_is_uploaded_to_cloudflare_images(monkeypatch):
         product_details="Three tiers for kitchen storage",
     )
 
-    assert result["image_url"] == "https://imagedelivery.net/account/image-123/public"
-    assert result["cloudflare_image_id"] == "cloudflare-image-123"
+    assert result["image_url"].startswith("data:image/png;base64,")
+    assert base64.b64decode(result["image_url"].split(",", 1)[1]) == b"x" * 2048
     assert result["model"] == "@cf/test-image-model"
     assert result["byte_length"] == "2048"
-    assert len(calls) == 2
-    assert calls[1][0].endswith("/images/v1")
-    assert calls[1][1]["data"]["requireSignedURLs"] == "false"
-    assert calls[1][1]["files"]["file"][2] == "image/png"
+    assert len(calls) == 1
+    assert all(not url.endswith("/images/v1") for url, _ in calls)
 
 
-def test_cloudflare_images_upload_failure_blocks_ephemeral_publish(monkeypatch):
+def test_cloudflare_images_is_never_called(monkeypatch):
+    monkeypatch.setattr(settings, "cloudflare_api_token", "test-token")
+    monkeypatch.setattr(settings, "cloudflare_account_id", "test-account")
+    calls = []
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def post(self, url, **kwargs):
+            calls.append(url)
+            return FakeResponse()
+
+    monkeypatch.setattr(media_generation.httpx, "Client", Client)
+    media_generation.generate_and_host_pin_image(product_name="Spice rack", product_details="Three tiers")
+    assert len(calls) == 1
+    assert "/ai/run/" in calls[0]
+    assert "/images/v1" not in calls[0]
+
+
+def test_generated_image_over_inline_limit_is_rejected(monkeypatch):
     monkeypatch.setattr(settings, "cloudflare_api_token", "test-token")
     monkeypatch.setattr(settings, "cloudflare_account_id", "test-account")
 
@@ -64,16 +77,8 @@ def test_cloudflare_images_upload_failure_blocks_ephemeral_publish(monkeypatch):
         def __enter__(self): return self
         def __exit__(self, *_args): return False
         def post(self, url, **kwargs):
-            if "/ai/run/" in url:
-                return FakeResponse()
-            return FakeResponse(status_code=403, body={
-                "success": False,
-                "errors": [{"code": 10000, "message": "Authentication error"}],
-            })
+            return FakeResponse(content=b"x" * (media_generation.MAX_INLINE_IMAGE_BYTES + 1))
 
     monkeypatch.setattr(media_generation.httpx, "Client", Client)
-    with pytest.raises(media_generation.ImageGenerationError, match="Images upload failed"):
-        media_generation.generate_and_host_pin_image(
-            product_name="Spice rack",
-            product_details="Three tiers",
-        )
+    with pytest.raises(media_generation.ImageGenerationError, match="32 MiB inline-image limit"):
+        media_generation.generate_and_host_pin_image(product_name="Spice rack", product_details="Three tiers")

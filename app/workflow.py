@@ -345,7 +345,7 @@ def publish_product_end_to_end(
         product, content = create_product_with_content_version(
             product_name=payload.product_name,
             product_details=payload.product_details,
-            image_url=media["image_url"],
+            image_url=None,
             affiliate_url=payload.affiliate_url,
             idempotency_key=idempotency_key,
             provider="deepseek",
@@ -377,7 +377,7 @@ def publish_product_end_to_end(
                 "published": True, "already_published": True,
                 "pin_id": attempt.get("pinterest_pin_id"), "board_id": board_id,
                 "product_id": product["id"], "content_version_id": content["id"],
-                "image_source": "cloudflare_images" if media.get("cloudflare_image_id") else "image_url",
+                "image_source": "image_base64",
             }
         raise HTTPException(status_code=409, detail="A previous publish attempt is pending or uncertain. Check the Pinterest board before retrying.")
 
@@ -420,7 +420,7 @@ def publish_product_end_to_end(
         "published": True, "already_published": False, "pin_id": saved["pinterest_pin_id"],
         "board_id": board_id, "product_id": product["id"], "content_version_id": content["id"],
         "title": generated.title, "description": generated.description, "alt_text": generated.alt_text,
-        "image_source": "cloudflare_images" if media.get("cloudflare_image_id") else "image_url", "affiliate_url": payload.affiliate_url,
+        "image_source": "image_base64", "affiliate_url": payload.affiliate_url,
         "provider": "DeepSeek", "model": model_id, "image_model": media["model"],
         "http_status": saved["http_status"],
     }
