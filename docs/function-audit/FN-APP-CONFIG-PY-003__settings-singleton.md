@@ -1,20 +1,10 @@
-# settings module singleton
+# settings — source-level review
 
-- **Unique ID:** FN-APP-CONFIG-PY-003
-- **Source:** app/config.py:1-27
-- **Source revision:** main, refreshed during audit on 2026-11-01
-- **Status:** VERIFIED — SOURCE RETRIEVED; logic static only
+- ID: `FN-APP-CONFIG-PY-003`; source `app/config.py:41`; baseline `336d8bcd793843e4c3bb0aa626005fc6b82f0ef0`.
+- Source review: COMPLETE. Runtime verification: NOT RUN.
 
-## Purpose
-Constructs one module-level Pydantic settings object from environment configuration.
+## Behavior
+Instantiates `Settings()` at module import and exposes the object as shared configuration. Pydantic Settings resolves environment/.env values at construction time; imports across app modules reuse the same object reference. It is not a dynamic environment watcher.
 
-## Line-by-line behavior
-- Lines 1-4: module documentation and imports; Pydantic settings/validator support plus Unicode category inspection.
-- Lines 7-24: the Settings model and its configuration surface. `env_file=".env"` permits local dotenv loading; `extra="ignore"` ignores undeclared environment values. Settings include API/database/Pinterest/Cloudflare/LLM credentials and provider defaults. The configured LLM defaults to DeepSeek at `https://api.deepseek.com` with model identifier `deepseek-flash`.
-- Line 27: instantiates Settings at import time; environment is read when this module is imported/constructed.
-
-## Security and operational implications
-Secret values are held in process memory as settings attributes. This module does not persist OAuth account credentials; those are handled by credential_vault. Configuration presence does not prove provider connectivity or token validity. Import-time construction means tests that mutate environment after import must patch the singleton or reload the module.
-
-## Call graph and evidence
-Imported by application/provider modules. This audit retrieved the exact source; no runtime provider or secret operation was performed. No independent runtime behavior claim is made.
+## Callers and tests
+Imported by main, database, credential vault, workflow, diagnostics, learning, content generation, media generation and Pinterest clients. Tests monkeypatch attributes on this singleton to isolate behavior. Changing process environment after import will not update values unless Settings is reconstructed/reloaded.
