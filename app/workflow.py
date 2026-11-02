@@ -14,12 +14,10 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 from app.config import settings
 from app.content_generation import AFFILIATE_DISCLOSURE, ContentGenerationError, generate_pin_content
 from app.credential_vault import get_pinterest_credential
-from app.database import (
-    begin_publish_attempt, create_product_with_content_version,
-    finish_publish_attempt, get_product_by_idempotency_key,
-)
+from app.database import create_product_with_content_version, get_product_by_idempotency_key
 from app.media_generation import ImageGenerationError, generate_and_host_pin_image
-from app.pinterest import PinterestPublishError, create_pin_request, image_media_source
+from app.pinterest import PinterestPublishError, image_media_source
+from app.publishing import PublicationConflict, PublicationPersistenceError, publish_pin_with_ledger
 from app.pin_limits import PIN_DESCRIPTION_MAX_LENGTH, PIN_TITLE_MAX_LENGTH, PIN_ALT_TEXT_MAX_LENGTH, validate_pin_text_fields
 
 logger = logging.getLogger(__name__)
@@ -103,21 +101,10 @@ class ProductWorkflowInput(BaseModel):
 
 
 def _pinterest_request(method: str, path: str, token: str, *, body: dict | None = None) -> tuple[int, dict]:
-    # Every Pin write is routed through the same validated outbound boundary.
+    # Pin writes must pass through publish_pin_with_ledger; this helper is for
+    # account/board reads and board creation only.
     if method.upper() == "POST" and path == "/pins":
-        try:
-            return create_pin_request(access_token=token, payload=body or {})
-        except PinterestPublishError as exc:
-            if exc.error_code == "pin_text_limit_exceeded":
-                status = 422
-            else:
-                status = exc.http_status if exc.http_status and exc.http_status < 500 else 502
-            detail = str(exc)
-            if exc.http_status:
-                detail = f"Pinterest API returned HTTP {exc.http_status}; verify the account before retrying any publish operation."
-            elif exc.outcome_uncertain:
-                detail = "Pinterest request failed; verify the account before retrying any publish operation."
-            raise HTTPException(status_code=status, detail=detail) from exc
+        raise HTTPException(status_code=400, detail="Pin writes must use the canonical publication-ledger gateway.")
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
             response = client.request(
@@ -221,18 +208,9 @@ def publish_hub_pin(
             description=description,
             alt_text=payload.alt_text,
         )
-        attempt = begin_publish_attempt(
-            product_id=product["id"],
-            content_version_id=content["id"],
-            board_id=payload.board_id,
-            account_id=payload.account_id,
-        )
     except Exception as exc:
         _log_workflow_failure("hub_publication_persistence", exc, idempotency_key)
         raise HTTPException(status_code=503, detail="Could not persist the Hub publication and idempotency record; no Pin was intentionally sent.") from exc
-
-    if attempt.get("blocked"):
-        raise HTTPException(status_code=409, detail="A previous publication attempt exists; inspect its stored status before retrying.")
 
     body = {
         "board_id": payload.board_id,
@@ -243,48 +221,38 @@ def publish_hub_pin(
         "link": payload.destination_url,
     }
     try:
-        http_status, result = _pinterest_request("POST", "/pins", credential["access_token"], body=body)
-        pin_id = result.get("id") if isinstance(result, dict) else None
-        if not isinstance(pin_id, str) or not pin_id:
-            finish_publish_attempt(attempt["id"], status="unknown", http_status=http_status, error_code="missing_pin_id", response_metadata={})
-            raise HTTPException(status_code=502, detail="Pinterest returned no Pin ID; publication outcome is uncertain. Do not retry blindly.")
-        saved = finish_publish_attempt(
-            attempt["id"], status="succeeded", pinterest_pin_id=pin_id,
-            http_status=http_status,
-            response_metadata={"id": pin_id, "board_id": payload.board_id, "created_at": result.get("created_at")},
+        published = publish_pin_with_ledger(
+            product_id=product["id"], content_version_id=content["id"],
+            board_id=payload.board_id, account_id=payload.account_id,
+            access_token=credential["access_token"], payload=body,
         )
-    except HTTPException as exc:
-        try:
-            finish_publish_attempt(
-                attempt["id"],
-                status="unknown" if exc.status_code >= 500 else "failed",
-                http_status=exc.status_code,
-                error_code="pinterest_outcome_uncertain" if exc.status_code >= 500 else "pinterest_request_rejected",
-                response_metadata={},
-            )
-        except Exception:
-            pass
-        raise
+    except PublicationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PinterestPublishError as exc:
+        status = exc.http_status if exc.http_status and exc.http_status < 500 else 502
+        if exc.outcome_uncertain:
+            status = 502
+        raise HTTPException(status_code=status, detail="Pinterest publish failed; inspect the board and publication record before retrying." if exc.outcome_uncertain else "Pinterest rejected the Pin request.") from exc
+    except PublicationPersistenceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
-        try:
-            finish_publish_attempt(attempt["id"], status="unknown", error_code="publish_recording_error", response_metadata={})
-        except Exception:
-            pass
-        raise HTTPException(status_code=502, detail="Pin publication outcome may be uncertain; inspect Pinterest and the publication record before retrying.") from exc
+        _log_workflow_failure("hub_publication_attempt", exc, idempotency_key, http_status=503)
+        raise HTTPException(status_code=503, detail="Publication could not be safely recorded; inspect the publication record before retrying.") from exc
 
     return {
-        "published": True,
-        "already_published": False,
-        "pin_id": saved["pinterest_pin_id"],
+        "published": published["published"],
+        "already_published": published["already_published"],
+        "pin_id": published["pin_id"],
+        "board_id": payload.board_id,
         "product_id": product["id"],
         "content_version_id": content["id"],
-        "board_id": payload.board_id,
         "title": payload.title,
         "description": description,
         "alt_text": payload.alt_text,
         "affiliate_url": payload.destination_url,
-        "http_status": saved["http_status"],
+        "http_status": published.get("http_status"),
     }
+
 
 
 @router.post("/publish-product", dependencies=[Depends(_require_api_key)])
@@ -390,24 +358,6 @@ def publish_product_end_to_end(
         _log_workflow_failure("product_content_persistence", exc, request_id, http_status=503)
         raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. If the transaction rolled back, retry with the same Idempotency-Key; otherwise inspect the stored product before retrying.") from exc
 
-    try:
-        attempt = begin_publish_attempt(
-            product_id=product["id"], content_version_id=content["id"],
-            board_id=board_id, account_id=payload.account_id,
-        )
-    except Exception as exc:
-        _log_workflow_failure("publication_attempt_create", exc, request_id, http_status=503)
-        raise HTTPException(status_code=503, detail="Publication attempt could not be recorded; no Pinterest Pin was sent. Inspect the product record before retrying.") from exc
-    if attempt.get("blocked"):
-        if attempt.get("status") == "succeeded":
-            return {
-                "published": True, "already_published": True,
-                "pin_id": attempt.get("pinterest_pin_id"), "board_id": board_id,
-                "product_id": product["id"], "content_version_id": content["id"],
-                "image_source": "image_base64",
-            }
-        raise HTTPException(status_code=409, detail="A previous publish attempt is pending or uncertain. Check the Pinterest board before retrying.")
-
     body = {
         "board_id": board_id, "title": generated.title, "description": generated.description,
         "alt_text": generated.alt_text,
@@ -415,39 +365,31 @@ def publish_product_end_to_end(
         "link": payload.affiliate_url,
     }
     try:
-        http_status, result = _pinterest_request("POST", "/pins", token, body=body)
-        pin_id = result.get("id") if isinstance(result, dict) else None
-        if not isinstance(pin_id, str) or not pin_id:
-            finish_publish_attempt(attempt["id"], status="unknown", http_status=http_status, error_code="missing_pin_id", response_metadata={})
-            raise HTTPException(status_code=502, detail="Pinterest returned no Pin ID; outcome is uncertain. Verify the board before retrying.")
-        saved = finish_publish_attempt(
-            attempt["id"], status="succeeded", pinterest_pin_id=pin_id,
-            http_status=http_status,
-            response_metadata={"id": pin_id, "board_id": board_id, "created_at": result.get("created_at")},
+        published = publish_pin_with_ledger(
+            product_id=product["id"], content_version_id=content["id"],
+            board_id=board_id, account_id=payload.account_id,
+            access_token=token, payload=body,
         )
-    except HTTPException as exc:
-        _log_workflow_failure("pinterest_pin_publish", exc, request_id, http_status=exc.status_code)
-        try:
-            if exc.status_code >= 500:
-                finish_publish_attempt(attempt["id"], status="unknown", error_code="pinterest_outcome_uncertain", response_metadata={})
-            else:
-                finish_publish_attempt(attempt["id"], status="failed", http_status=exc.status_code, error_code="pinterest_request_rejected", response_metadata={})
-        except Exception:
-            pass
-        raise
-    except Exception as exc:
+    except PublicationConflict as exc:
+        raise HTTPException(status_code=409, detail="A previous publish attempt is pending or uncertain. Check the Pinterest board before retrying.") from exc
+    except PinterestPublishError as exc:
+        _log_workflow_failure("pinterest_pin_publish", exc, request_id, http_status=exc.http_status)
+        if exc.outcome_uncertain:
+            raise HTTPException(status_code=502, detail="Publish outcome may be uncertain; verify Pinterest and the publication record before retrying.") from exc
+        raise HTTPException(status_code=exc.http_status or 502, detail="Pinterest rejected the Pin request; no successful publication was confirmed.") from exc
+    except PublicationPersistenceError as exc:
         _log_workflow_failure("pinterest_publish_recording", exc, request_id, http_status=502)
-        try:
-            finish_publish_attempt(attempt["id"], status="unknown", error_code="publish_recording_error", response_metadata={})
-        except Exception:
-            pass
-        raise HTTPException(status_code=502, detail="Publish outcome may be uncertain; check Pinterest before retrying.") from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        _log_workflow_failure("publication_attempt", exc, request_id, http_status=503)
+        raise HTTPException(status_code=503, detail="Publication could not be safely recorded; inspect the publication record before retrying.") from exc
+
 
     return {
-        "published": True, "already_published": False, "pin_id": saved["pinterest_pin_id"],
+        "published": published["published"], "already_published": published["already_published"], "pin_id": published["pin_id"],
         "board_id": board_id, "product_id": product["id"], "content_version_id": content["id"],
         "title": generated.title, "description": generated.description, "alt_text": generated.alt_text,
         "image_source": "image_base64", "affiliate_url": payload.affiliate_url,
         "provider": "DeepSeek", "model": model_id, "image_model": media["model"],
-        "http_status": saved["http_status"],
+        "http_status": published["http_status"],
     }

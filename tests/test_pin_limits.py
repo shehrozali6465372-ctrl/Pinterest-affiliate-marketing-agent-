@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from app.config import settings
 from app.content_generation import AFFILIATE_DISCLOSURE, GeneratedContent, _with_affiliate_disclosure
 from app.pin_limits import PIN_ALT_TEXT_MAX_LENGTH, PIN_DESCRIPTION_MAX_LENGTH, PIN_TITLE_MAX_LENGTH
-from app.pinterest import PinterestPublishError, publish_image_pin
+from app.pinterest import PinterestPublishError, create_pin_request
 from app.workflow import HubPinPublishInput, _pinterest_request
 
 
@@ -48,8 +48,7 @@ def test_hub_manual_pin_input_rejects_description_over_800_characters():
         })
 
 
-def test_publish_image_pin_rejects_oversized_text_before_network_call(monkeypatch):
-    monkeypatch.setattr(settings, "pinterest_access_token", "test-token")
+def test_shared_pin_create_boundary_rejects_oversized_text_before_network_call(monkeypatch):
     calls = []
 
     class FakeClient:
@@ -62,18 +61,16 @@ def test_publish_image_pin_rejects_oversized_text_before_network_call(monkeypatc
 
     monkeypatch.setattr("app.pinterest.httpx.Client", FakeClient)
     with pytest.raises(PinterestPublishError, match="800-character API limit"):
-        publish_image_pin(
-            board_id="board-test",
-            title="Valid title",
-            description="x" * 801,
-            alt_text="Valid alt text",
-            image_url="https://example.com/image.png",
-            affiliate_url="https://example.com/item",
-        )
+        create_pin_request(access_token="vault-token", payload={
+            "board_id": "board-test", "title": "Valid title",
+            "description": "x" * 801, "alt_text": "Valid alt text",
+            "media_source": {"source_type": "image_url", "url": "https://example.com/image.png", "is_standard": True},
+            "link": "https://example.com/item",
+        })
     assert calls == []
 
 
-def test_final_workflow_pinterest_boundary_rejects_oversized_description(monkeypatch):
+def test_workflow_pinterest_helper_blocks_direct_pin_write_bypass(monkeypatch):
     from fastapi import HTTPException
 
     calls = []
@@ -93,5 +90,6 @@ def test_final_workflow_pinterest_boundary_rejects_oversized_description(monkeyp
             "description": "x" * 801,
             "alt_text": "Valid alt text",
         })
-    assert error.value.status_code == 422
+    assert error.value.status_code == 400
+    assert "canonical publication-ledger gateway" in error.value.detail
     assert calls == []

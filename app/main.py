@@ -11,7 +11,9 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
 from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
-from app.pinterest import PinterestPublishError, publish_image_pin
+from app.credential_vault import get_pinterest_credential
+from app.pinterest import PinterestPublishError, image_media_source
+from app.publishing import PublicationConflict, PublicationPersistenceError, publish_pin_with_ledger
 from app.pin_limits import validate_pin_text_fields
 
 
@@ -120,20 +122,20 @@ def health() -> dict[str, str]:
 
 @app.get("/readiness", dependencies=[Depends(require_api_key)])
 def readiness() -> dict[str, object]:
-    legacy_pinterest_configured = bool(
-        settings.pinterest_access_token and settings.pinterest_board_id
-    )
     from app.credential_vault import token_encryption_key_is_valid
 
     encryption_key_valid = token_encryption_key_is_valid()
     account_workflow_configured = bool(settings.database_url and encryption_key_valid)
     credential_ingest_configured = bool(settings.pinterest_credential_ingest_key)
+    vault_publish_configured = bool(account_workflow_configured and settings.pinterest_board_id)
     return {
         "database_configured": bool(settings.database_url),
-        # Backwards-compatible field: this refers only to the legacy direct-token publish route.
-        "pinterest_configured": legacy_pinterest_configured,
-        "pinterest_legacy_direct_configured": legacy_pinterest_configured,
-        # Publishing from a stored OAuth credential needs DB + encryption; this does not prove account connection.
+        # Backwards-compatible readiness flag: config presence only; account connection is not checked here.
+        "pinterest_configured": vault_publish_configured,
+        # No active route publishes with the legacy plaintext environment token.
+        "pinterest_legacy_direct_configured": False,
+        "pinterest_legacy_token_present": bool(settings.pinterest_access_token),
+        # Stored OAuth publishing needs DB + encryption; this does not prove account connection.
         "pinterest_account_workflow_configured": account_workflow_configured,
         "pinterest_token_encryption_key_valid": encryption_key_valid,
         # Hub-to-agent OAuth credential ingestion is a separate service-to-service path.
@@ -650,14 +652,15 @@ def reconcile_publication(publication_id: int, payload: PublicationReconciliatio
     return {"reconciled": True, "published": row.get("status") == "succeeded", "publication": row}
 
 
-@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_configured_api_key)])
-def publish_product_content(product_id: int, content_version_id: int) -> dict[str, object]:
+def _publish_product_content(product_id: int, content_version_id: int, account_id: str) -> dict[str, object]:
     if product_id <= 0 or content_version_id <= 0:
         raise HTTPException(status_code=422, detail="product_id and content_version_id must be positive integers")
-    if not settings.pinterest_access_token or not settings.pinterest_board_id:
-        raise HTTPException(status_code=503, detail="Pinterest access token and board ID must be configured before publishing.")
+    if not account_id or not account_id.strip():
+        raise HTTPException(status_code=422, detail="X-Pinterest-Account-ID header is required")
+    if not settings.pinterest_board_id:
+        raise HTTPException(status_code=503, detail="PINTEREST_BOARD_ID must be configured before publishing.")
 
-    from app.database import begin_publish_attempt, finish_publish_attempt, get_content_version, get_product as fetch_product
+    from app.database import get_content_version, get_product as fetch_product
     try:
         product = fetch_product(product_id)
         if product is None:
@@ -665,8 +668,6 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
         content = get_content_version(product_id, content_version_id)
         if content is None:
             raise HTTPException(status_code=404, detail="Content version not found")
-
-        # Reject invalid content before reserving a publication attempt.
         try:
             validate_pin_text_fields(
                 title=content["title"],
@@ -676,47 +677,65 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        attempt = begin_publish_attempt(product_id=product_id, content_version_id=content_version_id, board_id=settings.pinterest_board_id)
-        if attempt.get("blocked"):
-            if attempt["status"] == "succeeded":
-                return {"published": True, "already_published": True, "pin_id": attempt["pinterest_pin_id"], "publication_id": attempt["id"]}
-            raise HTTPException(status_code=409, detail="Previous publish attempt is pending or uncertain. Check Pinterest before retrying.")
-
         try:
-            actual = publish_image_pin(
-                board_id=settings.pinterest_board_id,
-                title=content["title"],
-                description=content["description"],
-                alt_text=content["alt_text"],
-                image_url=product["image_url"],
-                affiliate_url=product["affiliate_url"],
-            )
-        except PinterestPublishError as exc:
-            outcome = "unknown" if exc.outcome_uncertain else "failed"
-            finish_publish_attempt(attempt["id"], status=outcome, http_status=exc.http_status, error_code=exc.error_code, response_metadata={})
-            if exc.outcome_uncertain:
-                raise HTTPException(status_code=502, detail="Pinterest publish outcome is uncertain. Automatic retry is blocked; verify the board before retrying.") from exc
-            raise HTTPException(status_code=502, detail="Pinterest rejected the request. No successful Pin creation was confirmed.") from exc
+            credential = get_pinterest_credential(account_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="Pinterest account is not connected in the credential vault.") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Stored Pinterest credential could not be read.") from exc
 
-        saved = finish_publish_attempt(
-            attempt["id"],
-            status="succeeded",
-            pinterest_pin_id=str(actual["pin_id"]),
-            http_status=int(actual["http_status"]),
-            response_metadata=actual["metadata"],
+        payload = {
+            "board_id": settings.pinterest_board_id,
+            "title": content["title"],
+            "description": content["description"],
+            "alt_text": content["alt_text"],
+            "media_source": image_media_source(product["image_url"]),
+            "link": product["affiliate_url"],
+        }
+        result = publish_pin_with_ledger(
+            product_id=product_id,
+            content_version_id=content_version_id,
+            board_id=settings.pinterest_board_id,
+            account_id=account_id,
+            access_token=credential["access_token"],
+            payload=payload,
         )
-        return {"published": True, "already_published": False, "pin_id": saved["pinterest_pin_id"], "publication_id": saved["id"], "http_status": saved["http_status"]}
+        return {
+            "published": result["published"],
+            "already_published": result["already_published"],
+            "pin_id": result["pin_id"],
+            "publication_id": result["publication_id"],
+            "http_status": result.get("http_status"),
+        }
+    except PublicationConflict as exc:
+        raise HTTPException(status_code=409, detail="A previous publication exists for this content and board, possibly under a different account. Verify the ledger and board before retrying.") from exc
+    except PinterestPublishError as exc:
+        if exc.outcome_uncertain:
+            raise HTTPException(status_code=502, detail="Pinterest publish outcome is uncertain. Automatic retry is blocked; verify the board before retrying.") from exc
+        raise HTTPException(status_code=exc.http_status or 502, detail="Pinterest rejected the Pin request. No successful Pin creation was confirmed.") from exc
+    except PublicationPersistenceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except HTTPException:
         raise
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Publish request could not be fully recorded. Inspect publication record and Pinterest board before retrying.") from exc
 
 
+@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_configured_api_key)])
+def publish_product_content(
+    product_id: int,
+    content_version_id: int,
+    account_id: str = Header(..., alias="X-Pinterest-Account-ID", min_length=1, max_length=200),
+) -> dict[str, object]:
+    return _publish_product_content(product_id, content_version_id, account_id)
+
+
 @app.post("/publish", dependencies=[Depends(require_configured_api_key)])
-def publish(payload: PublishRequest) -> dict[str, object]:
-    return publish_product_content(payload.product_id, payload.content_version_id)
+def publish(
+    payload: PublishRequest,
+    account_id: str = Header(..., alias="X-Pinterest-Account-ID", min_length=1, max_length=200),
+) -> dict[str, object]:
+    return _publish_product_content(payload.product_id, payload.content_version_id, account_id)
 
 
 @app.post("/learning-loop", dependencies=[Depends(require_api_key)])

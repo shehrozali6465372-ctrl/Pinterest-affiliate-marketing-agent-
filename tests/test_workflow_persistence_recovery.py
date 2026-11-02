@@ -85,30 +85,26 @@ def test_ambiguous_pin_publish_marks_attempt_unknown_and_blocks_safe_retry(monke
         return ({"id": 1001, "product_name": kwargs["product_name"]},
         {"id": 1002, "product_id": 1001})
     monkeypatch.setattr(workflow, "create_product_with_content_version", persist)
-    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {
+    monkeypatch.setattr(workflow, "_pinterest_request", lambda method, path, token, **kwargs: (
+        (200, {"id": "test-user"}) if path == "/user_account" else
+        (200, {"items": [{"id": "board-1", "name": "Modern Living Hub | Kitchen & Home Organization"}]})
+    ))
+    import app.publishing as publishing
+    monkeypatch.setattr(publishing, "begin_publish_attempt", lambda **kwargs: {
         "blocked": False, "id": 1003, "status": "pending",
     })
     finished = []
-    monkeypatch.setattr(workflow, "finish_publish_attempt", lambda attempt_id, **kwargs: (
+    monkeypatch.setattr(publishing, "finish_publish_attempt", lambda attempt_id, **kwargs: (
         finished.append({"id": attempt_id, **kwargs}) or {
             "id": attempt_id, "status": kwargs["status"],
             "pinterest_pin_id": kwargs.get("pinterest_pin_id"),
         }
     ))
+    from app.pinterest import PinterestPublishError
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: (_ for _ in ()).throw(
+        PinterestPublishError("transport uncertain", outcome_uncertain=True, error_code="transport_outcome_unknown")
+    ))
 
-    def pinterest_request(method, path, token, *, body=None):
-        if path == "/user_account":
-            return 200, {"id": "test-user"}
-        if path == "/boards?page_size=100":
-            return 200, {"items": [{"id": "board-1", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
-        if path == "/pins":
-            assert body["media_source"]["source_type"] == "image_base64"
-            import base64
-            assert base64.b64decode(body["media_source"]["data"]) == b"x" * 2048
-            raise workflow.HTTPException(status_code=502, detail="Pinterest request failed; verify the account before retrying any publish operation.")
-        raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
-
-    monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
     response = client.post(
         "/workflow/publish-product",
         json=_payload(),
@@ -117,7 +113,7 @@ def test_ambiguous_pin_publish_marks_attempt_unknown_and_blocks_safe_retry(monke
 
     assert response.status_code == 502
     assert persisted_arguments["image_url"] is None
-    assert any(item.get("status") == "unknown" and item.get("error_code") == "pinterest_outcome_uncertain" for item in finished)
+    assert any(item.get("status") == "unknown" and item.get("error_code") == "transport_outcome_unknown" for item in finished)
 
 
 def test_persistence_constraint_failure_logs_safe_schema_diagnostics(monkeypatch, caplog):
@@ -208,7 +204,8 @@ def test_publication_attempt_create_failure_is_classified_before_pinterest_write
     def fail_attempt(**kwargs):
         raise RuntimeError("private DB details must not be logged")
 
-    monkeypatch.setattr(workflow, "begin_publish_attempt", fail_attempt)
+    import app.publishing as publishing
+    monkeypatch.setattr(publishing, "begin_publish_attempt", fail_attempt)
     response = client.post(
         "/workflow/publish-product",
         json=_payload(),
@@ -216,7 +213,7 @@ def test_publication_attempt_create_failure_is_classified_before_pinterest_write
     )
 
     assert response.status_code == 503
-    assert "stage=publication_attempt_create" in caplog.text
+    assert "stage=publication_attempt" in caplog.text
     assert "request_id=attempt-42" in caplog.text
     assert "exception_type=RuntimeError" in caplog.text
     assert "private DB details" not in caplog.text

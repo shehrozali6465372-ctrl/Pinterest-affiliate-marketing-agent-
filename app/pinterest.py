@@ -78,28 +78,6 @@ def create_pin_request(*, access_token: str, payload: dict[str, object]) -> tupl
     return response.status_code, body
 
 
-def publish_image_pin(*, board_id: str, title: str, description: str, alt_text: str, image_url: str, affiliate_url: str) -> dict[str, object]:
-    """Legacy-compatible wrapper; all Pin writes use create_pin_request."""
-    if not settings.pinterest_access_token:
-        raise PinterestPublishError("PINTEREST_ACCESS_TOKEN is not configured.", outcome_uncertain=False, error_code="missing_access_token")
-    if not board_id.strip():
-        raise PinterestPublishError("PINTEREST_BOARD_ID is not configured.", outcome_uncertain=False, error_code="missing_board_id")
-    payload = {
-        "board_id": board_id,
-        "title": title,
-        "description": description,
-        "alt_text": alt_text,
-        "media_source": image_media_source(image_url),
-        "link": affiliate_url,
-    }
-    status_code, body = create_pin_request(access_token=settings.pinterest_access_token, payload=payload)
-    pin_id = str(body["id"])
-    metadata = {
-        "id": pin_id,
-        "board_id": body.get("board_id") if isinstance(body.get("board_id"), str) else board_id,
-        "created_at": body.get("created_at") if isinstance(body.get("created_at"), str) else None,
-    }
-    return {"pin_id": pin_id, "http_status": status_code, "metadata": metadata}
 
 
 

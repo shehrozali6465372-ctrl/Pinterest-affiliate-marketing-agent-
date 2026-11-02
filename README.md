@@ -26,7 +26,7 @@ Product intake/persistence, versioned content history, DeepSeek Flash content ge
 7. Run tests: `python -m pytest -q`.
 
 ## API security
-Set a strong random `APP_API_KEY` in Render environment variables before exposing the API. Operational endpoints require it in the `X-API-Key` request header when configured. The `/health` liveness endpoint remains public. If `APP_API_KEY` is unset, the API is not protected by this application-level key, so do not expose it publicly until configured. Use HTTPS and never put the key in a public client or repository.
+Set a strong random `APP_API_KEY` in Render environment variables before exposing the API. Operational endpoints require it in the `X-API-Key` request header. If `APP_API_KEY` is unset, protected endpoints fail closed with HTTP 503. The `/health` liveness endpoint remains public. Use HTTPS and never put the key in a public client or repository.
 
 ## Current endpoints
 - `GET /health`: public liveness only; does not prove integrations are ready.
@@ -36,8 +36,12 @@ Set a strong random `APP_API_KEY` in Render environment variables before exposin
 - `GET /products/{product_id}`: retrieves a saved product.
 - `POST /products/{product_id}/content`: calls the configured DeepSeek Flash API using product text and supplied image URL; stores an auditable content version containing Pin Idea, Title, Description, and Alt Text.
 - `GET /products/{product_id}/content`: returns version history for the product.
-- `POST /publish` with JSON `{"product_id": 123, "content_version_id": 456}`: publishes an existing content version using the Pinterest v5 API. The original product image URL and exact affiliate destination link are used. Success requires a returned Pin ID, and successful duplicate attempts are blocked.
-- `POST /products/{product_id}/content/{content_version_id}/publish`: version-specific publishing endpoint.
+- `POST /publish` with JSON `{"product_id": 123, "content_version_id": 456}` and headers `X-API-Key` + `X-Pinterest-Account-ID`: publishes an existing content version using the connected OAuth credential from the encrypted Neon credential vault. The original product image URL and exact affiliate destination link are used.
+- `POST /products/{product_id}/content/{content_version_id}/publish`: same version-specific publishing gateway; requires `X-API-Key` and `X-Pinterest-Account-ID`.
+- `POST /workflow/publish-product`: generates image/copy, then uses the same publication-ledger gateway; requires `X-API-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body.
+- `POST /workflow/publish-hub-pin`: Hub service publishing entry point; requires `X-Credential-Ingest-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body.
+
+All Pin-creation routes share one publication-ledger orchestrator. A pending, uncertain, or successful attempt blocks automatic duplicate creation. The compatibility endpoints select the encrypted OAuth credential with `X-Pinterest-Account-ID`; the legacy plaintext `PINTEREST_ACCESS_TOKEN` is not used for publishing.
 - `POST /learning-loop/run`: protected, real account-scoped Pinterest analytics ingestion; persists snapshots and descriptive aggregates. It does not train predictive ML.\n- `POST /learning-loop` (legacy): returns 501; use `/learning-loop/run` for the real Learning Loop.
 
 A timed-out Pinterest request or ambiguous server error is recorded as uncertain; automatic retry is blocked. Check the Pinterest board before attempting a retry to avoid accidental duplicate Pins.
@@ -48,7 +52,9 @@ Migrations are in `migrations/` and tracked in `schema_migrations`. Run them exp
 ## Configuration
 - `APP_API_KEY`: protect operational endpoints.
 - `DATABASE_URL`: Neon PostgreSQL connection string.
-- `PINTEREST_ACCESS_TOKEN`, `PINTEREST_BOARD_ID`: authorized Pinterest API access.
+- `PINTEREST_BOARD_ID`: board used by the compatibility content-version publishing endpoints.
+- `PINTEREST_ACCESS_TOKEN`: deprecated legacy value; active publishing routes use the encrypted OAuth credential vault and do not read this token.
+- `PINTEREST_TOKEN_ENCRYPTION_KEY`: decrypts the OAuth credential stored in Neon; it must remain identical to the key used to encrypt existing credentials.
 - `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`: server-side Cloudflare Workers AI access; image-generation service is pending.
 - `LLM_API_KEY`: DeepSeek API key.
 - `LLM_BASE_URL`: defaults to `https://api.deepseek.com`.
