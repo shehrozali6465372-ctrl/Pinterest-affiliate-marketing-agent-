@@ -184,3 +184,15 @@ def test_shared_gateway_uses_atomic_pre_reserved_attempt_without_second_reservat
 
     assert result["pin_id"] == "pin-atomic"
     assert result["publication_id"] == 101
+
+
+def test_shared_gateway_blocks_legacy_publication_with_unknown_account_owner(monkeypatch):
+    monkeypatch.setattr(publishing, "begin_publish_attempt", lambda **kwargs: {
+        "blocked": True, "account_mismatch": True, "id": 77,
+        "status": "succeeded", "account_id": None,
+        "pinterest_pin_id": "legacy-pin-with-unknown-owner",
+    })
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: pytest.fail("must not publish or adopt a legacy row with unknown account ownership"))
+
+    with pytest.raises(publishing.PublicationConflict):
+        _call()

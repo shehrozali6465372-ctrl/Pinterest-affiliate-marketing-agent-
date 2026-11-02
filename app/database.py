@@ -266,7 +266,10 @@ def begin_publish_attempt(
         if row:
             # The publication key is version+board. Never treat a prior attempt
             # owned by another connected Pinterest account as this account's Pin.
-            if account_id and row.get("account_id") and row["account_id"] != account_id:
+            if account_id and row.get("account_id") != account_id:
+                # NULL ownership denotes a legacy row whose Pinterest account
+                # cannot be proven. Never report it as this account's Pin or
+                # silently adopt it; require explicit operator reconciliation.
                 return {"blocked": True, "account_mismatch": True, **dict(row)}
             state = row["status"]
             if state in {"succeeded", "pending", "unknown"}:
