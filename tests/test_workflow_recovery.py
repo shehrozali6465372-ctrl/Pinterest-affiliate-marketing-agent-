@@ -19,12 +19,12 @@ def test_workflow_pinterest_timeout_is_reported_as_gateway_error(monkeypatch):
         def __exit__(self, *_args):
             return False
 
-        def request(self, *args, **kwargs):
+        def post(self, *args, **kwargs):
             raise httpx.ReadTimeout("simulated timeout")
 
     monkeypatch.setattr(workflow.httpx, "Client", FakeClient)
     with pytest.raises(HTTPException) as exc:
-        workflow._pinterest_request("POST", "/pins", "test-token", body={"title": "test"})
+        workflow._pinterest_request("POST", "/pins", "test-token", body={"board_id": "board-1", "title": "test", "description": "test description", "alt_text": "test alt", "media_source": {"source_type": "image_url", "url": "https://example.com/a.jpg", "is_standard": True}, "link": "https://example.com/product"})
 
     assert exc.value.status_code == 502
     assert "verify the account before retrying" in exc.value.detail
@@ -49,12 +49,12 @@ def test_workflow_pinterest_5xx_is_normalized_to_gateway_error(monkeypatch):
         def __exit__(self, *_args):
             return False
 
-        def request(self, *args, **kwargs):
+        def post(self, *args, **kwargs):
             return FakeResponse()
 
     monkeypatch.setattr(workflow.httpx, "Client", FakeClient)
     with pytest.raises(HTTPException) as exc:
-        workflow._pinterest_request("POST", "/pins", "test-token", body={"title": "test"})
+        workflow._pinterest_request("POST", "/pins", "test-token", body={"board_id": "board-1", "title": "test", "description": "test description", "alt_text": "test alt", "media_source": {"source_type": "image_url", "url": "https://example.com/a.jpg", "is_standard": True}, "link": "https://example.com/product"})
 
     assert exc.value.status_code == 502
     assert "HTTP 503" in exc.value.detail

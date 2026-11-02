@@ -455,7 +455,10 @@ def test_publish_route_does_not_duplicate_successful_pin(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_access_token", "test-token")
     monkeypatch.setattr(settings, "pinterest_board_id", "board-7")
     monkeypatch.setattr(database, "get_product", lambda product_id: {"id": product_id})
-    monkeypatch.setattr(database, "get_content_version", lambda product_id, version_id: {"id": version_id})
+    monkeypatch.setattr(database, "get_content_version", lambda product_id, version_id: {
+        "id": version_id, "title": "A valid title", "description": "A valid description",
+        "alt_text": "A valid alt text",
+    })
     monkeypatch.setattr(database, "begin_publish_attempt", lambda **kwargs: {
         "blocked": True, "id": 44, "status": "succeeded", "pinterest_pin_id": "previous-pin-id"
     })

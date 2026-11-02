@@ -19,7 +19,7 @@ from app.database import (
     finish_publish_attempt, get_product_by_idempotency_key,
 )
 from app.media_generation import ImageGenerationError, generate_and_host_pin_image
-from app.pinterest import image_media_source
+from app.pinterest import PinterestPublishError, create_pin_request, image_media_source
 from app.pin_limits import PIN_DESCRIPTION_MAX_LENGTH, PIN_TITLE_MAX_LENGTH, PIN_ALT_TEXT_MAX_LENGTH, validate_pin_text_fields
 
 logger = logging.getLogger(__name__)
@@ -103,18 +103,21 @@ class ProductWorkflowInput(BaseModel):
 
 
 def _pinterest_request(method: str, path: str, token: str, *, body: dict | None = None) -> tuple[int, dict]:
-    # Enforce Pinterest Pin text limits at the final outbound API boundary too.
-    if method.upper() == "POST" and path == "/pins" and isinstance(body, dict) and all(
-        key in body for key in ("title", "description", "alt_text")
-    ):
+    # Every Pin write is routed through the same validated outbound boundary.
+    if method.upper() == "POST" and path == "/pins":
         try:
-            validate_pin_text_fields(
-                title=body.get("title"),
-                description=body.get("description"),
-                alt_text=body.get("alt_text"),
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return create_pin_request(access_token=token, payload=body or {})
+        except PinterestPublishError as exc:
+            if exc.error_code == "pin_text_limit_exceeded":
+                status = 422
+            else:
+                status = exc.http_status if exc.http_status and exc.http_status < 500 else 502
+            detail = str(exc)
+            if exc.http_status:
+                detail = f"Pinterest API returned HTTP {exc.http_status}; verify the account before retrying any publish operation."
+            elif exc.outcome_uncertain:
+                detail = "Pinterest request failed; verify the account before retrying any publish operation."
+            raise HTTPException(status_code=status, detail=detail) from exc
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
             response = client.request(
@@ -177,8 +180,10 @@ def publish_hub_pin(
     description = payload.description.strip()
     if AFFILIATE_DISCLOSURE.casefold() not in description.casefold():
         description = f"{description}\n\n{AFFILIATE_DISCLOSURE}" if description else AFFILIATE_DISCLOSURE
-    if len(description) > 2000:
-        raise HTTPException(status_code=422, detail="Description exceeds the maximum length after required affiliate disclosure.")
+    try:
+        validate_pin_text_fields(title=payload.title, description=description, alt_text=payload.alt_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
         existing = get_product_by_idempotency_key(idempotency_key)
@@ -353,6 +358,15 @@ def publish_product_end_to_end(
     except ContentGenerationError as exc:
         _log_workflow_failure("content_generation", exc, request_id, http_status=503)
         raise HTTPException(status_code=503, detail="Content generation failed before product persistence; retry with the same Idempotency-Key.") from exc
+
+    try:
+        validate_pin_text_fields(
+            title=generated.title,
+            description=generated.description,
+            alt_text=generated.alt_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
         product, content = create_product_with_content_version(

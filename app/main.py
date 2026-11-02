@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 from app.config import settings
 from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
 from app.pinterest import PinterestPublishError, publish_image_pin
+from app.pin_limits import validate_pin_text_fields
 
 
 @asynccontextmanager
@@ -664,6 +665,16 @@ def publish_product_content(product_id: int, content_version_id: int) -> dict[st
         content = get_content_version(product_id, content_version_id)
         if content is None:
             raise HTTPException(status_code=404, detail="Content version not found")
+
+        # Reject invalid content before reserving a publication attempt.
+        try:
+            validate_pin_text_fields(
+                title=content["title"],
+                description=content["description"],
+                alt_text=content["alt_text"],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         attempt = begin_publish_attempt(product_id=product_id, content_version_id=content_version_id, board_id=settings.pinterest_board_id)
         if attempt.get("blocked"):
