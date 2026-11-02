@@ -10,7 +10,7 @@ from app.content_generation import (
     generate_pin_content,
 )
 from app.main import app
-from app.pinterest import PinterestPublishError, publish_image_pin
+from app.pinterest import PinterestPublishError, create_pin_request
 
 # Every test request uses an explicit test-only key; production dependencies
 # are intentionally fail-closed when APP_API_KEY is absent.
@@ -38,6 +38,7 @@ def test_readiness_does_not_expose_secrets():
     assert "database_configured" in body
     assert "pinterest_configured" in body
     assert "pinterest_legacy_direct_configured" in body
+    assert "pinterest_legacy_token_present" in body
     assert "pinterest_account_workflow_configured" in body
     assert "pinterest_token_encryption_key_valid" in body
     assert "pinterest_credential_ingest_configured" in body
@@ -57,6 +58,7 @@ def test_readiness_distinguishes_legacy_and_account_workflow(monkeypatch):
 
     assert body["pinterest_configured"] is False
     assert body["pinterest_legacy_direct_configured"] is False
+    assert body["pinterest_legacy_token_present"] is False
     assert body["pinterest_account_workflow_configured"] is True
     assert body["pinterest_token_encryption_key_valid"] is True
     assert body["pinterest_credential_ingest_configured"] is True
@@ -287,7 +289,7 @@ def test_content_history_returns_saved_versions(monkeypatch):
     from app import database
 
     monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
-    monkeypatch.setattr(database, "get_product", lambda product_id: {"id": product_id})
+    monkeypatch.setattr(database, "get_product", lambda product_id: {"id": product_id, **VALID_PRODUCT})
     monkeypatch.setattr(database, "list_content_versions", lambda product_id: [
         {
             "id": 22, "product_id": product_id, "version_number": 2,
@@ -303,50 +305,42 @@ def test_content_history_returns_saved_versions(monkeypatch):
 
 
 def test_pinterest_client_uses_real_v5_contract_and_preserves_affiliate_url(monkeypatch):
-    monkeypatch.setattr(settings, "pinterest_access_token", "unit-test-token")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
     affiliate_url = "https://EXAMPLE.com/item?tag=abc%2D20&campaign=kitchen"
     calls = {}
 
     class FakeResponse:
         status_code = 201
-
+        content = b'{"id":"pin-123"}'
         def json(self):
             return {"id": "pin-123", "board_id": "board-7", "created_at": "2026-10-24T00:00:00Z"}
 
     class FakeClient:
-        def __init__(self, timeout):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
+        def __init__(self, timeout): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
         def post(self, endpoint, headers, json):
             calls.update(endpoint=endpoint, headers=headers, payload=json)
             return FakeResponse()
 
     monkeypatch.setattr("app.pinterest.httpx.Client", FakeClient)
-    result = publish_image_pin(
-        board_id="board-7",
-        title="A Tidy Kitchen",
-        description=AFFILIATE_DISCLOSURE,
-        alt_text="Wooden spice rack fixed to a kitchen wall.",
-        image_url=VALID_PRODUCT["image_url"],
-        affiliate_url=affiliate_url,
-    )
+    payload = {
+        "board_id": "board-7", "title": "A Tidy Kitchen",
+        "description": AFFILIATE_DISCLOSURE,
+        "alt_text": "Wooden spice rack fixed to a kitchen wall.",
+        "media_source": {"source_type": "image_url", "url": VALID_PRODUCT["image_url"], "is_standard": True},
+        "link": affiliate_url,
+    }
+    status_code, result = create_pin_request(access_token="vault-token", payload=payload)
+    assert status_code == 201
     assert calls["endpoint"] == "https://api.pinterest.com/v5/pins"
-    assert calls["headers"]["Authorization"] == "Bearer unit-test-token"
+    assert calls["headers"]["Authorization"] == "Bearer vault-token"
     assert calls["payload"]["media_source"]["url"] == VALID_PRODUCT["image_url"]
     assert calls["payload"]["link"] == affiliate_url
-    assert result["pin_id"] == "pin-123"
+    assert result["id"] == "pin-123"
 
 
 def test_pinterest_client_marks_5xx_as_uncertain(monkeypatch):
-    monkeypatch.setattr(settings, "pinterest_access_token", "unit-test-token")
-
     class FakeResponse:
         status_code = 500
 
@@ -365,11 +359,11 @@ def test_pinterest_client_marks_5xx_as_uncertain(monkeypatch):
 
     monkeypatch.setattr("app.pinterest.httpx.Client", FakeClient)
     try:
-        publish_image_pin(
-            board_id="board-7", title="Title", description="Description",
-            alt_text="Alt text", image_url=VALID_PRODUCT["image_url"],
-            affiliate_url=VALID_PRODUCT["affiliate_url"],
-        )
+        create_pin_request(access_token="vault-token", payload={
+            "board_id": "board-7", "title": "Title", "description": "Description",
+            "alt_text": "Alt text", "media_source": {"source_type": "image_url", "url": VALID_PRODUCT["image_url"], "is_standard": True},
+            "link": VALID_PRODUCT["affiliate_url"],
+        })
     except PinterestPublishError as exc:
         assert exc.outcome_uncertain is True
         assert exc.http_status == 500
@@ -381,13 +375,26 @@ def test_publish_routes_fail_closed_without_configured_api_key(monkeypatch):
     monkeypatch.setattr(settings, "app_api_key", None)
     payload = {"product_id": 5, "content_version_id": 12}
 
-    direct_route = client.post("/products/5/content/12/publish")
-    shorthand_route = client.post("/publish", json=payload)
+    account_headers = {"X-Pinterest-Account-ID": "pinterest:test-account"}
+    direct_route = client.post("/products/5/content/12/publish", headers=account_headers)
+    shorthand_route = client.post("/publish", json=payload, headers=account_headers)
 
     assert direct_route.status_code == 503
     assert shorthand_route.status_code == 503
     assert "authentication is not configured" in direct_route.json()["detail"]
     assert "authentication is not configured" in shorthand_route.json()["detail"]
+
+
+def test_publish_route_requires_explicit_vault_account_id(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(settings, "pinterest_board_id", "board-7")
+    response = client.post(
+        "/publish",
+        json={"product_id": 5, "content_version_id": 12},
+        headers={"X-API-Key": "private-test-api-key"},
+    )
+    assert response.status_code == 422
+    assert "X-Pinterest-Account-ID" in response.text
 
 
 def test_publish_route_needs_real_credentials(monkeypatch):
@@ -396,10 +403,10 @@ def test_publish_route_needs_real_credentials(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_board_id", None)
     response = client.post(
         "/products/5/content/12/publish",
-        headers={"X-API-Key": "private-test-api-key"},
+        headers={"X-API-Key": "private-test-api-key", "X-Pinterest-Account-ID": "pinterest:test-account"},
     )
     assert response.status_code == 503
-    assert "must be configured" in response.json()["detail"]
+    assert "PINTEREST_BOARD_ID" in response.json()["detail"]
 
 
 def test_publish_route_persists_confirmed_pin_id(monkeypatch):
@@ -415,31 +422,16 @@ def test_publish_route_persists_confirmed_pin_id(monkeypatch):
         "id": 12, "product_id": 5, "title": "Kitchen Spice Rack",
         "description": AFFILIATE_DISCLOSURE, "alt_text": "A wooden spice rack.",
     }
-    attempt = {"blocked": False, "id": 44, "status": "pending"}
     monkeypatch.setattr(database, "get_product", lambda product_id: product)
     monkeypatch.setattr(database, "get_content_version", lambda product_id, version_id: content)
-    monkeypatch.setattr(database, "begin_publish_attempt", lambda **kwargs: attempt)
-    monkeypatch.setattr(
-        main_module,
-        "publish_image_pin",
-        lambda **kwargs: {
-            "pin_id": "verified-pin-id", "http_status": 201,
-            "metadata": {"id": "verified-pin-id", "board_id": "board-7"},
-        },
-    )
-    monkeypatch.setattr(
-        database,
-        "finish_publish_attempt",
-        lambda publication_id, **kwargs: {
-            "id": publication_id,
-            "status": kwargs["status"],
-            "pinterest_pin_id": kwargs["pinterest_pin_id"],
-            "http_status": kwargs["http_status"],
-        },
-    )
+    monkeypatch.setattr(main_module, "get_pinterest_credential", lambda account_id: {"access_token": "vault-token"})
+    monkeypatch.setattr(main_module, "publish_pin_with_ledger", lambda **kwargs: {
+        "published": True, "already_published": False, "pin_id": "verified-pin-id",
+        "publication_id": 44, "http_status": 201,
+    })
     response = client.post(
         "/publish", json={"product_id": 5, "content_version_id": 12},
-        headers={"X-API-Key": "private-test-api-key"},
+        headers={"X-API-Key": "private-test-api-key", "X-Pinterest-Account-ID": "pinterest:test-account"},
     )
     assert response.status_code == 200
     assert response.json()["published"] is True
@@ -454,17 +446,19 @@ def test_publish_route_does_not_duplicate_successful_pin(monkeypatch):
     monkeypatch.setattr(settings, "database_url", "postgresql://not-used")
     monkeypatch.setattr(settings, "pinterest_access_token", "test-token")
     monkeypatch.setattr(settings, "pinterest_board_id", "board-7")
-    monkeypatch.setattr(database, "get_product", lambda product_id: {"id": product_id})
-    monkeypatch.setattr(database, "get_content_version", lambda product_id, version_id: {"id": version_id})
-    monkeypatch.setattr(database, "begin_publish_attempt", lambda **kwargs: {
-        "blocked": True, "id": 44, "status": "succeeded", "pinterest_pin_id": "previous-pin-id"
+    monkeypatch.setattr(database, "get_product", lambda product_id: {"id": product_id, **VALID_PRODUCT})
+    monkeypatch.setattr(database, "get_content_version", lambda product_id, version_id: {
+        "id": version_id, "title": "A valid title", "description": "A valid description",
+        "alt_text": "A valid alt text",
     })
-    def must_not_publish(**kwargs):
-        raise AssertionError("duplicate Pinterest call should be blocked")
-    monkeypatch.setattr(main_module, "publish_image_pin", must_not_publish)
+    monkeypatch.setattr(main_module, "get_pinterest_credential", lambda account_id: {"access_token": "vault-token"})
+    monkeypatch.setattr(main_module, "publish_pin_with_ledger", lambda **kwargs: {
+        "published": True, "already_published": True, "pin_id": "previous-pin-id",
+        "publication_id": 44, "http_status": 201,
+    })
     response = client.post(
         "/publish", json={"product_id": 5, "content_version_id": 12},
-        headers={"X-API-Key": "private-test-api-key"},
+        headers={"X-API-Key": "private-test-api-key", "X-Pinterest-Account-ID": "pinterest:test-account"},
     )
     assert response.status_code == 200
     assert response.json()["already_published"] is True
@@ -675,15 +669,21 @@ def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(mon
         persistence.append(kwargs) or (
             {"id": 101, "product_name": kwargs["product_name"]},
             {"id": 202, "product_id": 101},
+            {"id": 303, "product_id": 101, "content_version_id": 202,
+             "board_id": "board-404", "account_id": "pinterest:test-account", "status": "pending"},
         )
     ))
-    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {
-        "blocked": False, "id": 303, "status": "pending",
-    })
-    monkeypatch.setattr(workflow, "finish_publish_attempt", lambda publication_id, **kwargs: {
-        "id": publication_id, "status": kwargs["status"],
-        "pinterest_pin_id": kwargs.get("pinterest_pin_id"), "http_status": kwargs.get("http_status"),
-    })
+    import app.publishing as publishing
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: (
+        201, {"id": "pin-505", "board_id": kwargs["payload"]["board_id"]}
+    ))
+    finishes = []
+    monkeypatch.setattr(publishing, "finish_publish_attempt", lambda publication_id, **kwargs: (
+        finishes.append((publication_id, kwargs)) or {
+            "id": publication_id, "status": kwargs["status"],
+            "pinterest_pin_id": kwargs["pinterest_pin_id"], "http_status": kwargs["http_status"],
+        }
+    ))
 
     def pinterest_request(method, path, token, *, body=None):
         if method == "GET" and path == "/user_account":
@@ -692,9 +692,6 @@ def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(mon
             return 200, {"items": []}
         if method == "POST" and path == "/boards":
             return 201, {"id": "board-404"}
-        if method == "POST" and path == "/pins":
-            assert body["link"] == "https://example.com/affiliate"
-            return 201, {"id": "pin-505", "created_at": "2026-10-25T00:00:00Z"}
         raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
 
     monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
@@ -717,6 +714,8 @@ def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(mon
     assert response.json()["published"] is True
     assert len(persistence) == 1
     assert persistence[0]["idempotency_key"] == "request-key-success-123"
+    assert persistence[0]["publication_board_id"] == "board-404"
+    assert finishes[0][1]["status"] == "succeeded"
 
 
 def test_live_diagnostics_requires_api_key_and_never_runs_without_auth(monkeypatch):
@@ -985,14 +984,17 @@ def test_end_to_end_board_failure_allows_same_idempotency_key_retry(monkeypatch)
         lambda **kwargs: persistence.append(kwargs) or (
             {"id": 101, "product_name": kwargs["product_name"]},
             {"id": 202, "product_id": 101},
+            {"id": 303, "product_id": 101, "content_version_id": 202,
+             "board_id": "board-7", "account_id": "pinterest:test-account", "status": "pending"},
         ),
     )
-    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {
-        "blocked": False, "id": 303, "status": "pending",
-    })
-    monkeypatch.setattr(workflow, "finish_publish_attempt", lambda attempt_id, **kwargs: {
-        "id": attempt_id, "status": kwargs["status"],
-        "pinterest_pin_id": kwargs.get("pinterest_pin_id"), "http_status": kwargs.get("http_status"),
+    import app.publishing as publishing
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: (
+        201, {"id": "pin-created-after-retry", "board_id": kwargs["payload"]["board_id"]}
+    ))
+    monkeypatch.setattr(publishing, "finish_publish_attempt", lambda publication_id, **kwargs: {
+        "id": publication_id, "status": kwargs["status"],
+        "pinterest_pin_id": kwargs["pinterest_pin_id"], "http_status": kwargs["http_status"],
     })
 
     def pinterest_request(method, path, token, *, body=None):
@@ -1003,8 +1005,6 @@ def test_end_to_end_board_failure_allows_same_idempotency_key_retry(monkeypatch)
             if len(board_lookups) == 1:
                 raise HTTPException(status_code=502, detail="board lookup failed")
             return 200, {"items": [{"id": "board-7", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
-        if path == "/pins":
-            return 201, {"id": "pin-created-after-retry", "created_at": "2026-10-27T00:00:00Z"}
         raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
 
     monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
@@ -1058,28 +1058,21 @@ def test_end_to_end_missing_pin_id_is_marked_uncertain(monkeypatch):
     monkeypatch.setattr(workflow, "create_product_with_content_version", lambda **kwargs: (
         {"id": 101, "product_name": kwargs["product_name"]},
         {"id": 202, "product_id": 101},
+        {"id": 303, "product_id": 101, "content_version_id": 202,
+         "board_id": "board-7", "account_id": "pinterest:test-account", "status": "pending"},
     ))
-    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {
-        "blocked": False, "id": 303, "status": "pending",
-    })
+    monkeypatch.setattr(workflow, "_pinterest_request", lambda method, path, token, **kwargs: (
+        (200, {"id": "test-user"}) if path == "/user_account" else
+        (200, {"items": [{"id": "board-7", "name": "Modern Living Hub | Kitchen & Home Organization"}]})
+    ))
+    from app.pinterest import PinterestPublishError
+    import app.publishing as publishing
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: (201, {}))
     finishes = []
-    monkeypatch.setattr(workflow, "finish_publish_attempt", lambda attempt_id, **kwargs: (
-        finishes.append({"attempt_id": attempt_id, **kwargs}) or {
-            "id": attempt_id, "status": kwargs["status"],
-            "pinterest_pin_id": kwargs.get("pinterest_pin_id"),
-        }
+    monkeypatch.setattr(publishing, "finish_publish_attempt", lambda publication_id, **kwargs: (
+        finishes.append(kwargs) or {"id": publication_id, **kwargs}
     ))
 
-    def pinterest_request(method, path, token, *, body=None):
-        if path == "/user_account":
-            return 200, {"id": "test-user"}
-        if path == "/boards?page_size=100":
-            return 200, {"items": [{"id": "board-7", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
-        if path == "/pins":
-            return 201, {"created_at": "2026-10-26T00:00:00Z"}
-        raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
-
-    monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
     response = client.post(
         "/workflow/publish-product",
         json={
@@ -1095,8 +1088,8 @@ def test_end_to_end_missing_pin_id_is_marked_uncertain(monkeypatch):
     )
 
     assert response.status_code == 502
-    assert "outcome is uncertain" in response.json()["detail"]
-    assert any(item["status"] == "unknown" and item.get("error_code") == "missing_pin_id" for item in finishes)
+    assert "outcome may be uncertain" in response.json()["detail"]
+    assert any(item["status"] == "unknown" and item["error_code"] == "missing_pin_id" for item in finishes)
 
 
 

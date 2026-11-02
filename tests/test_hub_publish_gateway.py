@@ -16,22 +16,20 @@ def test_hub_pin_gateway_persists_ledger_and_enforces_disclosure(monkeypatch):
         return (
             {"id": 41, "product_name": kwargs["product_name"]},
             {"id": 42, "product_id": 41, "title": kwargs["title"]},
+            {"blocked": False, "id": 43, "product_id": 41, "content_version_id": 42,
+             "board_id": "board-123", "account_id": "pinterest:123", "status": "pending"},
         )
 
     monkeypatch.setattr(database, "create_product_with_content_version", create_product)
-    monkeypatch.setattr(workflow, "begin_publish_attempt", lambda **kwargs: {"blocked": False, "id": 43})
-    finish_calls = []
-    def finish(publication_id, **kwargs):
-        finish_calls.append((publication_id, kwargs))
-        return {"id": publication_id, "status": kwargs["status"], "pinterest_pin_id": kwargs["pinterest_pin_id"], "http_status": kwargs["http_status"]}
-
-    monkeypatch.setattr(workflow, "finish_publish_attempt", finish)
+    gateway_calls = []
+    def gateway(**kwargs):
+        gateway_calls.append(kwargs)
+        return {"published": True, "already_published": False, "pin_id": "pin-123", "publication_id": 43, "board_id": kwargs["board_id"], "http_status": 201}
+    monkeypatch.setattr(workflow, "publish_pin_with_ledger", gateway)
     pinterest_calls = []
     def pinterest_request(method, path, token, *, body=None):
         pinterest_calls.append((method, path, token, body))
-        if method == "GET":
-            return 200, {"id": "123"}
-        return 201, {"id": "pin-123", "created_at": "2026-11-01T00:00:00Z"}
+        return 200, {"id": "123"}
 
     monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
 
@@ -63,11 +61,11 @@ def test_hub_pin_gateway_persists_ledger_and_enforces_disclosure(monkeypatch):
         "Affiliate disclosure: This post contains affiliate links; I may earn a commission at no extra cost to you."
     )
     assert pinterest_calls[0][0:3] == ("GET", "/user_account", "test-access-token")
-    assert pinterest_calls[1][0:3] == ("POST", "/pins", "test-access-token")
-    assert pinterest_calls[1][3]["link"] == affiliate_url
-    assert pinterest_calls[1][3]["alt_text"] == "A three-tier rack holding labeled spice jars."
-    assert finish_calls[0][0] == 43
-    assert finish_calls[0][1]["status"] == "succeeded"
+    assert len(pinterest_calls) == 1  # account preflight only; shared gateway owns the Pin write
+    assert gateway_calls[0]["payload"]["link"] == affiliate_url
+    assert gateway_calls[0]["payload"]["alt_text"] == "A three-tier rack holding labeled spice jars."
+    assert gateway_calls[0]["access_token"] == "test-access-token"
+    assert gateway_calls[0]["reserved_attempt"]["id"] == 43
 
 
 def test_hub_pin_gateway_requires_idempotency_key(monkeypatch):

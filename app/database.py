@@ -171,11 +171,14 @@ def create_product_with_content_version(
     title: str,
     description: str,
     alt_text: str,
-) -> tuple[dict, dict]:
-    """Atomically persist a product and its first content version.
+    publication_board_id: str | None = None,
+    publication_account_id: str | None = None,
+) -> tuple[dict, dict] | tuple[dict, dict, dict]:
+    """Atomically persist product, first content version, and optional ledger reservation.
 
-    Both inserts share one pooled connection/transaction so a failed content
-    insert cannot leave an idempotency key attached to a half-created product.
+    When a board is supplied, the pending publication row is inserted in the
+    same transaction as the product/content rows. A failure cannot consume an
+    idempotency key without also reserving the corresponding publication.
     """
     with connection() as conn:
         product = conn.execute(
@@ -200,6 +203,17 @@ def create_product_with_content_version(
                 pin_idea, title, description, alt_text,
             ),
         ).fetchone()
+        if publication_board_id:
+            publication = conn.execute(
+                """
+                INSERT INTO pin_publications
+                    (product_id, content_version_id, board_id, account_id, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+                RETURNING *
+                """,
+                (product["id"], content["id"], publication_board_id, publication_account_id),
+            ).fetchone()
+            return dict(product), dict(content), dict(publication)
         return dict(product), dict(content)
 
 
@@ -250,6 +264,13 @@ def begin_publish_attempt(
             (content_version_id, board_id),
         ).fetchone()
         if row:
+            # The publication key is version+board. Never treat a prior attempt
+            # owned by another connected Pinterest account as this account's Pin.
+            if account_id and row.get("account_id") != account_id:
+                # NULL ownership denotes a legacy row whose Pinterest account
+                # cannot be proven. Never report it as this account's Pin or
+                # silently adopt it; require explicit operator reconciliation.
+                return {"blocked": True, "account_mismatch": True, **dict(row)}
             state = row["status"]
             if state in {"succeeded", "pending", "unknown"}:
                 return {"blocked": True, **dict(row)}
@@ -298,7 +319,7 @@ def finish_publish_attempt(
             UPDATE pin_publications
             SET status = %s, pinterest_pin_id = %s, http_status = %s,
                 error_code = %s, response_metadata = %s::jsonb, updated_at = now()
-            WHERE id = %s
+            WHERE id = %s AND status = 'pending'
             RETURNING *
             """,
             (
@@ -307,7 +328,7 @@ def finish_publish_attempt(
             ),
         ).fetchone()
         if row is None:
-            raise RuntimeError("publish attempt was not found")
+            raise RuntimeError("publish attempt is not pending or was not found")
         return dict(row)
 
 

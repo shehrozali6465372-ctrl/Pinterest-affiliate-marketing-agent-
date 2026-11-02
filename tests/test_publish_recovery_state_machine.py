@@ -4,8 +4,9 @@ from app.database import begin_publish_attempt
 
 
 class FakeCursor:
-    def __init__(self, state=None):
+    def __init__(self, state=None, account_id="pinterest:test"):
         self.state = state
+        self.account_id = account_id
         self.last_sql = ""
         self.calls = []
 
@@ -18,7 +19,7 @@ class FakeCursor:
         if "SELECT * FROM pin_publications" in self.last_sql:
             if self.state is None:
                 return None
-            return {"id": 55, "product_id": 10, "content_version_id": 20, "board_id": "board-test", "status": self.state, "attempt_count": 1, "pinterest_pin_id": None}
+            return {"id": 55, "product_id": 10, "content_version_id": 20, "board_id": "board-test", "status": self.state, "attempt_count": 1, "pinterest_pin_id": None, "account_id": self.account_id}
         if "UPDATE pin_publications" in self.last_sql:
             return {"id": 55, "product_id": 10, "content_version_id": 20, "board_id": "board-test", "status": "pending", "attempt_count": 2}
         if "INSERT INTO pin_publications" in self.last_sql:
@@ -37,9 +38,9 @@ class FakeConnectionContext:
         return False
 
 
-def run_with_state(monkeypatch, state):
+def run_with_state(monkeypatch, state, account_id="pinterest:test"):
     import app.database as database
-    cursor = FakeCursor(state=state)
+    cursor = FakeCursor(state=state, account_id=account_id)
     monkeypatch.setattr(database, "connection", lambda: FakeConnectionContext(cursor))
     result = begin_publish_attempt(product_id=10, content_version_id=20, board_id="board-test", account_id="pinterest:test")
     return result, cursor
@@ -71,3 +72,11 @@ def test_failed_publication_can_reserve_one_retry(monkeypatch):
     assert result["blocked"] is False
     assert result["status"] == "pending"
     assert any(sql.startswith("UPDATE pin_publications") for sql, _ in cursor.calls)
+
+
+def test_legacy_publication_with_unknown_account_owner_blocks_adoption(monkeypatch):
+    result, cursor = run_with_state(monkeypatch, "succeeded", account_id=None)
+    assert result["blocked"] is True
+    assert result["account_mismatch"] is True
+    assert result["account_id"] is None
+    assert not any(sql.startswith("UPDATE pin_publications") or sql.startswith("INSERT INTO pin_publications") for sql, _ in cursor.calls)

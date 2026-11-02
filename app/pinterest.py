@@ -32,34 +32,55 @@ def image_media_source(image_url: str) -> dict[str, object]:
         raise PinterestPublishError("Generated image data is unexpectedly small; no Pinterest request was sent.", outcome_uncertain=False, error_code="image_data_too_small")
     return {"source_type": "image_base64", "content_type": mime, "data": encoded, "is_standard": True}
 
-def publish_image_pin(*, board_id: str, title: str, description: str, alt_text: str, image_url: str, affiliate_url: str) -> dict[str, object]:
-    if not settings.pinterest_access_token:
-        raise PinterestPublishError("PINTEREST_ACCESS_TOKEN is not configured.", outcome_uncertain=False, error_code="missing_access_token")
-    if not board_id.strip():
-        raise PinterestPublishError("PINTEREST_BOARD_ID is not configured.", outcome_uncertain=False, error_code="missing_board_id")
+def create_pin_request(*, access_token: str, payload: dict[str, object]) -> tuple[int, dict[str, object]]:
+    """The single outbound Pinterest Pin-creation boundary used by every route.
+
+    Validation happens before network I/O. Transport/server failures are marked
+    uncertain so callers must reconcile instead of blindly retrying.
+    """
+    if not access_token or not access_token.strip():
+        raise PinterestPublishError("Pinterest access token is not configured.", outcome_uncertain=False, error_code="missing_access_token")
     try:
-        validate_pin_text_fields(title=title, description=description, alt_text=alt_text)
+        validate_pin_text_fields(
+            title=payload.get("title"),
+            description=payload.get("description"),
+            alt_text=payload.get("alt_text"),
+        )
     except ValueError as exc:
         raise PinterestPublishError(str(exc), outcome_uncertain=False, error_code="pin_text_limit_exceeded") from exc
+    for required in ("board_id", "media_source", "link"):
+        if not payload.get(required):
+            raise PinterestPublishError(f"Pinterest Pin field {required} is required.", outcome_uncertain=False, error_code=f"missing_{required}")
     endpoint = f"{settings.pinterest_api_base_url.rstrip('/')}/pins"
-    payload = {"board_id": board_id, "title": title, "description": description, "alt_text": alt_text, "media_source": image_media_source(image_url), "link": affiliate_url}
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
-            response = client.post(endpoint, headers={"Authorization": f"Bearer {settings.pinterest_access_token}", "Content-Type": "application/json"}, json=payload)
+            response = client.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+                json=payload,
+            )
     except httpx.RequestError as exc:
         raise PinterestPublishError("Pinterest request outcome is uncertain; do not retry blindly.", outcome_uncertain=True, error_code="transport_outcome_unknown") from exc
     if response.status_code >= 400:
-        uncertain = response.status_code >= 500
-        raise PinterestPublishError("Pinterest rejected the request." if not uncertain else "Pinterest returned a server error; the outcome may be uncertain.", outcome_uncertain=uncertain, http_status=response.status_code, error_code=f"pinterest_http_{response.status_code}")
+        # HTTP 408 can be emitted after the provider has begun processing the
+        # request. Treat it like a transport/5xx ambiguity: never auto-retry.
+        uncertain = response.status_code == 408 or response.status_code >= 500
+        raise PinterestPublishError(
+            "Pinterest rejected the request." if not uncertain else "Pinterest returned a server error; the outcome may be uncertain.",
+            outcome_uncertain=uncertain,
+            http_status=response.status_code,
+            error_code=f"pinterest_http_{response.status_code}",
+        )
     try:
-        body = response.json()
+        body = response.json() if getattr(response, "content", b"{ }") else {}
     except ValueError as exc:
-        raise PinterestPublishError("Pinterest returned a non-JSON response; the publish outcome is uncertain.", outcome_uncertain=True, http_status=response.status_code, error_code="invalid_provider_response") from exc
-    pin_id = body.get("id") if isinstance(body, dict) else None
-    if not isinstance(pin_id, str) or not pin_id.strip():
+        raise PinterestPublishError("Pinterest returned invalid JSON; the publish outcome is uncertain.", outcome_uncertain=True, http_status=response.status_code, error_code="invalid_provider_response") from exc
+    if not isinstance(body, dict) or not isinstance(body.get("id"), str) or not body["id"].strip():
         raise PinterestPublishError("Pinterest did not return a Pin ID; the publish outcome is uncertain.", outcome_uncertain=True, http_status=response.status_code, error_code="missing_pin_id")
-    metadata = {"id": pin_id, "board_id": body.get("board_id") if isinstance(body.get("board_id"), str) else board_id, "created_at": body.get("created_at") if isinstance(body.get("created_at"), str) else None}
-    return {"pin_id": pin_id, "http_status": response.status_code, "metadata": metadata}
+    return response.status_code, body
+
+
+
 
 
 class PinterestReadError(RuntimeError):
