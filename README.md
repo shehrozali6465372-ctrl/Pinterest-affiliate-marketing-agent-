@@ -41,7 +41,7 @@ Set a strong random `APP_API_KEY` in Render environment variables before exposin
 - `POST /workflow/publish-product`: generates image/copy, then uses the same publication-ledger gateway; requires `X-API-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body.
 - `POST /workflow/publish-hub-pin`: Hub service publishing entry point; requires `X-Credential-Ingest-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body.
 
-All Pin-creation routes share one publication-ledger orchestrator. A pending, uncertain, or successful attempt blocks automatic duplicate creation. The compatibility endpoints select the encrypted OAuth credential with `X-Pinterest-Account-ID`; the legacy plaintext `PINTEREST_ACCESS_TOKEN` is not used for publishing.
+All Pin-creation routes share one publication-ledger orchestrator. The generated and Hub workflows insert product, content, and the pending publication reservation in one Neon transaction before the Pinterest POST. A pending, uncertain, or successful attempt blocks automatic duplicate creation. The compatibility endpoints select the encrypted OAuth credential with `X-Pinterest-Account-ID`; the legacy plaintext `PINTEREST_ACCESS_TOKEN` is not used for publishing.
 - `POST /learning-loop/run`: protected, real account-scoped Pinterest analytics ingestion; persists snapshots and descriptive aggregates. It does not train predictive ML.\n- `POST /learning-loop` (legacy): returns 501; use `/learning-loop/run` for the real Learning Loop.
 
 A timed-out Pinterest request or ambiguous server error is recorded as uncertain; automatic retry is blocked. Check the Pinterest board before attempting a retry to avoid accidental duplicate Pins.

@@ -194,7 +194,7 @@ def publish_hub_pin(
     _pinterest_request("GET", "/user_account", credential["access_token"])
 
     try:
-        product, content = create_product_with_content_version(
+        product, content, attempt = create_product_with_content_version(
             product_name=payload.title,
             product_details=description,
             image_url=str(payload.image_url),
@@ -207,6 +207,8 @@ def publish_hub_pin(
             title=payload.title,
             description=description,
             alt_text=payload.alt_text,
+            publication_board_id=payload.board_id,
+            publication_account_id=payload.account_id,
         )
     except Exception as exc:
         _log_workflow_failure("hub_publication_persistence", exc, idempotency_key)
@@ -225,6 +227,7 @@ def publish_hub_pin(
             product_id=product["id"], content_version_id=content["id"],
             board_id=payload.board_id, account_id=payload.account_id,
             access_token=credential["access_token"], payload=body,
+            reserved_attempt=attempt,
         )
     except PublicationConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -337,7 +340,7 @@ def publish_product_end_to_end(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        product, content = create_product_with_content_version(
+        product, content, attempt = create_product_with_content_version(
             product_name=payload.product_name,
             product_details=payload.product_details,
             image_url=None,
@@ -350,6 +353,8 @@ def publish_product_end_to_end(
             title=generated.title,
             description=generated.description,
             alt_text=generated.alt_text,
+            publication_board_id=board_id,
+            publication_account_id=payload.account_id,
         )
     except Exception as exc:
         # psycopg exposes structured diagnostics for constraint failures. These
@@ -369,6 +374,7 @@ def publish_product_end_to_end(
             product_id=product["id"], content_version_id=content["id"],
             board_id=board_id, account_id=payload.account_id,
             access_token=token, payload=body,
+            reserved_attempt=attempt,
         )
     except PublicationConflict as exc:
         raise HTTPException(status_code=409, detail="A previous publish attempt is pending or uncertain. Check the Pinterest board before retrying.") from exc

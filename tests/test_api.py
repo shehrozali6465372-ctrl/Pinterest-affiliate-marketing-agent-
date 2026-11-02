@@ -669,6 +669,7 @@ def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(mon
         persistence.append(kwargs) or (
             {"id": 101, "product_name": kwargs["product_name"]},
             {"id": 202, "product_id": 101},
+            {"id": 303, "status": "pending"},
         )
     ))
     def publish_once(**kwargs):
@@ -976,6 +977,7 @@ def test_end_to_end_board_failure_allows_same_idempotency_key_retry(monkeypatch)
         lambda **kwargs: persistence.append(kwargs) or (
             {"id": 101, "product_name": kwargs["product_name"]},
             {"id": 202, "product_id": 101},
+            {"id": 303, "status": "pending"},
         ),
     )
     monkeypatch.setattr(workflow, "publish_pin_with_ledger", lambda **kwargs: {
@@ -1046,6 +1048,7 @@ def test_end_to_end_missing_pin_id_is_marked_uncertain(monkeypatch):
     monkeypatch.setattr(workflow, "create_product_with_content_version", lambda **kwargs: (
         {"id": 101, "product_name": kwargs["product_name"]},
         {"id": 202, "product_id": 101},
+        {"id": 303, "status": "pending"},
     ))
     monkeypatch.setattr(workflow, "_pinterest_request", lambda method, path, token, **kwargs: (
         (200, {"id": "test-user"}) if path == "/user_account" else

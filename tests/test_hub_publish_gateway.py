@@ -16,6 +16,7 @@ def test_hub_pin_gateway_persists_ledger_and_enforces_disclosure(monkeypatch):
         return (
             {"id": 41, "product_name": kwargs["product_name"]},
             {"id": 42, "product_id": 41, "title": kwargs["title"]},
+            {"id": 43, "status": "pending"},
         )
 
     monkeypatch.setattr(database, "create_product_with_content_version", create_product)

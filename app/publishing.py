@@ -27,18 +27,28 @@ def publish_pin_with_ledger(
     account_id: str,
     access_token: str,
     payload: dict[str, object],
+    reserved_attempt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Reserve, publish once, and persist the outcome through one shared path.
 
     A pending/unknown/succeeded row is never retried. Provider transport and 5xx
     failures remain unknown, so callers must reconcile rather than retry blindly.
     """
-    attempt = begin_publish_attempt(
+    attempt = reserved_attempt or begin_publish_attempt(
         product_id=product_id,
         content_version_id=content_version_id,
         board_id=board_id,
         account_id=account_id,
     )
+    if reserved_attempt is not None and (
+        reserved_attempt.get("blocked")
+        or reserved_attempt.get("status") != "pending"
+        or reserved_attempt.get("product_id") != product_id
+        or reserved_attempt.get("content_version_id") != content_version_id
+        or reserved_attempt.get("board_id") != board_id
+        or reserved_attempt.get("account_id") != account_id
+    ):
+        raise PublicationConflict(reserved_attempt)
     if attempt.get("blocked"):
         if attempt.get("account_mismatch"):
             raise PublicationConflict(attempt)

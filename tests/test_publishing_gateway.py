@@ -158,3 +158,29 @@ def test_uncertain_success_recording_does_not_overwrite_a_committed_success(monk
         _call()
 
     assert state == {"status": "succeeded", "pin_id": "committed-pin"}
+
+
+def test_shared_gateway_uses_atomic_pre_reserved_attempt_without_second_reservation(monkeypatch):
+    reserved = {
+        "blocked": False, "id": 101, "status": "pending", "product_id": 10,
+        "content_version_id": 20, "board_id": "board-1", "account_id": "pinterest:account-1",
+    }
+    monkeypatch.setattr(publishing, "begin_publish_attempt", lambda **kwargs: pytest.fail("attempt was already reserved atomically"))
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: (201, {"id": "pin-atomic"}))
+    monkeypatch.setattr(publishing, "finish_publish_attempt", lambda publication_id, **kwargs: {
+        "id": publication_id, "status": kwargs["status"],
+        "pinterest_pin_id": kwargs["pinterest_pin_id"], "http_status": kwargs["http_status"],
+    })
+
+    result = publishing.publish_pin_with_ledger(
+        product_id=10,
+        content_version_id=20,
+        board_id="board-1",
+        account_id="pinterest:account-1",
+        access_token="vault-token",
+        payload=_payload(),
+        reserved_attempt=reserved,
+    )
+
+    assert result["pin_id"] == "pin-atomic"
+    assert result["publication_id"] == 101
