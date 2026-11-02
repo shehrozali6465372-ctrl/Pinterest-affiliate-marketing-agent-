@@ -83,6 +83,11 @@ def test_deepseek_request_disables_thinking_for_structured_output(monkeypatch):
     assert calls["payload"]["max_tokens"] == 2400
     assert calls["payload"]["stream"] is False
     assert calls["payload"]["messages"][1]["content"][1]["type"] == "image_url"
+    prompt = calls["payload"]["messages"][1]["content"][0]["text"]
+    assert "description 800" in prompt
+    assert "title 100" in prompt
+    assert "alt_text 500" in prompt
+    assert "exact JSON shape" in prompt
 
 
 def test_truncated_json_reports_token_limit_without_logging_content(monkeypatch, caplog):

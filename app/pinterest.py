@@ -5,6 +5,7 @@ import re
 from urllib.parse import quote
 import httpx
 from app.config import settings
+from app.pin_limits import validate_pin_text_fields
 
 class PinterestPublishError(RuntimeError):
     """Error during publish, with explicit certainty about external side effects."""
@@ -36,6 +37,10 @@ def publish_image_pin(*, board_id: str, title: str, description: str, alt_text: 
         raise PinterestPublishError("PINTEREST_ACCESS_TOKEN is not configured.", outcome_uncertain=False, error_code="missing_access_token")
     if not board_id.strip():
         raise PinterestPublishError("PINTEREST_BOARD_ID is not configured.", outcome_uncertain=False, error_code="missing_board_id")
+    try:
+        validate_pin_text_fields(title=title, description=description, alt_text=alt_text)
+    except ValueError as exc:
+        raise PinterestPublishError(str(exc), outcome_uncertain=False, error_code="pin_text_limit_exceeded") from exc
     endpoint = f"{settings.pinterest_api_base_url.rstrip('/')}/pins"
     payload = {"board_id": board_id, "title": title, "description": description, "alt_text": alt_text, "media_source": image_media_source(image_url), "link": affiliate_url}
     try:

@@ -20,6 +20,7 @@ from app.database import (
 )
 from app.media_generation import ImageGenerationError, generate_and_host_pin_image
 from app.pinterest import image_media_source
+from app.pin_limits import PIN_DESCRIPTION_MAX_LENGTH, PIN_TITLE_MAX_LENGTH, PIN_ALT_TEXT_MAX_LENGTH, validate_pin_text_fields
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflow", tags=["end-to-end"])
@@ -40,9 +41,9 @@ def _require_credential_ingest_key(
 class HubPinPublishInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
     board_id: str = Field(min_length=1, max_length=200)
-    title: str = Field(min_length=1, max_length=100)
-    description: str = Field(default="", max_length=2000)
-    alt_text: str = Field(min_length=1, max_length=500)
+    title: str = Field(min_length=1, max_length=PIN_TITLE_MAX_LENGTH)
+    description: str = Field(default="", max_length=PIN_DESCRIPTION_MAX_LENGTH)
+    alt_text: str = Field(min_length=1, max_length=PIN_ALT_TEXT_MAX_LENGTH)
     image_url: HttpUrl
     destination_url: str = Field(min_length=8, max_length=4096)
 
@@ -102,6 +103,18 @@ class ProductWorkflowInput(BaseModel):
 
 
 def _pinterest_request(method: str, path: str, token: str, *, body: dict | None = None) -> tuple[int, dict]:
+    # Enforce Pinterest Pin text limits at the final outbound API boundary too.
+    if method.upper() == "POST" and path == "/pins" and isinstance(body, dict) and all(
+        key in body for key in ("title", "description", "alt_text")
+    ):
+        try:
+            validate_pin_text_fields(
+                title=body.get("title"),
+                description=body.get("description"),
+                alt_text=body.get("alt_text"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
             response = client.request(
