@@ -213,3 +213,88 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - Hub PR #10 merged as `0ebd8f1b3c329fff80011559f9fac919eb17bead`: adds a mocked end-to-end regression where the first read-only Pinterest account lookup returns 401, Hub sends exactly one authenticated refresh request using server-side client credentials, retries the read-only account lookup once, and does not expose the client secret. Pinterest Credential Security workflow passed on head `45df539c332dc2290606d905aa09101f6ad0ba49`.
 - These changes improve and test the recovery path; they do **not** constitute a real production token rotation. At the last known metadata check the access token expiry was 2026-11-27 and refresh-token expiry 2026-12-27, so no natural expiry-triggered refresh has yet occurred. Do not force expiry. A live refresh before natural expiry would rotate the production credential and requires explicit owner approval; after it occurs, verify successful Hub account lookup and updated non-secret Neon expiry/updated_at metadata. **PB-05 remains the sole OPEN technical blocker until that live proof exists.**
 - No production token was decrypted, sent to Pinterest, refreshed, or rotated. No production DB row was modified. No Pin or board was created or published. Test PRs are test-only; no deployment was needed for these test changes.
+
+---
+
+## Authoritative checkpoint — 2026-11-02 19:39 PKT
+
+This checkpoint supersedes older deployment/CI snapshots above where the same facts conflict. It records evidence inspected on 2026-11-02; it does not authorize additional production side effects.
+
+### Current mainline and production deployments
+
+- Agent repository default branch `main` HEAD: `23729244497497fa9629b02842e93917b55cc2e6` (Pinterest Pin text-limit enforcement).
+- Agent Render service `srv-dbe6psoae00c73c3nhgg`, workspace `3rd render 3500`: deployment `dep-dbk5jqjbc2fs73eg2280` is **LIVE** on the exact `23729244497497fa9629b02842e93917b55cc2e6` commit. This is deployment evidence, not a claim that every product workflow has passed production E2E.
+- Modern Living Hub Render service `srv-dabs358n74is7389jut0`, workspace `Render`: latest inspected deployment `dep-dbjmirrm8hqs73fv18v0` is **LIVE** on commit `d164bcc6462d269abdcb53f57f144f522d148915` (canonical Agent publishing gateway integration).
+- Do not touch the separate `Atoz product hub website` Render account/workspace.
+
+### Latest mainline CI — verified
+
+For Agent main HEAD `23729244497497fa9629b02842e93917b55cc2e6`:
+- Python tests run `41418811893`: **success**; pytest job and all steps passed.
+- Python CI run `41418812084`: **success**; test job and all steps passed.
+- Pinterest Learning Loop scheduled run `41436393136`: **success**; protected production endpoint call and configuration checks passed.
+
+Run links:
+- https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/41418811893
+- https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/41418812084
+- https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/41436393136
+
+### Real Learning Loop result — 2026-11-02
+
+The successful scheduled production workflow called the protected `POST /learning-loop/run` endpoint for the connected Pinterest account and returned:
+- `ok=true`; `pins_checked=2`; `snapshots_saved=2`.
+- Period: `2026-10-03` through `2026-11-02`.
+- Real returned aggregate metrics: impressions `15`, saves `0`, outbound clicks `5`, save rate `0.0`, outbound click rate `0.3333`.
+- `learning_status=analytics_ingested_descriptive_evaluation_only`; `model_trained=false`.
+
+This verifies a real analytics-ingestion run and two saved snapshots. It does **not** establish a trained predictive ML model or prove revenue/engagement lift. Keep ML training deferred until adequate historical data and time-aware evaluation exist.
+
+### Mainline changes now deployed
+
+- PR #52 / commit `467af321b5eb5eb742514fb40ebbd4c808d077f2`: fail-closed API-key configuration, unknown analytics metrics preserved as null, board pagination, canonical Hub publishing gateway backed by the Neon publication ledger, and Cloudflare image persistence work at that commit.
+- PR #53 / commit `b8388eddc1c98b21f79245acc4afe035012fb9f0`: generated image bytes are sent directly to Pinterest as Base64 media; generated workflow image is not persisted to Cloudflare Images. This supersedes the earlier PR #52 Cloudflare Images implementation for generated Pin media.
+- PR #54 / main commit `23729244497497fa9629b02842e93917b55cc2e6`: centralized Pin text limits and boundary validation: title 100, description 800, alt text 500; affiliate disclosure remains within the description limit; oversized text is rejected before Pinterest API calls.
+- Current Agent mainline deployment is on `2372924`; no claim is made here that a Copco Pin was published by these code changes.
+
+### Current in-progress branch — PR #55
+
+- PR #55, `Phase 1: centralize Pinterest Pin creation boundary`, is **OPEN and DRAFT**, branch `phase1/pinterest-pin-write-gateway`.
+- Latest inspected PR head: `be517c9fdb15cd0690b750c4b699b5e9de3d93aa`. It is not merged into `main` and is not part of the Render deployment listed above.
+- Scope includes a shared outbound Pin-creation boundary, shared publication-ledger operation, atomic product/content/publication reservation, encrypted Neon credential selection for legacy publishing routes, and fail-closed handling for unknown outcomes.
+- PR description reports 143 passed / 6 skipped on an earlier branch commit `d4c75be`; the current PR head `be517c9` still needs its own CI and review. Do not treat earlier test results as exact-head verification.
+- API compatibility change: legacy publishing routes require `X-Pinterest-Account-ID` to select the encrypted Neon credential.
+- No production DB write, live Pinterest request, AI-provider call, Pin publish, merge, or deployment was reported for this PR. Keep it draft until exact-head checks and review are clean.
+
+### Blocker/status reconciliation
+
+Use this checkpoint and the latest owner-approved status above as the current project status; do not resurrect stale older entries below:
+- PB-03, PB-04, PB-06, PB-07, PB-10, PB-13: **CLOSED** according to the owner-approved 2026-10-30 checkpoint and subsequent verified work. PB-06 now also has a successful 2026-11-02 production Learning Loop run with two real snapshots.
+- PB-05: **ONLY OPEN TECHNICAL BLOCKER** — a genuine naturally-due production Pinterest refresh-token rotation and encrypted persistence/account-access verification is still pending. Do not force expiry or rotate early.
+- PB-12: **DEFERRED**, not a release blocker; insufficient real historical analytics for predictive ML.
+- PB-08: human review/release sign-off remains separate from the technical blocker count.
+- PB-13 closure was explicitly accepted by the owner on 2026-10-30. Its historical intermittent 503 root cause was not conclusively isolated; preserve this as an accepted residual limitation. Reopen only on a new reproducible provider regression or owner request.
+- PB-07 closure verifies the protected read-only check of an existing successful Pin and isolated recovery tests; it is not evidence that an actual production ambiguous-timeout incident was replayed.
+
+### Owner-authorized Copco one-Pin request — 2026-11-02
+
+- Product: Copco 3-Tier Spice Rack Organizer.
+- Exact owner-supplied affiliate destination (preserve unchanged): `https://link.amazon/B0iUJm1I4`.
+- Previously documented Associates tracking ID: `beautybloo0ff-20`. The short-link redirect and tracking attribution have not yet been independently resolved. Do not append or invent a tag; verify attribution safely where possible.
+- Owner approved **exactly one** controlled real production Pin through the Agent E2E workflow. This is not authorization for multiple Pins or recurring publishing.
+- The evidence inspected for this checkpoint does not establish a confirmed publication result for this Copco request. Before any further create-Pin call, reconcile the publication ledger and Pinterest board read-only. If the outcome is pending/unknown or ambiguous, do not retry; use the documented operator reconciliation path. Do not create a duplicate.
+- No additional Pin is authorized by this checkpoint. Never expose secrets or token plaintext.
+
+### Next execution order
+
+1. Keep PR #55 isolated; run and inspect exact-head CI/review before any merge.
+2. Preserve the existing one-Pin authorization. Read-only reconcile whether the Copco request already has a publication-ledger row / Pinterest Pin before considering any create request.
+3. If no attempt exists and all preflight gates pass, execute no more than the one already-approved controlled Pin. Persist and verify the actual Pinterest Pin ID and publication ledger result.
+4. Continue PB-05 only through a naturally due, secret-backed server-side refresh; verify non-secret expiry/update metadata and account read. Do not force expiry.
+5. Continue real analytics ingestion; do not claim ML training until data sufficiency and evaluation gates pass.
+
+### Safety and evidence rules
+
+- No deployment, merge, credential rotation, production DB mutation, billable generation, or additional Pin publishing is authorized merely by this context update.
+- Never log or store APP_API_KEY, DATABASE_URL, Pinterest tokens, OAuth client secrets, Cloudflare tokens, or other secret values in this file.
+- Preserve user changes and untracked tests in local worktrees. Do not reset, overwrite, commit, or push the protected root checkout without explicit authorization.
+- Report facts as verified only when supported by a specific run, deployment, API response, or source/test inspection. Distinguish implementation, CI success, production deployment, and real production E2E as separate gates.
