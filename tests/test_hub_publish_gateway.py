@@ -16,7 +16,8 @@ def test_hub_pin_gateway_persists_ledger_and_enforces_disclosure(monkeypatch):
         return (
             {"id": 41, "product_name": kwargs["product_name"]},
             {"id": 42, "product_id": 41, "title": kwargs["title"]},
-            {"id": 43, "status": "pending"},
+            {"blocked": False, "id": 43, "product_id": 41, "content_version_id": 42,
+             "board_id": "board-123", "account_id": "pinterest:123", "status": "pending"},
         )
 
     monkeypatch.setattr(database, "create_product_with_content_version", create_product)
@@ -64,6 +65,7 @@ def test_hub_pin_gateway_persists_ledger_and_enforces_disclosure(monkeypatch):
     assert gateway_calls[0]["payload"]["link"] == affiliate_url
     assert gateway_calls[0]["payload"]["alt_text"] == "A three-tier rack holding labeled spice jars."
     assert gateway_calls[0]["access_token"] == "test-access-token"
+    assert gateway_calls[0]["reserved_attempt"]["id"] == 43
 
 
 def test_hub_pin_gateway_requires_idempotency_key(monkeypatch):

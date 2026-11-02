@@ -669,13 +669,21 @@ def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(mon
         persistence.append(kwargs) or (
             {"id": 101, "product_name": kwargs["product_name"]},
             {"id": 202, "product_id": 101},
-            {"id": 303, "status": "pending"},
+            {"id": 303, "product_id": 101, "content_version_id": 202,
+             "board_id": "board-404", "account_id": "pinterest:test-account", "status": "pending"},
         )
     ))
-    def publish_once(**kwargs):
-        assert kwargs["payload"]["link"] == "https://example.com/affiliate"
-        return {"published": True, "already_published": False, "pin_id": "pin-505", "publication_id": 303, "board_id": kwargs["board_id"], "http_status": 201}
-    monkeypatch.setattr(workflow, "publish_pin_with_ledger", publish_once)
+    import app.publishing as publishing
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: (
+        201, {"id": "pin-505", "board_id": kwargs["payload"]["board_id"]}
+    ))
+    finishes = []
+    monkeypatch.setattr(publishing, "finish_publish_attempt", lambda publication_id, **kwargs: (
+        finishes.append((publication_id, kwargs)) or {
+            "id": publication_id, "status": kwargs["status"],
+            "pinterest_pin_id": kwargs["pinterest_pin_id"], "http_status": kwargs["http_status"],
+        }
+    ))
 
     def pinterest_request(method, path, token, *, body=None):
         if method == "GET" and path == "/user_account":
@@ -684,9 +692,6 @@ def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(mon
             return 200, {"items": []}
         if method == "POST" and path == "/boards":
             return 201, {"id": "board-404"}
-        if method == "POST" and path == "/pins":
-            assert body["link"] == "https://example.com/affiliate"
-            return 201, {"id": "pin-505", "created_at": "2026-10-25T00:00:00Z"}
         raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
 
     monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
@@ -709,6 +714,8 @@ def test_end_to_end_workflow_uses_atomic_persistence_and_records_real_pin_id(mon
     assert response.json()["published"] is True
     assert len(persistence) == 1
     assert persistence[0]["idempotency_key"] == "request-key-success-123"
+    assert persistence[0]["publication_board_id"] == "board-404"
+    assert finishes[0][1]["status"] == "succeeded"
 
 
 def test_live_diagnostics_requires_api_key_and_never_runs_without_auth(monkeypatch):
@@ -977,12 +984,17 @@ def test_end_to_end_board_failure_allows_same_idempotency_key_retry(monkeypatch)
         lambda **kwargs: persistence.append(kwargs) or (
             {"id": 101, "product_name": kwargs["product_name"]},
             {"id": 202, "product_id": 101},
-            {"id": 303, "status": "pending"},
+            {"id": 303, "product_id": 101, "content_version_id": 202,
+             "board_id": "board-7", "account_id": "pinterest:test-account", "status": "pending"},
         ),
     )
-    monkeypatch.setattr(workflow, "publish_pin_with_ledger", lambda **kwargs: {
-        "published": True, "already_published": False, "pin_id": "pin-created-after-retry",
-        "publication_id": 303, "board_id": kwargs["board_id"], "http_status": 201,
+    import app.publishing as publishing
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: (
+        201, {"id": "pin-created-after-retry", "board_id": kwargs["payload"]["board_id"]}
+    ))
+    monkeypatch.setattr(publishing, "finish_publish_attempt", lambda publication_id, **kwargs: {
+        "id": publication_id, "status": kwargs["status"],
+        "pinterest_pin_id": kwargs["pinterest_pin_id"], "http_status": kwargs["http_status"],
     })
 
     def pinterest_request(method, path, token, *, body=None):
@@ -993,8 +1005,6 @@ def test_end_to_end_board_failure_allows_same_idempotency_key_retry(monkeypatch)
             if len(board_lookups) == 1:
                 raise HTTPException(status_code=502, detail="board lookup failed")
             return 200, {"items": [{"id": "board-7", "name": "Modern Living Hub | Kitchen & Home Organization"}]}
-        if path == "/pins":
-            return 201, {"id": "pin-created-after-retry", "created_at": "2026-10-27T00:00:00Z"}
         raise AssertionError(f"Unexpected Pinterest request: {method} {path}")
 
     monkeypatch.setattr(workflow, "_pinterest_request", pinterest_request)
@@ -1048,15 +1058,19 @@ def test_end_to_end_missing_pin_id_is_marked_uncertain(monkeypatch):
     monkeypatch.setattr(workflow, "create_product_with_content_version", lambda **kwargs: (
         {"id": 101, "product_name": kwargs["product_name"]},
         {"id": 202, "product_id": 101},
-        {"id": 303, "status": "pending"},
+        {"id": 303, "product_id": 101, "content_version_id": 202,
+         "board_id": "board-7", "account_id": "pinterest:test-account", "status": "pending"},
     ))
     monkeypatch.setattr(workflow, "_pinterest_request", lambda method, path, token, **kwargs: (
         (200, {"id": "test-user"}) if path == "/user_account" else
         (200, {"items": [{"id": "board-7", "name": "Modern Living Hub | Kitchen & Home Organization"}]})
     ))
     from app.pinterest import PinterestPublishError
-    monkeypatch.setattr(workflow, "publish_pin_with_ledger", lambda **kwargs: (_ for _ in ()).throw(
-        PinterestPublishError("uncertain", outcome_uncertain=True, error_code="missing_pin_id")
+    import app.publishing as publishing
+    monkeypatch.setattr(publishing, "create_pin_request", lambda **kwargs: (201, {}))
+    finishes = []
+    monkeypatch.setattr(publishing, "finish_publish_attempt", lambda publication_id, **kwargs: (
+        finishes.append(kwargs) or {"id": publication_id, **kwargs}
     ))
 
     response = client.post(
@@ -1075,6 +1089,7 @@ def test_end_to_end_missing_pin_id_is_marked_uncertain(monkeypatch):
 
     assert response.status_code == 502
     assert "outcome may be uncertain" in response.json()["detail"]
+    assert any(item["status"] == "unknown" and item["error_code"] == "missing_pin_id" for item in finishes)
 
 
 

@@ -34,21 +34,25 @@ def publish_pin_with_ledger(
     A pending/unknown/succeeded row is never retried. Provider transport and 5xx
     failures remain unknown, so callers must reconcile rather than retry blindly.
     """
-    attempt = reserved_attempt or begin_publish_attempt(
-        product_id=product_id,
-        content_version_id=content_version_id,
-        board_id=board_id,
-        account_id=account_id,
-    )
-    if reserved_attempt is not None and (
-        reserved_attempt.get("blocked")
-        or reserved_attempt.get("status") != "pending"
-        or reserved_attempt.get("product_id") != product_id
-        or reserved_attempt.get("content_version_id") != content_version_id
-        or reserved_attempt.get("board_id") != board_id
-        or reserved_attempt.get("account_id") != account_id
-    ):
-        raise PublicationConflict(reserved_attempt)
+    if reserved_attempt is None:
+        attempt = begin_publish_attempt(
+            product_id=product_id,
+            content_version_id=content_version_id,
+            board_id=board_id,
+            account_id=account_id,
+        )
+    else:
+        attempt = reserved_attempt
+        if (
+            attempt.get("blocked")
+            or attempt.get("status") != "pending"
+            or attempt.get("product_id") != product_id
+            or attempt.get("content_version_id") != content_version_id
+            or attempt.get("board_id") != board_id
+            or attempt.get("account_id") != account_id
+        ):
+            raise PublicationConflict(attempt)
+
     if attempt.get("blocked"):
         if attempt.get("account_mismatch"):
             raise PublicationConflict(attempt)
@@ -80,7 +84,23 @@ def publish_pin_with_ledger(
             ) from persist_exc
         raise
 
-    pin_id = response["id"]
+    pin_id = response.get("id") if isinstance(response, dict) else None
+    if not isinstance(pin_id, str) or not pin_id.strip():
+        try:
+            finish_publish_attempt(
+                attempt["id"], status="unknown", http_status=http_status,
+                error_code="missing_pin_id", response_metadata={},
+            )
+        except Exception as exc:
+            raise PublicationPersistenceError(
+                "Pinterest returned no Pin ID and the uncertain outcome could not be persisted; reconcile before retrying."
+            ) from exc
+        raise PinterestPublishError(
+            "Pinterest did not return a Pin ID; publication outcome is uncertain.",
+            outcome_uncertain=True,
+            http_status=http_status,
+            error_code="missing_pin_id",
+        )
     metadata = {
         "id": pin_id,
         "board_id": response.get("board_id") if isinstance(response.get("board_id"), str) else board_id,
