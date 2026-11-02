@@ -222,7 +222,7 @@ This checkpoint supersedes older deployment/CI snapshots above where the same fa
 
 ### Current mainline and production deployments
 
-- Agent repository default branch `main` HEAD: `23729244497497fa9629b02842e93917b55cc2e6` (Pinterest Pin text-limit enforcement).
+- Latest application-code commit on `main` at checkpoint time: `23729244497497fa9629b02842e93917b55cc2e6` (Pinterest Pin text-limit enforcement). The context-only documentation update was committed separately as `868324d0571987ade2dfc9913a7435adff41d78b`; the Agent Render deployment remains on application commit `2372924` (the docs update did not create a new Render deployment).
 - Agent Render service `srv-dbe6psoae00c73c3nhgg`, workspace `3rd render 3500`: deployment `dep-dbk5jqjbc2fs73eg2280` is **LIVE** on the exact `23729244497497fa9629b02842e93917b55cc2e6` commit. This is deployment evidence, not a claim that every product workflow has passed production E2E.
 - Modern Living Hub Render service `srv-dabs358n74is7389jut0`, workspace `Render`: latest inspected deployment `dep-dbjmirrm8hqs73fv18v0` is **LIVE** on commit `d164bcc6462d269abdcb53f57f144f522d148915` (canonical Agent publishing gateway integration).
 - Do not touch the separate `Atoz product hub website` Render account/workspace.
