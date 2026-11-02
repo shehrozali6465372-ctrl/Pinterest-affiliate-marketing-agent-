@@ -62,7 +62,9 @@ def create_pin_request(*, access_token: str, payload: dict[str, object]) -> tupl
     except httpx.RequestError as exc:
         raise PinterestPublishError("Pinterest request outcome is uncertain; do not retry blindly.", outcome_uncertain=True, error_code="transport_outcome_unknown") from exc
     if response.status_code >= 400:
-        uncertain = response.status_code >= 500
+        # HTTP 408 can be emitted after the provider has begun processing the
+        # request. Treat it like a transport/5xx ambiguity: never auto-retry.
+        uncertain = response.status_code == 408 or response.status_code >= 500
         raise PinterestPublishError(
             "Pinterest rejected the request." if not uncertain else "Pinterest returned a server error; the outcome may be uncertain.",
             outcome_uncertain=uncertain,
