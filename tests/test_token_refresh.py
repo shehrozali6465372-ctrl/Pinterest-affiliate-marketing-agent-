@@ -353,10 +353,13 @@ def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_accoun
             return self
 
     monkeypatch.setattr(credential_vault, "connection", lambda: FakeConnection())
-    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
-        "account_id": account_id, "pinterest_user_id": "123", "username": "test",
-        "access_token": "new-access-token", "expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
-    })
+    reads = iter([
+        {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
+         "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
+        {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
+         "access_token": "new-access-token", "expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc)},
+    ])
+    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: next(reads))
     monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
         "account_id": account_id, "pinterest_user_id": "123", "username": "test",
         "refresh_token": "old-refresh-token", "scope": "pins:read",
