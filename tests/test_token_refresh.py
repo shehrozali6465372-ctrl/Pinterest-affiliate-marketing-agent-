@@ -357,6 +357,8 @@ def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_accoun
         {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
          "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
         {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
+         "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
+        {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
          "access_token": "new-access-token", "expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc)},
     ])
     monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: next(reads))
