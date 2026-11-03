@@ -184,3 +184,72 @@ Scope: read-only source/test/history inspection through Remote Desktop Commander
 - PR #35: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/35, branch `fix/pb05-preserve-refresh-expiry`, head `6c764c396b00fcde3d9fe53f1d0035a261fc9286`. Regression test now covers a provider response omitting both refresh-token rotation and refresh-token expiry metadata.
 - Focused refresh tests: **5 passed**. Full local suite: **67 passed, 1 skipped**; compileall and diff check passed. Exact-head GitHub Python Tests run `41043514706` and Python CI run `41043514721` both passed. PR is open and mergeable; AI review-loop runtime is not available on the connected device, so no reviewer request was fabricated or manually posted.
 - This is metadata-preservation hardening only. No live Pinterest refresh, credential decrypt/rotation, production DB write, Pin/board creation, PR merge, or Render deploy was performed. PB-05 remains OPEN pending a genuine server-side refresh event and read-only confirmation of encrypted persistence/expiry metadata.
+
+
+## Deep continuation checkpoint — PR #54 deployed + publishing architecture audit (2026-11-02)
+
+### Scope and evidence discipline
+- This checkpoint records the state verified during the 2026-11-02 continuation. It supplements, and where explicitly stated supersedes, older checkpoints above. Older PB-05/PB-07/PB-10/PB-13 entries are historical evidence, not proof that those workstreams are currently closed.
+- Evidence sources used: exact Git commit and Git worktree checks on the authorized Remote Desktop Commander device; local pytest execution against the isolated deployed-commit worktree; live read-only Render `/health` and `/openapi.json` requests; source inspection of the exact deployed commit. No secrets or token values were read or emitted.
+- Distinguish local test evidence from hosted CI and production evidence. No live Pinterest publish, production database mutation, credential rotation, DeepSeek request, or Cloudflare billable request was performed in this checkpoint.
+
+### PR #54 — merged and deployed
+- Repository: `https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-`.
+- PR #54: `https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/54`, title: **Fix Pinterest Pin text limits across generation and publishing**.
+- Merged by squash on 2026-11-02 at 09:12:51 UTC. Deployed/main commit: `23729244497497fa9629b02842e93917b55cc2e6`.
+- Render manual deployment was triggered because auto-deploy did not start. Deployment ID recorded: `dep-dbk5jqjbc2fs73eg2280`. The live service was subsequently checked; deployed commit and GitHub main were confirmed to match this SHA in the prior deployment verification.
+- Shared Pinterest text limits now enforced: title **100** characters, description **800** characters, alt text **500** characters. Changes cover generation, affiliate-disclosure length budgeting, workflow outbound validation, direct publisher validation, and regression tests.
+- PR-head GitHub CI evidence: 131 passed, 6 skipped, 1 warning; Python CI: 136 passed, 1 skipped, 1 warning. These are the recorded PR checks, not Render-host test execution.
+- Independent local verification against the exact deployed SHA, in isolated worktree `/tmp/pin-agent-pr54-verify-2372924`, using the existing project virtualenv interpreter: focused `tests/test_pin_limits.py tests/test_deepseek_completion.py` = **15 passed**; full suite = **131 passed, 6 skipped, 1 warning** in 17.14s. Warning is the existing Starlette TestClient/httpx deprecation integration warning. No dependency installation was performed.
+- Live read-only verification during this checkpoint: `GET /health` returned HTTP 200 with `{"status":"ok","service":"pinterest-affiliate-model-1"}`; `GET /openapi.json` returned HTTP 200, API version **1.4.1**. Live OpenAPI schema reports `HubPinPublishInput`: title maxLength 100, description maxLength 800, alt_text maxLength 500. `/healthz` previously returned 404 and is not a supported health endpoint.
+- `GET /diagnostics/pinterest` without API key previously returned HTTP 401, as expected for a protected diagnostic route. Do not interpret that unauthenticated response as a Pinterest outage.
+- A prior request to `GET /` timed out once; this alone is not evidence of service outage because `/health` succeeded.
+- The full suite was run locally against the exact deployed commit in the isolated worktree; it was not run inside the Render container. Do not describe it as a live production test.
+
+### Pin destination and account/board semantics
+- Configured Pinterest account identifier recorded in project context: `pinterest:1069323642682526567`, account username previously identified as `modernlivinghub6465372`.
+- Board ID recorded for the target board: `1069323573964692146`.
+- Intended destination is the connected Pinterest account and the board ID supplied/resolved by the publish request. A Pin is an online Pinterest object attached to a board; it is not published to a physical geographic location.
+- USA/UK are the project's intended affiliate audience/markets. That is a content/marketing targeting objective, not a guarantee that Pinterest will distribute a Pin to users in those countries. Organic distribution is controlled by Pinterest; no verified audience reach or geo-targeting guarantee is recorded here.
+- Historical database inspection on 2026-10-29 recorded one succeeded publication row. That historical row does not by itself prove the Pin remains live, identify its current public URL, or establish that a new Pin was published in the 2026-11-02 work. During PR #54 verification and this architecture audit, **no new real Pin was published**. Avoid the blanket claim that the account has never published a Pin.
+
+### Publishing architecture audit — exact deployed source
+- Source inspected from isolated worktree at deployed commit `23729244497497fa9629b02842e93917b55cc2e6`; route inventory is based on decorators and call sites in `app/main.py`, `app/workflow.py`, and `app/pinterest.py`.
+- Current publish-capable HTTP entry points found:
+  1. `POST /workflow/publish-hub-pin` — uses the credential-ingest service key; requires an `Idempotency-Key`; performs Hub-originated Pin publication.
+  2. `POST /workflow/publish-product` — uses the Agent API key; requires an `Idempotency-Key`; end-to-end product/content generation workflow before publishing.
+  3. `POST /products/{product_id}/content/{content_version_id}/publish` — uses the configured Agent API key; legacy direct publication route.
+  4. `POST /publish` — uses the configured Agent API key; legacy alias that calls the product/content publish handler.
+- The legacy product/content route calls `publish_image_pin()` from `app/pinterest.py` directly. The `/publish` alias delegates to that legacy handler. Therefore publication logic is not yet architecturally centralized behind one shared internal gateway.
+- These routes were found to have authentication guards; the audit did **not** establish an unauthenticated direct-publish bypass. The concern is multiple authenticated entry points and distributed publication logic, not a proven auth bypass.
+- `/workflow/publish-hub-pin` is described in source as the canonical Hub publishing gateway and is protected with `X-Credential-Ingest-Key`, which is distinct from `X-API-Key`. Preserve this service-to-service trust boundary; do not make the Hub credential interchangeable with the operator/API key.
+- `/workflow/publish-product` has a separate API-key guard and performs generation/preparation before the final Pinterest write. A future shared internal publication primitive should accept normalized, already-prepared content and enforce common idempotency/ledger/text validation/Pinterest POST/status handling, while retaining route-specific authentication and authorization.
+- `/integrations/pinterest/operation` has an operation allowlist for account read, board read/pagination, and disconnect. `create_pin` is not allowed and is rejected as unsupported. A later special-case `create_pin` rejection branch is unreachable because the allowlist check occurs first; this is a code clarity issue, not a demonstrated Pin-publishing bypass.
+- Existing tests cover API-key fail-closed behavior on legacy publish routes and idempotency behavior on `/workflow/publish-product`; `tests/test_hub_publish_gateway.py` covers Hub gateway ledger/disclosure behavior. Exact deployed-commit full test suite passed as recorded above.
+- Additional edge case identified for follow-up: Hub workflow appends affiliate disclosure and has a handler-level description check at 2,000 characters, while the actual Pinterest description limit is 800. The outbound Pinterest request validator rejects an over-limit payload before the Pinterest POST, but the current ordering may already have persisted product/content/publication-attempt records. Verify exact request schema and transaction ordering, then add pre-persistence disclosure-adjusted 800-character validation and tests. This is a workflow/ledger hygiene issue; no live failure was induced.
+- Recommended next engineering step: implement one shared internal publication operation, preserve all existing HTTP route contracts as thin compatibility/authentication adapters, and add mocked tests asserting exactly one controlled Pinterest POST path, ledger/idempotency behavior, and no network call on invalid input. Keep all Pinterest HTTP calls mocked in tests. Do not remove compatibility routes until Modern Living Hub callers and any other clients are verified.
+- No source code was changed during this audit. No real Pin was published.
+
+### Local worktree preservation and active workspace boundaries
+- Original checkout: `/root/Pinterest-affiliate-marketing-agent`.
+- Original checkout remains on branch `fix/pb06-analytics-forward-port`, behind its origin branch by 29 commits at the time checked.
+- Original checkout has a pre-existing modified `CONTEXT.md` and untracked `tests/test_database_pool_recovery_integration.py`. Both were preserved; the test file was not edited or deleted. This checkpoint was appended to the existing `CONTEXT.md`, not used to replace it.
+- The original checkout was not pulled, reset, checked out to another branch, stashed, committed, or pushed.
+- Isolated verification worktree: `/tmp/pin-agent-pr54-verify-2372924`, detached at `23729244497497fa9629b02842e93917b55cc2e6`; `origin/main` in that worktree was confirmed to the same SHA. Worktree was clean at the time checked. Keep it isolated; do not assume the original checkout has been updated to main.
+- No context duplication or duplicate file deletion was performed.
+
+### Previously tracked blockers — status must not be overstated
+- PB-05 OAuth refresh lifecycle: last documented as open because the local protected configuration lacked the OAuth client ID/secret inputs required by the refresh route. No refresh was forced and no token was rotated. Recheck current configuration and OAuth evidence before changing this status.
+- PB-07 ambiguous publication recovery: last documented as open pending operator verification/release sign-off. Reconciliation logic and runbook were present in the historical PR #32 checkpoint, but no proof of a real ambiguous publish recovery is recorded here. Do not blindly retry an `unknown` publication.
+- PB-10 DB pool recovery: disposable Neon branch experiment on 2026-10-30 demonstrated backend termination followed by successful pool reconnection with a different backend PID. An opt-in integration test exists locally and skips by default without `PB10_TEST_DATABASE_URL`; it restricts hostnames to the disposable test branch. Last recorded state: not pushed/deployed in a dedicated isolated PR; keep it separate from production and never run it against production Neon.
+- PB-13 intermittent DeepSeek HTTP 503 root cause: telemetry and credential redaction improvements were recorded in PR #33 history, but the underlying intermittent 503 root cause was not proven in the latest prior checkpoint. Do not call this blocker resolved solely because a redaction fix or a successful smoke test exists.
+- Historical PR #32/#33 states in the earlier sections are point-in-time records from 2026-10-30. Their current merge/review/deployment status was not reverified as part of this 2026-11-02 checkpoint.
+- Cloudflare Images HTTP 403 and DeepSeek multimodal/image-generation failures were earlier recorded as blockers. This checkpoint did not re-run those provider checks; their current status is **unverified**, not fixed or currently failing.
+
+### Explicit safety and deployment rules carried forward
+- Never publish a real Pinterest Pin during tests or verification. A real Pin requires fresh, explicit user authorization for that specific publication.
+- Do not make billable DeepSeek or Cloudflare provider calls without fresh explicit approval.
+- Do not write to production Neon or modify production credentials/tokens without explicit approval. Do not rotate `PINTEREST_TOKEN_ENCRYPTION_KEY` unless existing ciphertext compatibility has been verified.
+- Do not trigger a Render deployment, merge a PR, or push changes without fresh explicit approval for that action. PR #54's prior merge/deploy approval is complete and does not authorize future deployments or Pin publication.
+- Preserve the original checkout's local user changes. Use a separate worktree/branch for further engineering.
+- Do not mark any provider, OAuth, publication-recovery, or production blocker resolved without current, direct evidence.

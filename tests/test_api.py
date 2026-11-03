@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -12,7 +13,24 @@ from app.content_generation import (
 from app.main import app
 from app.pinterest import PinterestPublishError, publish_image_pin
 
-client = TestClient(app)
+class AuthenticatedTestClient(TestClient):
+    """Attach the configured test key to ordinary endpoint tests by default."""
+    def request(self, method, url, **kwargs):
+        headers = dict(kwargs.pop("headers", {}) or {})
+        if settings.app_api_key and "X-API-Key" not in headers:
+            headers["X-API-Key"] = settings.app_api_key
+        kwargs["headers"] = headers
+        return super().request(method, url, **kwargs)
+
+
+client = AuthenticatedTestClient(app)
+unauthenticated_client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def configure_test_api_key(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "test-suite-api-key")
+
 
 VALID_PRODUCT = {
     "product_name": "Wooden spice rack",
@@ -84,11 +102,24 @@ def test_readiness_account_publish_requires_database_and_encryption(monkeypatch)
     assert body["pinterest_credential_ingest_configured"] is True
 
 
-def test_operational_routes_require_api_key_when_configured(monkeypatch):
+def test_operational_routes_fail_closed_when_api_key_is_missing(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", None)
+    assert client.get("/health").status_code == 200
+    for response in (
+        client.get("/readiness"),
+        client.post("/products/validate", json=VALID_PRODUCT),
+        client.post("/products", json=VALID_PRODUCT),
+        client.get("/products/1"),
+    ):
+        assert response.status_code == 503
+        assert response.json()["detail"] == "API authentication is not configured."
+
+
+def test_operational_routes_require_valid_api_key_when_configured(monkeypatch):
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     assert client.get("/health").status_code == 200
-    assert client.get("/readiness").status_code == 401
-    assert client.post("/products/validate", json=VALID_PRODUCT).status_code == 401
+    assert unauthenticated_client.get("/readiness").status_code == 401
+    assert unauthenticated_client.post("/products/validate", json=VALID_PRODUCT).status_code == 401
     assert client.post(
         "/products/validate",
         json=VALID_PRODUCT,
@@ -725,7 +756,7 @@ def test_live_diagnostics_requires_api_key_and_never_runs_without_auth(monkeypat
         "run_live_diagnostics",
         lambda payload: {"ok": True, "side_effects": {"pinterest_pin_created": False}},
     )
-    response = client.post("/diagnostics/run", json={"account_id": "pinterest:test-account"})
+    response = unauthenticated_client.post("/diagnostics/run", json={"account_id": "pinterest:test-account"})
     assert response.status_code == 401
 
 
@@ -827,7 +858,7 @@ def test_live_diagnostics_does_not_call_image_generator_if_db_or_pinterest_fails
 
 def test_pinterest_read_only_diagnostic_requires_api_key(monkeypatch):
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
-    response = client.get("/diagnostics/pinterest")
+    response = unauthenticated_client.get("/diagnostics/pinterest")
     assert response.status_code == 401
 
 
@@ -1101,3 +1132,42 @@ def test_readiness_rejects_present_but_invalid_encryption_key(monkeypatch):
     assert body["pinterest_token_encryption_key_valid"] is False
     assert body["pinterest_account_workflow_configured"] is False
     assert "present-but-not-valid-base64" not in str(body)
+
+
+def test_analytics_integration_routes_require_service_credential(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "private-ingest-test")
+    body = {"account_id": "pinterest:account-a"}
+    assert client.post("/integrations/pinterest/ad-accounts", json=body).status_code == 401
+    assert client.post("/integrations/pinterest/analytics/run", json=body).status_code == 401
+    assert client.post(
+        "/integrations/pinterest/audience-insights/run",
+        json={**body, "ad_account_id": "123456789"},
+    ).status_code == 401
+
+
+def test_audience_insights_integration_validates_ad_account_id(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "private-ingest-test")
+    response = client.post(
+        "/integrations/pinterest/audience-insights/run",
+        json={"account_id": "pinterest:account-a", "ad_account_id": "not-an-id"},
+        headers={"X-Credential-Ingest-Key": "private-ingest-test"},
+    )
+    assert response.status_code == 422
+
+
+def test_ad_account_integration_uses_read_only_learning_service(monkeypatch):
+    from app import learning
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "private-ingest-test")
+    monkeypatch.setattr(
+        learning,
+        "list_ad_accounts",
+        lambda account_id: {"ok": True, "ad_accounts": [{"id": "123456789", "name": "Demo"}]},
+    )
+    response = client.post(
+        "/integrations/pinterest/ad-accounts",
+        json={"account_id": "pinterest:account-a"},
+        headers={"X-Credential-Ingest-Key": "private-ingest-test"},
+    )
+    assert response.status_code == 200
+    assert response.json()["ad_accounts"][0]["id"] == "123456789"
