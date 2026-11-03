@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-flash"
     pinterest_credential_ingest_key: str | None = None
     pinterest_token_encryption_key: str | None = None
+    pinterest_client_id: str | None = None
+    pinterest_client_secret: str | None = None
 
     @field_validator("llm_api_key", "cloudflare_api_token", "app_api_key", mode="before")
     @classmethod

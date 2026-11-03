@@ -334,3 +334,85 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
         with database.connection() as conn:
             conn.execute("DELETE FROM pinterest_credentials WHERE account_id = %s", (account_id,))
         database.close_pool()
+
+
+def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_account_lock(monkeypatch):
+    import httpx
+    from app import credential_vault
+
+    monkeypatch.setattr(settings, "pinterest_client_id", "oauth-client-id")
+    monkeypatch.setattr(settings, "pinterest_client_secret", "oauth-client-secret")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+
+    lock_calls = []
+    class FakeConnection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, query, params):
+            lock_calls.append((query, params))
+            return self
+
+    monkeypatch.setattr(credential_vault, "connection", lambda: FakeConnection())
+    reads = iter([
+        {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
+         "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
+        {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
+         "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
+        {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
+         "access_token": "new-access-token", "expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc)},
+    ])
+    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: next(reads))
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test",
+        "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
+    })
+    stored = []
+    monkeypatch.setattr(credential_vault, "store_pinterest_credential", lambda payload: stored.append(payload) or {"account_id": payload["account_id"]})
+
+    class FakeResponse:
+        content = b'{"access_token":"new-access-token"}'
+        is_success = True
+        def json(self):
+            return {"access_token": "new-access-token", "refresh_token": "rotated-refresh-token",
+                    "expires_in": 3600, "refresh_token_expires_in": 86400}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def post(self, url, *, auth, data):
+            assert url.endswith("/oauth/token")
+            assert auth == ("oauth-client-id", "oauth-client-secret")
+            assert data["refresh_token"] == "old-refresh-token"
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    result = credential_vault.get_pinterest_credential("pinterest:123")
+    assert result["access_token"] == "new-access-token"
+    assert stored[0]["refresh_token"] == "rotated-refresh-token"
+    assert stored[0]["access_token"] == "new-access-token"
+    assert lock_calls and lock_calls[0][1] == ("pinterest-token-refresh:pinterest:123",)
+
+
+def test_expiring_access_token_fails_closed_when_oauth_app_credentials_missing(monkeypatch):
+    from app import credential_vault
+
+    monkeypatch.setattr(settings, "pinterest_client_id", None)
+    monkeypatch.setattr(settings, "pinterest_client_secret", None)
+    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
+        "account_id": account_id, "access_token": "expired-token",
+        "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+    })
+    with pytest.raises(RuntimeError, match="OAuth app credentials"):
+        credential_vault.get_pinterest_credential("pinterest:123")
+
+
+def test_non_expiring_access_token_does_not_trigger_refresh(monkeypatch):
+    from app import credential_vault
+
+    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
+        "account_id": account_id, "access_token": "legacy-token", "expires_at": None,
+    })
+    monkeypatch.setattr(credential_vault, "_refresh_access_token", lambda account_id: pytest.fail("unexpected refresh"))
+    assert credential_vault.get_pinterest_credential("pinterest:123")["access_token"] == "legacy-token"

@@ -41,7 +41,7 @@ Set a strong random `APP_API_KEY` in Render environment variables before exposin
 - `POST /workflow/publish-product`: generates image/copy, then uses the same publication-ledger gateway; requires `X-API-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body.
 - `POST /workflow/publish-hub-pin`: Hub service publishing entry point; requires `X-Credential-Ingest-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body.
 
-All Pin-creation routes share one publication-ledger orchestrator. The generated and Hub workflows insert product, content, and the pending publication reservation in one Neon transaction before the Pinterest POST. A pending, uncertain, or successful attempt blocks automatic duplicate creation. The compatibility endpoints select the encrypted OAuth credential with `X-Pinterest-Account-ID`; the legacy plaintext `PINTEREST_ACCESS_TOKEN` is not used for publishing.
+All Pin-creation routes share one publication-ledger orchestrator. The generated and Hub workflows insert product, content, and the pending publication reservation in one Neon transaction before the Pinterest POST. A pending, uncertain, or successful attempt blocks automatic duplicate creation. The compatibility endpoints select the encrypted OAuth credential with `X-Pinterest-Account-ID`; the legacy plaintext `PINTEREST_ACCESS_TOKEN` is not used for publishing. Credential lookup automatically refreshes expiring access tokens when the Pinterest app credentials are configured; if they are missing or refresh fails, the request fails closed before a Pin write.
 - `POST /learning-loop/run`: protected, real account-scoped Pinterest analytics ingestion; persists snapshots and descriptive aggregates. It does not train predictive ML.\n- `POST /learning-loop` (legacy): returns 501; use `/learning-loop/run` for the real Learning Loop.
 
 A timed-out Pinterest request or ambiguous server error is recorded as uncertain; automatic retry is blocked. Check the Pinterest board before attempting a retry to avoid accidental duplicate Pins.
@@ -55,6 +55,7 @@ Migrations are in `migrations/` and tracked in `schema_migrations`. Run them exp
 - `PINTEREST_BOARD_ID`: board used by the compatibility content-version publishing endpoints.
 - `PINTEREST_ACCESS_TOKEN`: deprecated legacy value; active publishing routes use the encrypted OAuth credential vault and do not read this token.
 - `PINTEREST_TOKEN_ENCRYPTION_KEY`: decrypts the OAuth credential stored in Neon; it must remain identical to the key used to encrypt existing credentials.
+- `PINTEREST_CLIENT_ID` and `PINTEREST_CLIENT_SECRET`: Pinterest developer app credentials, stored only in the Agent server environment. Required for automatic refresh when an access token is within five minutes of expiry. The refresh token is rotated and re-encrypted in Neon. A per-account PostgreSQL advisory transaction lock serializes automatic refreshes across app instances.
 - `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`: server-side Cloudflare Workers AI access; image-generation service is pending.
 - `LLM_API_KEY`: DeepSeek API key.
 - `LLM_BASE_URL`: defaults to `https://api.deepseek.com`.
