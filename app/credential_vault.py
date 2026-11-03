@@ -82,8 +82,7 @@ def store_pinterest_credential(payload: dict[str, Any]) -> dict[str, Any]:
         return dict(row)
 
 
-def get_pinterest_credential(account_id: str) -> dict[str, Any]:
-    """Decrypt a connected account token only in process memory for a server-side API call."""
+def _read_access_credential(account_id: str) -> dict[str, Any]:
     cipher = _cipher()
     with connection() as conn:
         row = conn.execute(
@@ -97,6 +96,97 @@ def get_pinterest_credential(account_id: str) -> dict[str, Any]:
     blob = bytes(row["access_token_ciphertext"])
     token = cipher.decrypt(blob[:12], blob[12:], f"{account_id}:access".encode()).decode("utf-8")
     return {"account_id": row["account_id"], "pinterest_user_id": row["pinterest_user_id"], "username": row["username"], "access_token": token, "token_type": row["token_type"], "scope": row["scope"], "expires_at": row["expires_at"]}
+
+
+def _as_utc(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        value = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    from datetime import timezone
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _refresh_access_token(account_id: str) -> None:
+    """Refresh under a per-account PostgreSQL advisory lock to prevent token-rotation races."""
+    from datetime import datetime, timedelta, timezone
+    import httpx
+
+    if not settings.pinterest_client_id or not settings.pinterest_client_secret:
+        raise RuntimeError("Pinterest OAuth app credentials are not configured for automatic token refresh")
+
+    # The transaction-scoped lock remains held across provider refresh and encrypted persistence.
+    with connection() as lock_conn:
+        lock_conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"pinterest-token-refresh:{account_id}",))
+        current = _read_access_credential(account_id)
+        expiry = _as_utc(current.get("expires_at"))
+        if expiry is None or expiry > datetime.now(timezone.utc) + timedelta(minutes=5):
+            return
+
+        stored = get_pinterest_refresh_credential(account_id)
+        refresh_expiry = _as_utc(stored.get("refresh_token_expires_at"))
+        if stored.get("refresh_token_expires_at") is not None and (refresh_expiry is None or refresh_expiry <= datetime.now(timezone.utc)):
+            raise LookupError("Pinterest refresh token has expired; reconnect the account")
+
+        try:
+            with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+                response = client.post(
+                    f"{settings.pinterest_api_base_url.rstrip('/')}/oauth/token",
+                    auth=(settings.pinterest_client_id, settings.pinterest_client_secret),
+                    data={"grant_type": "refresh_token", "refresh_token": stored["refresh_token"], "continuous_refresh": "true"},
+                )
+            data = response.json() if response.content else {}
+        except (httpx.HTTPError, ValueError):
+            raise RuntimeError("Pinterest access-token refresh request failed") from None
+        if not response.is_success or not isinstance(data, dict) or not data.get("access_token"):
+            raise RuntimeError("Pinterest rejected access-token refresh; reconnect if the refresh token is invalid")
+
+        now = datetime.now(timezone.utc)
+        try:
+            expires_at = (now + timedelta(seconds=int(data["expires_in"]))).isoformat() if data.get("expires_in") is not None else None
+            if expires_at is None:
+                raise ValueError("expires_in missing")
+        except (TypeError, ValueError, OverflowError):
+            raise RuntimeError("Pinterest refresh response did not contain a valid access-token expiry") from None
+
+        if data.get("refresh_token_expires_at") is not None:
+            try:
+                new_refresh_expiry = datetime.fromtimestamp(float(data["refresh_token_expires_at"]), timezone.utc).isoformat()
+            except (TypeError, ValueError, OverflowError):
+                raise RuntimeError("Pinterest returned an invalid refresh-token expiry") from None
+        elif data.get("refresh_token_expires_in") is not None:
+            try:
+                new_refresh_expiry = (now + timedelta(seconds=int(data["refresh_token_expires_in"]))).isoformat()
+            except (TypeError, ValueError, OverflowError):
+                raise RuntimeError("Pinterest returned an invalid refresh-token lifetime") from None
+        else:
+            new_refresh_expiry = stored.get("refresh_token_expires_at")
+
+        store_pinterest_credential({
+            "account_id": stored["account_id"],
+            "pinterest_user_id": stored["pinterest_user_id"],
+            "username": stored.get("username") or "",
+            "access_token": str(data["access_token"]),
+            "refresh_token": str(data.get("refresh_token") or stored["refresh_token"]),
+            "token_type": str(data.get("token_type") or "bearer"),
+            "scope": str(data.get("scope") or stored.get("scope") or ""),
+            "expires_at": expires_at,
+            "refresh_token_expires_at": new_refresh_expiry,
+        })
+
+
+def get_pinterest_credential(account_id: str) -> dict[str, Any]:
+    """Return a valid access token, refreshing it before expiry when server credentials exist."""
+    current = _read_access_credential(account_id)
+    expiry = _as_utc(current.get("expires_at"))
+    from datetime import datetime, timedelta, timezone
+    if expiry is not None and expiry <= datetime.now(timezone.utc) + timedelta(minutes=5):
+        _refresh_access_token(account_id)
+        current = _read_access_credential(account_id)
+        refreshed_expiry = _as_utc(current.get("expires_at"))
+        if refreshed_expiry is not None and refreshed_expiry <= datetime.now(timezone.utc):
+            raise RuntimeError("Pinterest access token remains expired after refresh")
+    return current
 
 
 def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
