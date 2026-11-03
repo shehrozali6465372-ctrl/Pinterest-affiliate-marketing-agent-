@@ -111,3 +111,17 @@ Generated image bytes are kept in process memory only and sent to Pinterest thro
 ## Current verification note — 2026-10-27
 
 The earlier statement that real Pinterest publishing was wholly unverified is superseded: the project history records one approved real Pin published and verified at https://www.pinterest.com/pin/1069323505300280780/. Do not publish another Pin without separate explicit approval. PB-03 is closed by merged PR #21; do not reopen it. Real OAuth consent/handoff, real token-refresh lifecycle, and a persisted production analytics snapshot are separate gates and must not be conflated with the successful Pin.
+
+## Audience & Engagement Analytics
+
+The Learning Loop requests organic Pin metrics for impressions, saves, Pin clicks, outbound clicks, save rate, profile visits, and follows. It derives engagements as saves + Pin clicks + outbound clicks and calculates engagement rate from impressions. These are descriptive metrics; they do not train a predictive model.
+
+Read-only advertiser account discovery and aggregated 30-day audience insights are available through the trusted Hub integration boundary:
+- POST /integrations/pinterest/ad-accounts
+- POST /integrations/pinterest/audience-insights/run
+
+Both require X-Credential-Ingest-Key; audience insights additionally require the connected Pinterest token to include ads:read, a Business account, and access to a Pinterest advertiser account. Audience insight data is aggregated by Pinterest and stored in pinterest_audience_insight_snapshots after migration 009_create_audience_insight_snapshots.sql is applied. The integration does not create ads, custom audiences, or Pins.
+
+The Modern Living Hub OAuth flow requests ads:read for this read-only reporting feature. Existing connections must reconnect and grant consent before advertiser discovery and audience insights can work.
+
+Audience Intelligence breakdowns include Pinterest-provided aggregate country and top metro-area distribution, age bands, gender categories, device usage (iPhone/iPad/Android/Web), and interest categories. The UI displays percentages and keeps Pinterest's Unspecified & custom gender category separate. Age bands are not verified individual ages; metro areas are not precise city/street locations; device type describes Pinterest access device, not the referral source. Audience Insights cover the rolling last 30 days and require a Business account, advertiser access, and ads:read OAuth scope.

@@ -43,9 +43,15 @@ app.include_router(diagnostics_router)
 from app.learning import router as learning_router
 app.include_router(learning_router)
 
+from app.trends import router as trends_router
+app.include_router(trends_router)
+
+from app.trend_visuals import router as trend_visuals_router
+app.include_router(trend_visuals_router)
+
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    """Fail closed: operational endpoints are unavailable until API authentication is configured."""
+    """Fail closed: operational endpoints require a configured and valid API key."""
     if not settings.app_api_key:
         raise HTTPException(status_code=503, detail="API authentication is not configured.")
     if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
@@ -248,6 +254,62 @@ class PinterestOperationInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
     operation: str = Field(min_length=1, max_length=50)
     payload: dict[str, object] = Field(default_factory=dict)
+
+
+class PinterestAccountInput(BaseModel):
+    account_id: str = Field(min_length=1, max_length=200)
+
+
+class PinterestAnalyticsIntegrationInput(BaseModel):
+    account_id: str = Field(min_length=1, max_length=200)
+    period_days: int = Field(default=30, ge=1, le=90)
+
+
+class PinterestAudienceInsightsInput(BaseModel):
+    account_id: str = Field(min_length=1, max_length=200)
+    ad_account_id: str = Field(min_length=1, max_length=18, pattern=r"^\d+$")
+
+
+def require_credential_ingest_key(
+    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
+) -> None:
+    expected = settings.pinterest_credential_ingest_key
+    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
+        raise HTTPException(status_code=401, detail="Valid service credential required.")
+
+
+@app.post("/integrations/pinterest/analytics/run", dependencies=[Depends(require_credential_ingest_key)])
+def run_pinterest_analytics_integration(payload: PinterestAnalyticsIntegrationInput) -> dict[str, object]:
+    """Run read-only Pinterest organic analytics ingestion through the trusted Hub boundary."""
+    from app.learning import LearningRequest, run_learning_loop
+    return run_learning_loop(LearningRequest(account_id=payload.account_id, period_days=payload.period_days))
+
+
+@app.post("/integrations/pinterest/ad-accounts", dependencies=[Depends(require_credential_ingest_key)])
+def list_pinterest_ad_accounts_integration(payload: PinterestAccountInput) -> dict[str, object]:
+    """List advertiser accounts; this operation is read-only and requires ads:read."""
+    from app.learning import list_ad_accounts
+    try:
+        return list_ad_accounts(payload.account_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from None
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not list Pinterest advertiser accounts.") from None
+
+
+@app.post("/integrations/pinterest/audience-insights/run", dependencies=[Depends(require_credential_ingest_key)])
+def run_pinterest_audience_insights_integration(payload: PinterestAudienceInsightsInput) -> dict[str, object]:
+    """Fetch and persist aggregated Pinterest audience insights; no audience is created."""
+    from app.learning import run_audience_insights
+    try:
+        result = run_audience_insights(payload.account_id, payload.ad_account_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not fetch or persist Pinterest audience insights.") from None
+    return result
 
 
 @app.post("/integrations/pinterest/refresh")
