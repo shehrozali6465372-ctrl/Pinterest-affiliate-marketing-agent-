@@ -40,7 +40,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt bandit pip-audit
+      - name: Run static security scan
+        run: bandit -r app -ll -q
+      - name: Audit dependency vulnerabilities
+        run: pip-audit -r requirements.txt --timeout 30
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
