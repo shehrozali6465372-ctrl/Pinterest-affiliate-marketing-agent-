@@ -97,6 +97,8 @@ class CreateScheduleInput(BaseModel):
 @router.post("/schedules", status_code=201, dependencies=[Depends(require_scheduler_key)])
 def create_draft_schedule(payload: CreateScheduleInput) -> dict[str, object]:
     """Store up to ten URLs as a draft; no jobs are queued and nothing is published."""
+    if payload.starts_on < datetime.now(ZoneInfo(payload.timezone)).date():
+        raise HTTPException(status_code=422, detail="starts_on cannot be earlier than today in the selected timezone.")
     ends_on = payload.starts_on + timedelta(days=payload.days - 1)
     try:
         with connection() as conn:
@@ -208,7 +210,7 @@ def pause_schedule(schedule_id: int) -> dict[str, object]:
                 "UPDATE affiliate_pin_jobs SET status = 'cancelled' WHERE schedule_id = %s AND status = 'queued'",
                 (schedule_id,),
             )
-        return {"schedule_id": schedule_id, "status": "paused", "queued_jobs_cancelled": True}
+        return {"schedule_id": schedule_id, "status": "paused", "queued_jobs_cancelled": True, "in_flight_job_may_finish": True}
     except HTTPException:
         raise
     except Exception as exc:
@@ -292,7 +294,7 @@ def run_one_due_job() -> dict[str, object]:
                     """,
                     (claimed["id"],),
                 )
-                return {"claimed": True, "processed": False, "job_id": claimed["id"], "reason": "source_unavailable"}
+                _complete_schedule_if_terminal(conn, claimed["schedule_id"])\n                return {"claimed": True, "processed": False, "job_id": claimed["id"], "reason": "source_unavailable"}
         payload = ProductWorkflowInput(
             product_name=details["product_name"],
             product_details=details["product_details"],
