@@ -741,3 +741,6 @@ def publish(
 @app.post("/learning-loop", dependencies=[Depends(require_api_key)])
 def learning_loop_unavailable() -> None:
     raise HTTPException(status_code=501, detail="Learning Loop is not implemented. No analytics were ingested and no model was trained.")
+
+from app.affiliate_scheduler import router as affiliate_scheduler_router
+app.include_router(affiliate_scheduler_router)
