@@ -298,3 +298,7 @@ Use this checkpoint and the latest owner-approved status above as the current pr
 - Never log or store APP_API_KEY, DATABASE_URL, Pinterest tokens, OAuth client secrets, Cloudflare tokens, or other secret values in this file.
 - Preserve user changes and untracked tests in local worktrees. Do not reset, overwrite, commit, or push the protected root checkout without explicit authorization.
 - Report facts as verified only when supported by a specific run, deployment, API response, or source/test inspection. Distinguish implementation, CI success, production deployment, and real production E2E as separate gates.
+
+## Owner-confirmed publication status — 2026-11-04
+
+- **Vtopmart Pinterest Pin — COMPLETED / GREEN.** The owner confirms the Pin has been published. The project checkpoint also records the Vtopmart publication ledger as completed. Treat this publication task as complete; do not publish a duplicate Pin. This status update records completion only and does not authorize any additional Pinterest publishing.
