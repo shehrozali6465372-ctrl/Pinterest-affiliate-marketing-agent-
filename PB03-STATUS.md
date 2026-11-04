@@ -118,3 +118,8 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 - Hub PR #10 merged as `0ebd8f1b3c329fff80011559f9fac919eb17bead`: adds a mocked end-to-end regression where the first read-only Pinterest account lookup returns 401, Hub sends exactly one authenticated refresh request using server-side client credentials, retries the read-only account lookup once, and does not expose the client secret. Pinterest Credential Security workflow passed on head `45df539c332dc2290606d905aa09101f6ad0ba49`.
 - These changes improve and test the recovery path; they do **not** constitute a real production token rotation. At the last known metadata check the access token expiry was 2026-11-27 and refresh-token expiry 2026-12-27, so no natural expiry-triggered refresh has yet occurred. Do not force expiry. A live refresh before natural expiry would rotate the production credential and requires explicit owner approval; after it occurs, verify successful Hub account lookup and updated non-secret Neon expiry/updated_at metadata. **PB-05 remains the sole OPEN technical blocker until that live proof exists.**
 - No production token was decrypted, sent to Pinterest, refreshed, or rotated. No production DB row was modified. No Pin or board was created or published. Test PRs are test-only; no deployment was needed for these test changes.
+
+
+## Latest owner-confirmed completion — 2026-11-04
+
+- **Vtopmart Pin publication — CLOSED / GREEN.** Owner confirms the Pin has been published; the project context checkpoint records its publication ledger as completed. Mark this publication item complete. Do not republish or create a duplicate. No new Pinterest publish request was issued as part of this documentation update.
