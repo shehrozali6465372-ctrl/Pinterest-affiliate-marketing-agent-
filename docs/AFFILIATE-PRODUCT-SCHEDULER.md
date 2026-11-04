@@ -43,3 +43,16 @@ Creating the schema or deploying code must not create a schedule, board, or Pin.
 ## Verification boundary
 
 These changes are on the feature branch only. CI has not yet run against this branch. No migration has been applied to production Neon, no production schedule has been created or activated, and no Pinterest board or Pin has been created.
+
+
+## Deployment order (not executed)
+
+1. Merge only after all required CI checks pass.
+2. Deploy the Agent application.
+3. Apply the additive schema explicitly with `python scripts/migrate.py` against the intended database. The application does not run migrations automatically at startup.
+4. Verify the new tables using read-only SQL.
+5. Verify authenticated schedule creation in draft mode with test data only.
+6. Configure the GitHub Actions secret already used by the protected Agent workflows; verify the worker workflow while no active schedule exists.
+7. Only then, after the owner supplies product URLs and explicitly authorizes activation, create and activate a production schedule.
+
+The current PR does not run step 3, does not alter Render settings or GitHub secrets, and does not activate a schedule.
