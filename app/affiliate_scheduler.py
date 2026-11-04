@@ -362,3 +362,46 @@ def run_one_due_job() -> dict[str, object]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Scheduler worker could not safely process a due job.") from exc
+
+
+@router.get("/schedules/{schedule_id}", dependencies=[Depends(require_scheduler_key)])
+def get_schedule_status(schedule_id: int) -> dict[str, object]:
+    """Return schedule state and aggregate job counts without exposing affiliate URLs."""
+    try:
+        with connection() as conn:
+            schedule = conn.execute(
+                """
+                SELECT id, account_id, timezone, starts_on, ends_on, daily_pin_limit,
+                       board_name, status, created_at, updated_at
+                FROM affiliate_publishing_schedules WHERE id = %s
+                """,
+                (schedule_id,),
+            ).fetchone()
+            if not schedule:
+                raise HTTPException(status_code=404, detail="Schedule not found.")
+            sources = conn.execute(
+                "SELECT count(*) AS total FROM affiliate_product_sources WHERE schedule_id = %s",
+                (schedule_id,),
+            ).fetchone()["total"]
+            counts = conn.execute(
+                """
+                SELECT status, count(*) AS total
+                FROM affiliate_pin_jobs WHERE schedule_id = %s
+                GROUP BY status
+                """,
+                (schedule_id,),
+            ).fetchall()
+        job_counts = {row["status"]: row["total"] for row in counts}
+        return {
+            "schedule_id": schedule["id"], "account_id": schedule["account_id"],
+            "timezone": schedule["timezone"], "starts_on": schedule["starts_on"].isoformat(),
+            "ends_on": schedule["ends_on"].isoformat(), "daily_pin_limit": schedule["daily_pin_limit"],
+            "board_name": schedule["board_name"], "status": schedule["status"],
+            "source_count": sources, "job_counts": job_counts,
+            "created_at": schedule["created_at"].isoformat(),
+            "updated_at": schedule["updated_at"].isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not read schedule status.") from exc
