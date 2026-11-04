@@ -197,3 +197,139 @@ def pause_schedule(schedule_id: int) -> dict[str, object]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Could not pause the schedule.") from exc
+
+
+@router.post("/run-due", dependencies=[Depends(require_scheduler_key)])
+def run_one_due_job() -> dict[str, object]:
+    """Claim and execute at most one due job. Never replays uncertain Pinterest writes."""
+    from fastapi import HTTPException
+    from app.workflow import ProductWorkflowInput, publish_product_end_to_end
+
+    try:
+        with connection() as conn:
+            # A worker crash during a Pin create has an unknown remote outcome.
+            # Quarantine stale claims instead of risking a duplicate publication.
+            conn.execute(
+                """
+                UPDATE affiliate_pin_jobs
+                SET status = 'uncertain', finished_at = now(), safe_error_code = 'worker_claim_expired'
+                WHERE status = 'processing' AND locked_at < now() - interval '15 minutes'
+                """
+            )
+            claimed = conn.execute(
+                """
+                WITH candidate AS (
+                    SELECT j.id
+                    FROM affiliate_pin_jobs j
+                    JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id
+                    WHERE j.status = 'queued'
+                      AND j.run_at <= now()
+                      AND s.status = 'active'
+                      AND (
+                        SELECT count(*)
+                        FROM affiliate_pin_jobs day_jobs
+                        WHERE day_jobs.schedule_id = j.schedule_id
+                          AND day_jobs.local_run_date = j.local_run_date
+                          AND day_jobs.status IN ('processing', 'succeeded')
+                      ) < s.daily_pin_limit
+                    ORDER BY j.run_at, j.id
+                    FOR UPDATE OF j SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE affiliate_pin_jobs j
+                SET status = 'processing', locked_at = now(), attempt_count = attempt_count + 1
+                FROM candidate c
+                WHERE j.id = c.id
+                RETURNING j.id, j.schedule_id, j.idempotency_key,
+                          j.attempt_count, j.source_id
+                """
+            ).fetchone()
+            if not claimed:
+                return {"claimed": False, "processed": False, "reason": "no_due_job"}
+            details = conn.execute(
+                """
+                SELECT s.account_id, s.board_name, s.board_description,
+                       p.product_name, p.product_details, p.affiliate_url
+                FROM affiliate_publishing_schedules s
+                JOIN affiliate_product_sources p ON p.schedule_id = s.id
+                WHERE s.id = %s AND p.id = %s AND p.enabled = TRUE
+                """,
+                (claimed["schedule_id"], claimed["source_id"]),
+            ).fetchone()
+            if not details:
+                conn.execute(
+                    """
+                    UPDATE affiliate_pin_jobs
+                    SET status = 'failed', finished_at = now(), safe_error_code = 'source_unavailable'
+                    WHERE id = %s
+                    """,
+                    (claimed["id"],),
+                )
+                return {"claimed": True, "processed": False, "job_id": claimed["id"], "reason": "source_unavailable"}
+        payload = ProductWorkflowInput(
+            product_name=details["product_name"],
+            product_details=details["product_details"],
+            affiliate_url=details["affiliate_url"],
+            account_id=details["account_id"],
+            board_name=details["board_name"],
+            board_description=details["board_description"],
+        )
+        try:
+            result = publish_product_end_to_end(
+                payload,
+                idempotency_key=claimed["idempotency_key"],
+                x_request_id=f"affiliate-scheduler-{claimed['id']}",
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "workflow_rejected"
+            detail_lower = str(detail).casefold()
+            uncertain = exc.status_code in (409, 502) or "uncertain" in detail_lower or "inspect" in detail_lower or "safely recorded" in detail_lower
+            retryable = exc.status_code == 503 and not uncertain and claimed["attempt_count"] < 3
+            with connection() as conn:
+                if retryable:
+                    delay_minutes = 5 * (2 ** (claimed["attempt_count"] - 1))
+                    conn.execute(
+                        """
+                        UPDATE affiliate_pin_jobs
+                        SET status = 'queued', locked_at = NULL,
+                            run_at = now() + (%s * interval '1 minute'),
+                            safe_error_code = 'transient_workflow_failure'
+                        WHERE id = %s AND status = 'processing'
+                        """,
+                        (delay_minutes, claimed["id"]),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE affiliate_pin_jobs
+                        SET status = %s, finished_at = now(), safe_error_code = %s
+                        WHERE id = %s AND status = 'processing'
+                        """,
+                        ("uncertain" if uncertain else "failed",
+                         "publish_outcome_uncertain" if uncertain else f"workflow_http_{exc.status_code}",
+                         claimed["id"]),
+                    )
+            return {
+                "claimed": True, "processed": True, "job_id": claimed["id"],
+                "status": "retry_queued" if retryable else ("uncertain" if uncertain else "failed"),
+                "http_status": exc.status_code,
+            }
+        with connection() as conn:
+            conn.execute(
+                """
+                UPDATE affiliate_pin_jobs
+                SET status = 'succeeded', finished_at = now(), product_id = %s, pinterest_pin_id = %s,
+                    safe_error_code = NULL
+                WHERE id = %s AND status = 'processing'
+                """,
+                (result.get("product_id"), result.get("pin_id"), claimed["id"]),
+            )
+        return {
+            "claimed": True, "processed": True, "job_id": claimed["id"],
+            "status": "succeeded", "published": bool(result.get("published")),
+            "already_published": bool(result.get("already_published")),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Scheduler worker could not safely process a due job.") from exc
