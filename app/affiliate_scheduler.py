@@ -294,7 +294,8 @@ def run_one_due_job() -> dict[str, object]:
                     """,
                     (claimed["id"],),
                 )
-                _complete_schedule_if_terminal(conn, claimed["schedule_id"])\n                return {"claimed": True, "processed": False, "job_id": claimed["id"], "reason": "source_unavailable"}
+                _complete_schedule_if_terminal(conn, claimed["schedule_id"])
+                return {"claimed": True, "processed": False, "job_id": claimed["id"], "reason": "source_unavailable"}
         payload = ProductWorkflowInput(
             product_name=details["product_name"],
             product_details=details["product_details"],
