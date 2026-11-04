@@ -19,6 +19,22 @@ from app.database import connection
 router = APIRouter(prefix="/affiliate-scheduler", tags=["affiliate-scheduler"])
 DEFAULT_POSTING_TIMES = (time(9, 0), time(12, 0), time(15, 0), time(18, 0), time(21, 0))
 
+def _complete_schedule_if_terminal(conn, schedule_id: int) -> None:
+    conn.execute(
+        """
+        UPDATE affiliate_publishing_schedules s
+        SET status = 'completed', updated_at = now()
+        WHERE s.id = %s AND s.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM affiliate_pin_jobs j
+            WHERE j.schedule_id = s.id AND j.status IN ('queued', 'processing')
+          )
+        """,
+        (schedule_id,),
+    )
+
+
+
 
 def require_scheduler_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
     if not settings.app_api_key:
@@ -216,6 +232,17 @@ def run_one_due_job() -> dict[str, object]:
                 WHERE status = 'processing' AND locked_at < now() - interval '15 minutes'
                 """
             )
+            conn.execute(
+                """
+                UPDATE affiliate_publishing_schedules s
+                SET status = 'completed', updated_at = now()
+                WHERE s.status = 'active'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM affiliate_pin_jobs j
+                    WHERE j.schedule_id = s.id AND j.status IN ('queued', 'processing')
+                  )
+                """
+            )
             claimed = conn.execute(
                 """
                 WITH candidate AS (
@@ -309,6 +336,7 @@ def run_one_due_job() -> dict[str, object]:
                          "publish_outcome_uncertain" if uncertain else f"workflow_http_{exc.status_code}",
                          claimed["id"]),
                     )
+                    _complete_schedule_if_terminal(conn, claimed["schedule_id"])
             return {
                 "claimed": True, "processed": True, "job_id": claimed["id"],
                 "status": "retry_queued" if retryable else ("uncertain" if uncertain else "failed"),
@@ -324,6 +352,7 @@ def run_one_due_job() -> dict[str, object]:
                 """,
                 (result.get("product_id"), result.get("pin_id"), claimed["id"]),
             )
+            _complete_schedule_if_terminal(conn, claimed["schedule_id"])
         return {
             "claimed": True, "processed": True, "job_id": claimed["id"],
             "status": "succeeded", "published": bool(result.get("published")),
