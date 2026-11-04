@@ -1,0 +1,67 @@
+name: Affiliate Scheduler Worker
+
+on:
+  schedule:
+    # Hourly wake-up; due jobs are evaluated in their configured IANA timezone.
+    # GitHub Actions cron is best-effort and may be delayed.
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: affiliate-scheduler-worker
+  cancel-in-progress: false
+
+jobs:
+  run-one-due-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      AGENT_BASE_URL: https://pinterest-affiliate-marketing-agent.onrender.com
+      APP_API_KEY: ${{ secrets.PINTEREST_AGENT_APP_API_KEY }}
+    steps:
+      - name: Validate required configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$APP_API_KEY" ]]; then
+            echo "::error::Configure PINTEREST_AGENT_APP_API_KEY before enabling the scheduler."
+            exit 1
+          fi
+
+      - name: Claim and process at most one due job
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --max-time 240 \
+            --request POST "$AGENT_BASE_URL/affiliate-scheduler/run-due" \
+            --header "X-API-Key: $APP_API_KEY" \
+            --header 'Content-Type: application/json')"
+          if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+            echo "::error::Scheduler endpoint returned HTTP $status."
+            python - "$response_file" <<'PY'
+          import json, sys
+          try:
+              body = json.load(open(sys.argv[1], encoding="utf-8"))
+              detail = body.get("detail", "No error detail") if isinstance(body, dict) else "Unexpected response"
+              if not isinstance(detail, str):
+                  detail = "Structured API error"
+              print(json.dumps({"error": detail}, separators=(",", ":")))
+          except Exception:
+              print('{"error":"Non-JSON error response"}')
+          PY
+            exit 1
+          fi
+          python - "$response_file" <<'PY'
+          import json, sys
+          body = json.load(open(sys.argv[1], encoding="utf-8"))
+          safe = {key: body.get(key) for key in ("claimed", "processed", "job_id", "status", "reason", "http_status")}
+          print(json.dumps(safe, separators=(",", ":")))
+          PY
