@@ -123,3 +123,13 @@ Do not reopen PB-03. Continue with the next genuinely open verification item, pr
 ## Latest owner-confirmed completion — 2026-11-04
 
 - **Vtopmart Pin publication — CLOSED / GREEN.** Owner confirms the Pin has been published; the project context checkpoint records its publication ledger as completed. Mark this publication item complete. Do not republish or create a duplicate. No new Pinterest publish request was issued as part of this documentation update.
+
+
+## Phase 11 operational closeout — 2026-11-04
+
+- **Phase 11 — CLOSED / GREEN for operational execution.** One condition-based verification remains deferred: PB-05 natural Pinterest OAuth token refresh. This is not an operational Phase 11 blocker.
+- Owner confirmed by screenshots that branch protection was saved for both repositories' `main` branches. Agent required checks: `test`, `pytest`. Hub required check: `credential-security`. PR-required, status-check, up-to-date-branch, conversation-resolution and no-bypass protections are enabled; force pushes/deletions are disabled. This is owner/screenshot-confirmed; GitHub API read-back was unavailable (403), so it is not independently API-verified.
+- Agent PRs #55, #56 and #58, and Hub PR #11 are merged. Vtopmart Pin publication is owner-confirmed completed; do not publish a duplicate.
+- Neon backup and isolated restore rehearsal remain completed; do not repeat.
+- **PB-05 — DEFERRED / NATURAL-EVENT CONDITION.** Keep valid production OAuth credentials unchanged. Do not force expiry, manually rotate, or trigger refresh solely for testing. When natural refresh occurs in the configured window, verify a successful read-only Pinterest account lookup and updated non-secret credential expiry/`updated_at` metadata in Neon. Never expose token plaintext or secrets. Reopen only this verification item when naturally due.
+- No production credential, database row, deployment, runtime setting, Pin, or board was changed/created by this documentation closeout.

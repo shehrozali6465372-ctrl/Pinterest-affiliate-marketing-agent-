@@ -302,3 +302,13 @@ Use this checkpoint and the latest owner-approved status above as the current pr
 ## Owner-confirmed publication status — 2026-11-04
 
 - **Vtopmart Pinterest Pin — COMPLETED / GREEN.** The owner confirms the Pin has been published. The project checkpoint also records the Vtopmart publication ledger as completed. Treat this publication task as complete; do not publish a duplicate Pin. This status update records completion only and does not authorize any additional Pinterest publishing.
+
+
+## Phase 11 operational closeout — 2026-11-04
+
+- Phase 11 is **CLOSED for operational execution**. This closeout accepts one condition-based deferred verification: PB-05 natural Pinterest OAuth token refresh.
+- Owner confirmed by screenshots that branch protection was saved for both repositories' `main` branches. Agent required checks are `test` and `pytest`; Hub required check is `credential-security`. PR-required, status-check, up-to-date-branch, conversation-resolution and no-bypass settings are enabled; force-push/deletion are disabled. This is owner/screenshot-confirmed. GitHub API branch-protection read-back was unavailable (403), so do not call it API-independently verified.
+- Agent PRs #55, #56 and #58 are merged; Hub PR #11 is merged. PR #58 records owner-confirmed Vtopmart Pin publication as completed/green. Do not publish a duplicate.
+- Neon backup and isolated restore rehearsal are completed; do not repeat.
+- **PB-05 — DEFERRED / CONDITION-BASED, not an operational Phase 11 blocker.** Leave current production OAuth credentials unchanged. Do not force expiry, manually rotate, or trigger refresh solely for testing. When the token naturally enters its configured refresh window and normal server-side refresh occurs, verify successful read-only Pinterest account lookup and updated non-secret expiry/`updated_at` metadata in Neon. Never reveal token plaintext or secrets. Reopen only this verification item when naturally due.
+- No real Pin/board creation, publication, production credential rotation, production database mutation, or deployment was performed for this closeout.
