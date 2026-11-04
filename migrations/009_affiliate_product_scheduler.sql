@@ -48,3 +48,9 @@ CREATE TABLE affiliate_pin_jobs (
 CREATE INDEX affiliate_pin_jobs_due_idx ON affiliate_pin_jobs (run_at, id) WHERE status = 'queued';
 CREATE INDEX affiliate_pin_jobs_recovery_idx ON affiliate_pin_jobs (locked_at, id) WHERE status = 'processing';
 CREATE INDEX affiliate_product_sources_schedule_idx ON affiliate_product_sources (schedule_id, enabled, id);
+
+-- One active schedule per Pinterest account prevents overlapping plans from
+-- exceeding the account-level daily publication cap.
+CREATE UNIQUE INDEX affiliate_one_active_schedule_per_account_idx
+ ON affiliate_publishing_schedules (account_id)
+ WHERE status = 'active';
