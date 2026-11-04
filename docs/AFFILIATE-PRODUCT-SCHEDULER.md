@@ -56,3 +56,10 @@ These changes are on the feature branch only. CI has not yet run against this br
 7. Only then, after the owner supplies product URLs and explicitly authorizes activation, create and activate a production schedule.
 
 The current PR does not run step 3, does not alter Render settings or GitHub secrets, and does not activate a schedule.
+
+## Operational semantics
+
+- Only one active schedule is permitted per Pinterest account, preventing overlapping schedules from bypassing the account-level five-per-day cap.
+- A schedule cannot start on a past local calendar date. Its configured posting slots use the schedule's IANA timezone.
+- Pause cancels queued work; a job already claimed and running may finish. The API response explicitly reports this.
+- A missing/disabled product source is marked failed and the schedule is still eligible to complete.
