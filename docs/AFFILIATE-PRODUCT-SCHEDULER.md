@@ -28,3 +28,18 @@ Creating the schema or deploying code must not create a schedule, board, or Pin.
 - [ ] Isolated PostgreSQL and mocked-provider tests.
 - [ ] PR and required CI checks.
 - [ ] Keep production schedule inactive until product data is supplied and explicitly activated.
+
+
+## Implemented on the feature branch
+
+- Draft schedule API accepts 1–10 product sources and preserves affiliate URLs without rewriting tracking parameters.
+- Draft schedule records account, IANA timezone, start date, duration (1–30 days), daily limit (1–5), and board metadata.
+- Explicit activation transaction creates deterministic local-time slots at 09:00, 12:00, 15:00, 18:00, and 21:00 (limited by daily_pin_limit), converted to UTC. Product sources are assigned round-robin.
+- Pause endpoint cancels queued jobs but retains history.
+- Protected worker claims at most one due job per invocation using PostgreSQL row locking, invokes the existing product workflow, retries selected pre-publication 503 failures with bounded backoff, and quarantines uncertain outcomes rather than replaying them.
+- Hourly GitHub Actions workflow invokes the protected worker. It is best-effort; posting can be delayed. It only processes jobs after an operator has activated a schedule.
+- Tests cover source-count validation, timezone validation, tracking URL preservation, draft-only creation, and API-key enforcement.
+
+## Verification boundary
+
+These changes are on the feature branch only. CI has not yet run against this branch. No migration has been applied to production Neon, no production schedule has been created or activated, and no Pinterest board or Pin has been created.
