@@ -1,22 +1,44 @@
-"""Generate Pin imagery with Workers AI; return in-memory data for Pinterest image_base64."""
+"""Cloudflare Workers AI image generation with bounded response memory."""
 from __future__ import annotations
 
 import base64
+import json
 import logging
-import time
 
 import httpx
 
 from app.config import settings
-from app.provider_retry import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
-MAX_INLINE_IMAGE_BYTES = 32 * 1024 * 1024
+_ERROR_BODY_LIMIT = 64 * 1024
+
 
 class ImageGenerationError(RuntimeError):
     """Raised when image generation fails or returns unusable data."""
 
-def _cloudflare_error_codes(response: httpx.Response) -> list[int | str]:
+
+def _read_limited_response(response: httpx.Response, max_bytes: int) -> bytes:
+    """Read a streamed response without ever buffering more than max_bytes."""
+    content_length = response.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise ImageGenerationError("Cloudflare Workers AI image response exceeds the configured size limit.")
+        except ValueError:
+            # An invalid Content-Length is not trusted; the streaming limit still applies.
+            pass
+
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_bytes(chunk_size=64 * 1024):
+        total += len(chunk)
+        if total > max_bytes:
+            raise ImageGenerationError("Cloudflare Workers AI image response exceeds the configured size limit.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _safe_cloudflare_error(stage: str, response: httpx.Response) -> ImageGenerationError:
     codes: list[int | str] = []
     try:
         body = response.json()
@@ -27,20 +49,23 @@ def _cloudflare_error_codes(response: httpx.Response) -> list[int | str]:
                     codes.append(item["code"])
     except ValueError:
         pass
-    return codes
-
-
-def _safe_cloudflare_error(stage: str, response: httpx.Response) -> ImageGenerationError:
-    codes = _cloudflare_error_codes(response)
     suffix = f"; provider_codes={codes}" if codes else ""
-    logger.error("image_generation stage=cloudflare outcome=failed http_status=%s provider_codes=%s", response.status_code, codes)
+    logger.error(
+        "image_generation stage=cloudflare outcome=failed http_status=%s provider_codes=%s",
+        response.status_code,
+        codes,
+    )
     return ImageGenerationError(f"Cloudflare {stage} failed (HTTP {response.status_code}{suffix}).")
 
 
-def generate_and_host_pin_image(*, product_name: str, product_details: str) -> dict[str, str]:
-    """Generate an image and return a data URL; never upload or persist the image."""
+def generate_pin_image(*, product_name: str, product_details: str) -> dict[str, str]:
+    """Generate a bounded image data URL; no separate image host is used."""
     if not settings.cloudflare_api_token or not settings.cloudflare_account_id:
         raise ImageGenerationError("Cloudflare Workers AI and account credentials are not configured.")
+
+    max_image_bytes = settings.cloudflare_image_max_bytes
+    max_base64_chars = 4 * ((max_image_bytes + 2) // 3)
+    max_json_bytes = max_base64_chars + _ERROR_BODY_LIMIT
     prompt = (
         "Create a polished, realistic vertical 2:3 Pinterest product lifestyle image for a USA "
         "home organization audience. Feature the product accurately, with no logos, watermarks, "
@@ -51,56 +76,53 @@ def generate_and_host_pin_image(*, product_name: str, product_details: str) -> d
     headers = {"Authorization": f"Bearer {settings.cloudflare_api_token}"}
     timeout = httpx.Timeout(90.0, connect=10.0)
     base = f"https://api.cloudflare.com/client/v4/accounts/{settings.cloudflare_account_id}"
+
     try:
         with httpx.Client(timeout=timeout) as client:
-            for attempt in range(2):
-                generated = client.post(
-                    f"{base}/ai/run/{settings.cloudflare_image_model}",
-                    headers={**headers, "Content-Type": "application/json"},
-                    json={"prompt": prompt},
-                )
-                if not generated.is_error:
-                    break
-                codes = _cloudflare_error_codes(generated)
-                retryable = (
-                    generated.status_code in {500, 502, 503, 504}
-                    or (generated.status_code == 429 and 3040 in codes)
-                )
-                delay = retry_delay_seconds(generated, attempt + 1) if retryable and attempt == 0 else None
-                if delay is None:
-                    raise _safe_cloudflare_error("Workers AI generation", generated)
-                logger.warning(
-                    "image_generation stage=cloudflare outcome=retrying http_status=%s provider_codes=%s retry_delay_ms=%s attempt=%s",
-                    generated.status_code, codes, int(delay * 1000), attempt + 1,
-                )
-                time.sleep(delay)
-            else:
-                raise ImageGenerationError("Cloudflare Workers AI generation retry budget exhausted.")
-            content_type = generated.headers.get("content-type", "").lower()
-            if "image/" in content_type:
-                image_bytes = generated.content
-                image_mime = content_type.split(";", 1)[0]
-            else:
-                body = generated.json()
-                result = body.get("result") if isinstance(body, dict) else None
-                image_value = result.get("image") if isinstance(result, dict) else None
-                if not isinstance(image_value, str) or not image_value:
-                    raise ImageGenerationError("Cloudflare Workers AI returned no image data (HTTP 200).")
-                image_bytes = base64.b64decode(image_value, validate=True)
-                image_mime = "image/png"
-            if image_mime not in {"image/png", "image/jpeg", "image/webp"}:
-                raise ImageGenerationError("Cloudflare Workers AI returned an unsupported image content type.")
-            if len(image_bytes) < 1024:
-                raise ImageGenerationError("Cloudflare Workers AI returned an unexpectedly small image.")
-            if len(image_bytes) > MAX_INLINE_IMAGE_BYTES:
-                raise ImageGenerationError("Generated image exceeds the 32 MiB inline-image limit supported by DeepSeek and Pinterest.")
-            encoded = base64.b64encode(image_bytes).decode("ascii")
-            return {
-                "image_url": f"data:{image_mime};base64,{encoded}",
-                "model": settings.cloudflare_image_model,
-                "mime_type": image_mime,
-                "byte_length": str(len(image_bytes)),
-            }
+            with client.stream(
+                "POST",
+                f"{base}/ai/run/{settings.cloudflare_image_model}",
+                headers={**headers, "Content-Type": "application/json"},
+                json={"prompt": prompt},
+            ) as generated:
+                if generated.is_error:
+                    error_body = _read_limited_response(generated, _ERROR_BODY_LIMIT)
+                    error_response = httpx.Response(
+                        status_code=generated.status_code,
+                        headers=generated.headers,
+                        content=error_body,
+                        request=generated.request,
+                    )
+                    raise _safe_cloudflare_error("Workers AI generation", error_response)
+
+                content_type = generated.headers.get("content-type", "").lower()
+                if content_type.startswith("image/"):
+                    image_bytes = _read_limited_response(generated, max_image_bytes)
+                    image_mime = content_type.split(";", 1)[0]
+                else:
+                    response_bytes = _read_limited_response(generated, max_json_bytes)
+                    body = json.loads(response_bytes)
+                    result = body.get("result") if isinstance(body, dict) else None
+                    image_value = result.get("image") if isinstance(result, dict) else None
+                    if not isinstance(image_value, str) or not image_value:
+                        raise ImageGenerationError("Cloudflare Workers AI returned no image data (HTTP 200).")
+                    if len(image_value) > max_base64_chars:
+                        raise ImageGenerationError("Cloudflare Workers AI image response exceeds the configured size limit.")
+                    image_bytes = base64.b64decode(image_value, validate=True)
+                    image_mime = "image/png"
+
+                if image_mime not in {"image/png", "image/jpeg", "image/webp"}:
+                    raise ImageGenerationError("Cloudflare Workers AI returned an unsupported image content type.")
+                if len(image_bytes) < 1024:
+                    raise ImageGenerationError("Cloudflare Workers AI returned an unexpectedly small image.")
+                if len(image_bytes) > max_image_bytes:
+                    raise ImageGenerationError("Cloudflare Workers AI image response exceeds the configured size limit.")
+
+                encoded = base64.b64encode(image_bytes).decode("ascii")
+                return {
+                    "image_url": f"data:{image_mime};base64,{encoded}",
+                    "model": settings.cloudflare_image_model,
+                }
     except ImageGenerationError:
         raise
     except httpx.TimeoutException as exc:

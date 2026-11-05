@@ -2,7 +2,9 @@
 
 External integrations only report success after real operations complete.
 """
+import asyncio
 import hmac
+import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -11,20 +13,46 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
 from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
-from app.credential_vault import get_pinterest_credential
-from app.pinterest import PinterestPublishError, image_media_source
-from app.publishing import PublicationConflict, PublicationPersistenceError, publish_pin_with_ledger
-from app.pin_limits import validate_pin_text_fields
+from app.publishing_gateway import publish_pin
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _workflow_checkpoint_cleanup_loop() -> None:
+    """Best-effort hourly cleanup; safe across multiple service workers."""
+    from app.config import settings
+    from app.database import cleanup_expired_workflow_checkpoints
+
+    while True:
+        try:
+            removed = await asyncio.to_thread(
+                cleanup_expired_workflow_checkpoints,
+                retention_hours=settings.workflow_checkpoint_retention_hours,
+            )
+            if removed:
+                logger.info("workflow_checkpoint_cleanup cleared_payloads=%s retention_hours=%s", removed, settings.workflow_checkpoint_retention_hours)
+        except Exception as exc:
+            logger.warning("workflow_checkpoint_cleanup outcome=failed exception_type=%s", type(exc).__name__)
+        await asyncio.sleep(3600)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
+    cleanup_task = asyncio.create_task(_workflow_checkpoint_cleanup_loop())
     try:
-        from app.database import close_pool
-        close_pool()
-    except Exception:
-        pass
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            from app.database import close_pool
+            close_pool()
+        except Exception:
+            pass
 
 
 app = FastAPI(
@@ -128,20 +156,20 @@ def health() -> dict[str, str]:
 
 @app.get("/readiness", dependencies=[Depends(require_api_key)])
 def readiness() -> dict[str, object]:
+    # Static-token publishing has been retired; legacy env vars never enable publishing.
+    legacy_pinterest_configured = False
     from app.credential_vault import token_encryption_key_is_valid
 
     encryption_key_valid = token_encryption_key_is_valid()
     account_workflow_configured = bool(settings.database_url and encryption_key_valid)
     credential_ingest_configured = bool(settings.pinterest_credential_ingest_key)
-    vault_publish_configured = bool(account_workflow_configured and settings.pinterest_board_id)
     return {
         "database_configured": bool(settings.database_url),
-        # Backwards-compatible readiness flag: config presence only; account connection is not checked here.
-        "pinterest_configured": vault_publish_configured,
-        # No active route publishes with the legacy plaintext environment token.
-        "pinterest_legacy_direct_configured": False,
-        "pinterest_legacy_token_present": bool(settings.pinterest_access_token),
-        # Stored OAuth publishing needs DB + encryption; this does not prove account connection.
+        # Backwards-compatible field: this refers only to the legacy direct-token publish route.
+        "pinterest_configured": legacy_pinterest_configured,
+        "pinterest_legacy_direct_configured": legacy_pinterest_configured,
+        "pinterest_legacy_direct_publishing_enabled": False,
+        # Publishing from a stored OAuth credential needs DB + encryption; this does not prove account connection.
         "pinterest_account_workflow_configured": account_workflow_configured,
         "pinterest_token_encryption_key_valid": encryption_key_valid,
         # Hub-to-agent OAuth credential ingestion is a separate service-to-service path.
@@ -405,9 +433,7 @@ def refresh_pinterest_credential(
             now + timedelta(seconds=int(token_data["refresh_token_expires_in"]))
         ).isoformat()
     else:
-        # A successful refresh may omit refresh-token expiry metadata. Preserve
-        # the previously stored expiry rather than reporting it as unknown.
-        refresh_token_expires_at = stored.get("refresh_token_expires_at")
+        refresh_token_expires_at = None
 
     try:
         saved = store_pinterest_credential({
@@ -429,14 +455,152 @@ def refresh_pinterest_credential(
         "refreshed": True,
         "account_id": saved["account_id"],
         "expires_at": saved.get("expires_at").isoformat() if saved.get("expires_at") else expires_at,
-        "refresh_token_expires_at": (
-            saved.get("refresh_token_expires_at").isoformat()
-            if saved.get("refresh_token_expires_at")
-            else refresh_token_expires_at.isoformat()
-            if isinstance(refresh_token_expires_at, datetime)
-            else refresh_token_expires_at
-        ),
+        "refresh_token_expires_at": saved.get("refresh_token_expires_at").isoformat() if saved.get("refresh_token_expires_at") else refresh_token_expires_at,
     }
+
+
+class ManualPublishInput(BaseModel):
+    account_id: str = Field(min_length=1, max_length=200)
+    board_id: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=500)
+    image_url: HttpUrl
+    destination_url: str = Field(min_length=8, max_length=4096)
+
+    @field_validator("title")
+    @classmethod
+    def clean_title(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("title must not be blank")
+        return value.strip()
+
+    @field_validator("destination_url")
+    @classmethod
+    def validate_destination(cls, value: str) -> str:
+        parts = urlsplit(value)
+        if value != value.strip() or parts.scheme.lower() not in {"http", "https"} or not parts.netloc or parts.username or parts.password:
+            raise ValueError("destination_url must be an absolute HTTP(S) URL without embedded credentials")
+        return value
+
+
+@app.post("/integrations/pinterest/publish-manual")
+def publish_manual_pin(
+    payload: ManualPublishInput,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
+    _: None = Depends(require_credential_ingest_key),
+) -> dict[str, object]:
+    """Publish a Hub-authored Pin through persisted content and the publication ledger."""
+    import hashlib
+    import json
+    import httpx
+    from app.credential_vault import get_pinterest_credential
+    from app.database import persist_manual_publish_draft, begin_publish_attempt, finish_publish_attempt
+    from app.pinterest import image_media_source, PinterestPublishError
+
+    fingerprint_payload = {
+        "account_id": payload.account_id, "board_id": payload.board_id,
+        "title": payload.title, "description": payload.description,
+        "image_url": str(payload.image_url), "destination_url": payload.destination_url,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    try:
+        credential = get_pinterest_credential(payload.account_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from None
+    except Exception:
+        # Vault configuration, decryption, and DB errors must fail closed without
+        # exposing internal details or reaching Pinterest.
+        raise HTTPException(status_code=503, detail="Pinterest credential is temporarily unavailable; no Pin publish request was sent.") from None
+    token = credential["access_token"]
+    try:
+        media_source = image_media_source(str(payload.image_url))
+    except PinterestPublishError as exc:
+        raise HTTPException(status_code=422, detail="Image media source is invalid; no Pin publish request was sent.") from None
+    except Exception:
+        raise HTTPException(status_code=422, detail="Image media source could not be prepared; no Pin publish request was sent.") from None
+    base = settings.pinterest_api_base_url.rstrip("/")
+
+    # Verify account and board ownership before persisting or reserving a publish.
+    try:
+        with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+            account_response = client.get(f"{base}/user_account", headers={"Authorization": f"Bearer {token}"})
+            if not account_response.is_success:
+                raise HTTPException(status_code=401 if account_response.status_code in (401, 403) else 502, detail="Stored Pinterest account could not be verified.")
+            account_data = account_response.json()
+            actual_user_id = account_data.get("id") if isinstance(account_data, dict) else None
+            expected_user_id = credential.get("pinterest_user_id")
+            expected_account_id = f"pinterest:{expected_user_id}" if expected_user_id else None
+            if (not isinstance(actual_user_id, (str, int))
+                    or str(actual_user_id) != str(expected_user_id or "")
+                    or payload.account_id != expected_account_id):
+                raise HTTPException(status_code=409, detail="Stored Pinterest credential identity does not match the requested account; no Pin publish request was sent.")
+            boards_response = client.get(f"{base}/boards?page_size=100", headers={"Authorization": f"Bearer {token}"})
+            if not boards_response.is_success:
+                raise HTTPException(status_code=502, detail="Could not verify the selected Pinterest board.")
+            boards_data = boards_response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(status_code=502, detail="Pinterest preflight failed; no Pin publish request was sent.") from None
+    board_items = boards_data.get("items", []) if isinstance(boards_data, dict) else []
+    bookmark = boards_data.get("bookmark") if isinstance(boards_data, dict) else None
+    seen_bookmarks: set[str] = set()
+    board_found = any(isinstance(item, dict) and str(item.get("id")) == payload.board_id for item in board_items)
+    # Pinterest boards are paginated; don't reject a valid board just because it
+    # isn't in the first 100. Stop on repeated cursors or a conservative page cap.
+    pagination_limited = False
+    for page_number in range(99):
+        if board_found or not isinstance(bookmark, str) or not bookmark or bookmark in seen_bookmarks:
+            break
+        if page_number == 98:
+            pagination_limited = True
+        seen_bookmarks.add(bookmark)
+        try:
+            with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+                page_response = client.get(
+                    f"{base}/boards",
+                    params={"page_size": 100, "bookmark": bookmark},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if not page_response.is_success:
+                raise HTTPException(status_code=502, detail="Could not verify the selected Pinterest board across pages.")
+            page_data = page_response.json()
+        except HTTPException:
+            raise
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(status_code=502, detail="Pinterest board pagination failed; no Pin publish request was sent.") from None
+        page_items = page_data.get("items", []) if isinstance(page_data, dict) else []
+        board_found = any(isinstance(item, dict) and str(item.get("id")) == payload.board_id for item in page_items)
+        bookmark = page_data.get("bookmark") if isinstance(page_data, dict) else None
+    if not board_found and pagination_limited and isinstance(bookmark, str) and bookmark:
+        raise HTTPException(status_code=503, detail="Pinterest board list exceeded the safe verification limit; no Pin publish request was sent.")
+    if not board_found:
+        raise HTTPException(status_code=422, detail="Selected board does not belong to the connected Pinterest account or was not found.")
+
+    try:
+        product, content, created = persist_manual_publish_draft(
+            title=payload.title, description=payload.description,
+            image_url=str(payload.image_url), affiliate_url=payload.destination_url,
+            idempotency_key=idempotency_key, request_fingerprint=fingerprint,
+        )
+    except ValueError as exc:
+        if str(exc) == "idempotency_key_payload_mismatch":
+            raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different Pin data.") from None
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail="Could not persist or recover the manual Pin draft; no Pin publish request was sent.") from None
+
+    result = publish_pin(
+        product_id=product["id"], content_version_id=content["id"],
+        board_id=payload.board_id, account_id=payload.account_id,
+        access_token=token, title=payload.title, description=payload.description,
+        alt_text="", media_source=media_source,
+        destination_url=payload.destination_url,
+    )
+    return {**result, "draft_created": created}
+
 
 
 @app.post("/integrations/pinterest/operation")
@@ -450,56 +614,27 @@ def pinterest_account_operation(
         raise HTTPException(status_code=401, detail="Valid service credential required.")
     from app.credential_vault import get_pinterest_credential, revoke_pinterest_credential
     import httpx
-    try:
-        credential = get_pinterest_credential(payload.account_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from exc
     operation = payload.operation
     data = payload.payload
-    base = settings.pinterest_api_base_url.rstrip("/")
-    headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
     allowed = {
         "account": ("GET", "/user_account", None),
+        "boards": ("GET", "/boards?page_size=100", None),
         "create_board": ("POST", "/boards", {"name": str(data.get("name") or ""), "description": str(data.get("description") or "")}),
     }
-    if operation == "boards":
-        items: list[dict[str, object]] = []
-        bookmark: str | None = None
-        seen_bookmarks: set[str] = set()
-        try:
-            with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
-                for _page in range(100):
-                    params: dict[str, object] = {"page_size": 100}
-                    if bookmark:
-                        params["bookmark"] = bookmark
-                    response = client.get(f"{base}/boards", headers=headers, params=params)
-                    if not response.is_success:
-                        raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail="Pinterest board listing failed.")
-                    page = response.json() if response.content else {}
-                    if not isinstance(page, dict) or not isinstance(page.get("items"), list):
-                        raise HTTPException(status_code=502, detail="Pinterest returned an invalid board-list response.")
-                    items.extend(item for item in page["items"] if isinstance(item, dict))
-                    next_bookmark = page.get("bookmark")
-                    if not next_bookmark:
-                        return {"data": {"items": items, "bookmark": None}}
-                    next_bookmark = str(next_bookmark)
-                    if next_bookmark in seen_bookmarks:
-                        raise HTTPException(status_code=502, detail="Pinterest repeated a board pagination cursor.")
-                    seen_bookmarks.add(next_bookmark)
-                    bookmark = next_bookmark
-            raise HTTPException(status_code=502, detail="Pinterest board pagination exceeded the safety limit.")
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail="Pinterest board listing request failed.") from exc
     if operation == "disconnect":
         revoke_pinterest_credential(payload.account_id)
         return {"disconnected": True}
     if operation not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported Pinterest operation.")
+    try:
+        credential = get_pinterest_credential(payload.account_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from exc
+    base = settings.pinterest_api_base_url.rstrip("/")
+    headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
     method, path, body = allowed[operation]
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
-    if operation == "create_pin":
-        raise HTTPException(status_code=400, detail="Pin writes must use the canonical idempotent /workflow/publish-hub-pin gateway.")
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
             response = client.request(method, f"{base}{path}", headers=headers, json=body)
@@ -640,55 +775,9 @@ def get_publication_status(publication_id: int) -> dict[str, object]:
     return row
 
 
-@app.get("/publications/{publication_id}/pinterest-verification", dependencies=[Depends(require_configured_api_key)])
-def verify_publication_on_pinterest(publication_id: int) -> dict[str, object]:
-    """Read-only board pagination and Pin detail verification for an existing record."""
-    if publication_id <= 0:
-        raise HTTPException(status_code=422, detail="publication_id must be positive")
-    from app.database import get_publication
-    from app.credential_vault import get_pinterest_credential
-    from app.pinterest import PinterestReadError, get_pin_read_only, list_board_pins_read_only
-    try:
-        publication = get_publication(publication_id)
-        if publication is None:
-            raise HTTPException(status_code=404, detail="Publication not found")
-        account_id = publication.get("account_id")
-        board_id = publication.get("board_id")
-        if not account_id or not board_id:
-            raise HTTPException(status_code=409, detail="Publication lacks the account or board reference required for verification")
-        credential = get_pinterest_credential(str(account_id))
-        board_result = list_board_pins_read_only(board_id=str(board_id), access_token=credential["access_token"])
-        pins = board_result["items"]
-        expected_pin_id = publication.get("pinterest_pin_id")
-        matching_pin = next((pin for pin in pins if str(pin.get("id")) == str(expected_pin_id)), None) if expected_pin_id else None
-        detail = None
-        if matching_pin is not None:
-            detail = get_pin_read_only(pin_id=str(expected_pin_id), access_token=credential["access_token"])
-        # Return only operator-relevant Pin fields; never return credential material or raw provider bodies.
-        safe_pins = [{key: pin.get(key) for key in ("id", "board_id", "title", "description", "link", "created_at")} for pin in pins]
-        detail_matches = bool(detail and str(detail.get("id")) == str(expected_pin_id) and str(detail.get("board_id")) == str(board_id))
-        return {
-            "publication_id": publication_id, "publication_status": publication.get("status"),
-            "account_id": account_id, "board_id": board_id,
-            "board_pages_read": board_result["pages_read"],
-            "board_pins_seen": len(safe_pins), "pagination_complete": board_result["pagination_complete"],
-            "stored_pin_id": expected_pin_id, "stored_pin_found_on_board": matching_pin is not None,
-            "pin_detail_board_matches": detail_matches, "pins": safe_pins,
-            "read_only": True,
-        }
-    except HTTPException:
-        raise
-    except PinterestReadError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=409, detail="Stored Pinterest account credential is unavailable") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Pinterest publication verification could not be completed") from exc
-
-
 @app.post("/publications/{publication_id}/reconcile", dependencies=[Depends(require_configured_api_key)])
 def reconcile_publication(publication_id: int, payload: PublicationReconciliationInput) -> dict[str, object]:
-    """Operator-confirmed resolution of an `unknown` publish result; never publishes a Pin."""
+    """Operator-confirmed resolution of an unknown or stale pending publish; never publishes a Pin."""
     if publication_id <= 0:
         raise HTTPException(status_code=422, detail="publication_id must be positive")
     if payload.outcome == "succeeded" and not payload.pinterest_pin_id:
@@ -714,95 +803,26 @@ def reconcile_publication(publication_id: int, payload: PublicationReconciliatio
     return {"reconciled": True, "published": row.get("status") == "succeeded", "publication": row}
 
 
-def _publish_product_content(product_id: int, content_version_id: int, account_id: str) -> dict[str, object]:
+@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_configured_api_key)])
+def publish_product_content(product_id: int, content_version_id: int) -> dict[str, object]:
+    """Retired legacy route: static-token publishing is intentionally disabled."""
     if product_id <= 0 or content_version_id <= 0:
         raise HTTPException(status_code=422, detail="product_id and content_version_id must be positive integers")
-    if not account_id or not account_id.strip():
-        raise HTTPException(status_code=422, detail="X-Pinterest-Account-ID header is required")
-    if not settings.pinterest_board_id:
-        raise HTTPException(status_code=503, detail="PINTEREST_BOARD_ID must be configured before publishing.")
-
-    from app.database import get_content_version, get_product as fetch_product
-    try:
-        product = fetch_product(product_id)
-        if product is None:
-            raise HTTPException(status_code=404, detail="Product not found")
-        content = get_content_version(product_id, content_version_id)
-        if content is None:
-            raise HTTPException(status_code=404, detail="Content version not found")
-        try:
-            validate_pin_text_fields(
-                title=content["title"],
-                description=content["description"],
-                alt_text=content["alt_text"],
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-        try:
-            credential = get_pinterest_credential(account_id)
-        except LookupError as exc:
-            raise HTTPException(status_code=404, detail="Pinterest account is not connected in the credential vault.") from exc
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Stored Pinterest credential could not be read.") from exc
-
-        payload = {
-            "board_id": settings.pinterest_board_id,
-            "title": content["title"],
-            "description": content["description"],
-            "alt_text": content["alt_text"],
-            "media_source": image_media_source(product["image_url"]),
-            "link": product["affiliate_url"],
-        }
-        result = publish_pin_with_ledger(
-            product_id=product_id,
-            content_version_id=content_version_id,
-            board_id=settings.pinterest_board_id,
-            account_id=account_id,
-            access_token=credential["access_token"],
-            payload=payload,
-        )
-        return {
-            "published": result["published"],
-            "already_published": result["already_published"],
-            "pin_id": result["pin_id"],
-            "publication_id": result["publication_id"],
-            "http_status": result.get("http_status"),
-        }
-    except PublicationConflict as exc:
-        raise HTTPException(status_code=409, detail="A previous publication exists for this content and board, possibly under a different account. Verify the ledger and board before retrying.") from exc
-    except PinterestPublishError as exc:
-        if exc.outcome_uncertain:
-            raise HTTPException(status_code=502, detail="Pinterest publish outcome is uncertain. Automatic retry is blocked; verify the board before retrying.") from exc
-        raise HTTPException(status_code=exc.http_status or 502, detail="Pinterest rejected the Pin request. No successful Pin creation was confirmed.") from exc
-    except PublicationPersistenceError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Publish request could not be fully recorded. Inspect publication record and Pinterest board before retrying.") from exc
-
-
-@app.post("/products/{product_id}/content/{content_version_id}/publish", dependencies=[Depends(require_configured_api_key)])
-def publish_product_content(
-    product_id: int,
-    content_version_id: int,
-    account_id: str = Header(..., alias="X-Pinterest-Account-ID", min_length=1, max_length=200),
-) -> dict[str, object]:
-    return _publish_product_content(product_id, content_version_id, account_id)
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy publishing is disabled. Use the account-scoped encrypted-credential publishing integration.",
+    )
 
 
 @app.post("/publish", dependencies=[Depends(require_configured_api_key)])
-def publish(
-    payload: PublishRequest,
-    account_id: str = Header(..., alias="X-Pinterest-Account-ID", min_length=1, max_length=200),
-) -> dict[str, object]:
-    return _publish_product_content(payload.product_id, payload.content_version_id, account_id)
+def publish(payload: PublishRequest) -> dict[str, object]:
+    return publish_product_content(payload.product_id, payload.content_version_id)
 
 
 @app.post("/learning-loop", dependencies=[Depends(require_api_key)])
 def learning_loop_unavailable() -> None:
     raise HTTPException(status_code=501, detail="Learning Loop is not implemented. No analytics were ingested and no model was trained.")
+
 
 from app.affiliate_scheduler import router as affiliate_scheduler_router
 app.include_router(affiliate_scheduler_router)

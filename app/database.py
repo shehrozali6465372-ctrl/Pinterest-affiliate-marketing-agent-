@@ -164,6 +164,8 @@ def create_product_with_content_version(
     image_url: str | None,
     affiliate_url: str,
     idempotency_key: str,
+    request_fingerprint: str,
+    lease_token: str | None = None,
     provider: str,
     model_id: str,
     prompt_version: str,
@@ -171,24 +173,67 @@ def create_product_with_content_version(
     title: str,
     description: str,
     alt_text: str,
-    publication_board_id: str | None = None,
-    publication_account_id: str | None = None,
-) -> tuple[dict, dict] | tuple[dict, dict, dict]:
-    """Atomically persist product, first content version, and optional ledger reservation.
+) -> tuple[dict, dict]:
+    """Atomically persist a product and its first content version.
 
-    When a board is supplied, the pending publication row is inserted in the
-    same transaction as the product/content rows. A failure cannot consume an
-    idempotency key without also reserving the corresponding publication.
+    Both inserts share one pooled connection/transaction so a failed content
+    insert cannot leave an idempotency key attached to a half-created product.
     """
     with connection() as conn:
+        def finalize_generation(product_id: int) -> None:
+            if lease_token is None:
+                return
+            finalized = conn.execute(
+                """UPDATE workflow_generation_reservations
+                   SET status = 'persisted', product_id = %s, image_data_url = NULL, image_model = NULL,
+                       generated_content = NULL, content_model = NULL, lease_token = NULL,
+                       lease_expires_at = NULL, updated_at = now()
+                   WHERE idempotency_key = %s AND lease_token = %s::uuid AND status = 'generating'
+                     AND lease_expires_at > clock_timestamp()
+                   RETURNING idempotency_key""",
+                (product_id, idempotency_key, lease_token),
+            ).fetchone()
+            if finalized is None:
+                raise RuntimeError("workflow generation lease lost before atomic product/content completion")
+
         product = conn.execute(
             """
-            INSERT INTO products (product_name, product_details, image_url, affiliate_url, idempotency_key)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, product_name, product_details, image_url, affiliate_url, created_at, idempotency_key
+            INSERT INTO products
+                (product_name, product_details, image_url, affiliate_url,
+                 idempotency_key, request_fingerprint)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+            DO NOTHING
+            RETURNING id, product_name, product_details, image_url, affiliate_url,
+                      created_at, idempotency_key, request_fingerprint
             """,
-            (product_name, product_details, image_url, affiliate_url, idempotency_key),
+            (product_name, product_details, image_url, affiliate_url,
+             idempotency_key, request_fingerprint),
         ).fetchone()
+        if product is None:
+            # The unique index serializes concurrent requests sharing this key.
+            # Re-read the winner after ON CONFLICT waits for its transaction.
+            product = conn.execute(
+                """SELECT id, product_name, product_details, image_url, affiliate_url,
+                          created_at, idempotency_key, request_fingerprint
+                   FROM products WHERE idempotency_key = %s FOR UPDATE""",
+                (idempotency_key,),
+            ).fetchone()
+            if product is None:
+                raise RuntimeError("workflow idempotency record disappeared during conflict recovery")
+            if product.get("request_fingerprint") != request_fingerprint:
+                raise ValueError("idempotency_key_payload_mismatch")
+            content = conn.execute(
+                """SELECT id, product_id, version_number, provider, model_id, prompt_version,
+                          pin_idea, title, description, alt_text, created_at
+                   FROM content_versions WHERE product_id = %s AND version_number = 1""",
+                (product["id"],),
+            ).fetchone()
+            if content is None:
+                raise RuntimeError("workflow idempotency record has no initial content version")
+            finalize_generation(product["id"])
+            return dict(product), dict(content)
+
         content = conn.execute(
             """
             INSERT INTO content_versions
@@ -203,18 +248,60 @@ def create_product_with_content_version(
                 pin_idea, title, description, alt_text,
             ),
         ).fetchone()
-        if publication_board_id:
-            publication = conn.execute(
-                """
-                INSERT INTO pin_publications
-                    (product_id, content_version_id, board_id, account_id, status)
-                VALUES (%s, %s, %s, %s, 'pending')
-                RETURNING *
-                """,
-                (product["id"], content["id"], publication_board_id, publication_account_id),
-            ).fetchone()
-            return dict(product), dict(content), dict(publication)
+        finalize_generation(product["id"])
         return dict(product), dict(content)
+
+
+
+def persist_manual_publish_draft(
+    *, title: str, description: str, image_url: str, affiliate_url: str,
+    idempotency_key: str, request_fingerprint: str,
+) -> tuple[dict, dict, bool]:
+    """Atomically create or recover an identical manual draft by idempotency key."""
+    with connection() as conn:
+        product = conn.execute(
+            """INSERT INTO products
+                   (product_name, product_details, image_url, affiliate_url,
+                    idempotency_key, request_fingerprint)
+               VALUES (%s, %s, NULL, %s, %s, %s)
+               ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+               DO NOTHING
+               RETURNING id, product_name, product_details, image_url, affiliate_url,
+                         created_at, idempotency_key, request_fingerprint""",
+            (title, description or title, affiliate_url, idempotency_key, request_fingerprint),
+        ).fetchone()
+        created = product is not None
+        if created:
+            content = conn.execute(
+                """INSERT INTO content_versions
+                       (product_id, version_number, provider, model_id, prompt_version,
+                        pin_idea, title, description, alt_text)
+                   VALUES (%s, 1, 'manual', 'hub-manual', 'manual-v1', %s, %s, %s, %s)
+                   RETURNING id, product_id, version_number, provider, model_id,
+                             prompt_version, pin_idea, title, description, alt_text, created_at""",
+                (product['id'], description or title, title, description or '', ''),
+            ).fetchone()
+            return dict(product), dict(content), True
+
+        product = conn.execute(
+            """SELECT id, product_name, product_details, image_url, affiliate_url,
+                      created_at, idempotency_key, request_fingerprint
+               FROM products WHERE idempotency_key = %s FOR UPDATE""",
+            (idempotency_key,),
+        ).fetchone()
+        if product is None:
+            raise RuntimeError("idempotency record disappeared during recovery")
+        if product.get('request_fingerprint') != request_fingerprint:
+            raise ValueError("idempotency_key_payload_mismatch")
+        content = conn.execute(
+            """SELECT id, product_id, version_number, provider, model_id, prompt_version,
+                      pin_idea, title, description, alt_text, created_at
+               FROM content_versions WHERE product_id = %s AND version_number = 1""",
+            (product['id'],),
+        ).fetchone()
+        if content is None:
+            raise RuntimeError("manual draft exists without its content version")
+        return dict(product), dict(content), False
 
 
 def get_content_version(product_id: int, content_version_id: int) -> dict | None:
@@ -248,6 +335,143 @@ def list_content_versions(product_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+
+def reserve_workflow_generation(
+    *, idempotency_key: str, request_fingerprint: str, lease_token: str, lease_seconds: int = 600,
+) -> dict:
+    """Atomically acquire or recover a workflow-generation lease.
+
+    A live lease prevents concurrent provider calls. Cached image/content survive
+    retryable provider failures so retries do not pay for completed stages again.
+    """
+    with connection() as conn:
+        row = conn.execute(
+            """INSERT INTO workflow_generation_reservations
+                   (idempotency_key, request_fingerprint, status, lease_token, lease_expires_at)
+               VALUES (%s, %s, 'generating', %s::uuid, clock_timestamp() + (%s * interval '1 second'))
+               ON CONFLICT (idempotency_key) DO NOTHING
+               RETURNING *""",
+            (idempotency_key, request_fingerprint, lease_token, lease_seconds),
+        ).fetchone()
+        if row:
+            return {**dict(row), "acquired": True}
+        row = conn.execute(
+            "SELECT * FROM workflow_generation_reservations WHERE idempotency_key = %s FOR UPDATE",
+            (idempotency_key,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("workflow generation reservation disappeared")
+        if row["request_fingerprint"] != request_fingerprint:
+            raise ValueError("idempotency_key_payload_mismatch")
+        if row["status"] == "persisted":
+            return {**dict(row), "acquired": False}
+        if row["status"] == "generating" and row["lease_expires_at"] > conn.execute("SELECT clock_timestamp() AS now").fetchone()["now"]:
+            return {**dict(row), "acquired": False}
+        row = conn.execute(
+            """UPDATE workflow_generation_reservations
+               SET status = 'generating', lease_token = %s::uuid,
+                   lease_expires_at = clock_timestamp() + (%s * interval '1 second'), updated_at = now()
+               WHERE idempotency_key = %s RETURNING *""",
+            (lease_token, lease_seconds, idempotency_key),
+        ).fetchone()
+        return {**dict(row), "acquired": True}
+
+
+def save_workflow_generation_image(
+    *, idempotency_key: str, lease_token: str, image_data_url: str, image_model: str,
+) -> None:
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE workflow_generation_reservations
+               SET image_data_url = %s, image_model = %s, updated_at = now()
+               WHERE idempotency_key = %s AND lease_token = %s::uuid AND status = 'generating'
+                     AND lease_expires_at > clock_timestamp()
+               RETURNING idempotency_key""",
+            (image_data_url, image_model, idempotency_key, lease_token),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("workflow generation lease lost before image checkpoint")
+
+
+def save_workflow_generation_content(
+    *, idempotency_key: str, lease_token: str, generated_content: dict, content_model: str,
+) -> None:
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE workflow_generation_reservations
+               SET generated_content = %s::jsonb, content_model = %s, updated_at = now()
+               WHERE idempotency_key = %s AND lease_token = %s::uuid AND status = 'generating'
+                     AND lease_expires_at > clock_timestamp()
+               RETURNING idempotency_key""",
+            (json.dumps(generated_content), content_model, idempotency_key, lease_token),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("workflow generation lease lost before content checkpoint")
+
+
+def release_workflow_generation(*, idempotency_key: str, lease_token: str) -> None:
+    """Make a failed generation retryable while preserving completed provider stages."""
+    with connection() as conn:
+        conn.execute(
+            """UPDATE workflow_generation_reservations
+               SET status = 'retryable', lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+               WHERE idempotency_key = %s AND lease_token = %s::uuid AND status = 'generating'""",
+            (idempotency_key, lease_token),
+        )
+
+
+def complete_workflow_generation(*, idempotency_key: str, lease_token: str, product_id: int) -> None:
+    """Mark provider work consumed by a durable product/content transaction and clear bulky cache."""
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE workflow_generation_reservations
+               SET status = 'persisted', product_id = %s, image_data_url = NULL, image_model = NULL,
+                   generated_content = NULL, content_model = NULL, lease_token = NULL,
+                   lease_expires_at = NULL, updated_at = now()
+               WHERE idempotency_key = %s AND lease_token = %s::uuid AND status = 'generating'
+                     AND lease_expires_at > clock_timestamp()
+               RETURNING idempotency_key""",
+            (product_id, idempotency_key, lease_token),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("workflow generation lease lost before completion")
+
+def cleanup_expired_workflow_checkpoints(*, retention_hours: int = 72, batch_size: int = 500) -> int:
+    """Clear old retry checkpoint payloads while preserving idempotency tombstones.
+
+    Images are generated as data URLs and are not uploaded to a separate image host.
+    This only clears temporary database checkpoint fields; reservation rows and
+    request fingerprints remain so an old Idempotency-Key cannot be reused.
+    """
+    if not 1 <= retention_hours <= 720:
+        raise ValueError("retention_hours must be between 1 and 720")
+    if not 1 <= batch_size <= 5000:
+        raise ValueError("batch_size must be between 1 and 5000")
+    with connection() as conn:
+        rows = conn.execute(
+            """WITH expired AS (
+                   SELECT idempotency_key
+                   FROM workflow_generation_reservations
+                   WHERE status IN ('retryable', 'generating')
+                     AND (status <> 'generating' OR lease_expires_at <= clock_timestamp())
+                     AND updated_at < clock_timestamp() - (%s * interval '1 hour')
+                     AND (image_data_url IS NOT NULL OR generated_content IS NOT NULL)
+                   ORDER BY updated_at
+                   FOR UPDATE SKIP LOCKED
+                   LIMIT %s
+               )
+               UPDATE workflow_generation_reservations AS reservation
+               SET image_data_url = NULL, image_model = NULL,
+                   generated_content = NULL, content_model = NULL,
+                   updated_at = clock_timestamp()
+               FROM expired
+               WHERE reservation.idempotency_key = expired.idempotency_key
+               RETURNING reservation.idempotency_key""",
+            (retention_hours, batch_size),
+        ).fetchall()
+        return len(rows)
+
+
 def begin_publish_attempt(
     *, product_id: int, content_version_id: int, board_id: str, account_id: str | None = None
 ) -> dict:
@@ -264,13 +488,6 @@ def begin_publish_attempt(
             (content_version_id, board_id),
         ).fetchone()
         if row:
-            # The publication key is version+board. Never treat a prior attempt
-            # owned by another connected Pinterest account as this account's Pin.
-            if account_id and row.get("account_id") != account_id:
-                # NULL ownership denotes a legacy row whose Pinterest account
-                # cannot be proven. Never report it as this account's Pin or
-                # silently adopt it; require explicit operator reconciliation.
-                return {"blocked": True, "account_mismatch": True, **dict(row)}
             state = row["status"]
             if state in {"succeeded", "pending", "unknown"}:
                 return {"blocked": True, **dict(row)}
@@ -319,7 +536,7 @@ def finish_publish_attempt(
             UPDATE pin_publications
             SET status = %s, pinterest_pin_id = %s, http_status = %s,
                 error_code = %s, response_metadata = %s::jsonb, updated_at = now()
-            WHERE id = %s AND status = 'pending'
+            WHERE id = %s
             RETURNING *
             """,
             (
@@ -328,7 +545,7 @@ def finish_publish_attempt(
             ),
         ).fetchone()
         if row is None:
-            raise RuntimeError("publish attempt is not pending or was not found")
+            raise RuntimeError("publish attempt was not found")
         return dict(row)
 
 
@@ -381,8 +598,16 @@ def reconcile_unknown_publication(
         ).fetchone()
         if row is None:
             raise LookupError("publication record was not found")
-        if row["status"] != "unknown":
-            raise ValueError("only unknown publications may be reconciled")
+        if row["status"] == "pending":
+            stale = conn.execute(
+                """SELECT updated_at <= now() - interval '10 minutes' AS stale
+                   FROM pin_publications WHERE id = %s""",
+                (publication_id,),
+            ).fetchone()
+            if not stale or not stale["stale"]:
+                raise ValueError("pending publication must be at least 10 minutes old before operator reconciliation")
+        elif row["status"] != "unknown":
+            raise ValueError("only unknown or stale pending publications may be reconciled")
         if next_status == "succeeded":
             saved = conn.execute(
                 """UPDATE pin_publications
