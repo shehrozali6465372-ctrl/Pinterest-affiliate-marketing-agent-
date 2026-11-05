@@ -162,13 +162,15 @@ def test_pinterest_diagnostic_sanitizes_upstream_rejection(monkeypatch):
     assert "private-token" not in response.text
 
 
-def test_app_lifespan_closes_database_pool(monkeypatch):
+def test_app_lifespan_runs_checkpoint_cleanup_and_closes_database_pool(monkeypatch):
     from fastapi.testclient import TestClient
 
     calls = []
+    monkeypatch.setattr("app.database.cleanup_expired_workflow_checkpoints", lambda **kwargs: calls.append(kwargs) or 0)
     monkeypatch.setattr("app.database.close_pool", lambda: calls.append("closed"))
 
     with TestClient(app) as test_client:
         assert test_client.get("/health").status_code == 200
 
-    assert calls == ["closed"]
+    assert calls[0] == {"retention_hours": settings.workflow_checkpoint_retention_hours}
+    assert calls[-1] == "closed"

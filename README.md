@@ -30,21 +30,21 @@ Set a strong random `APP_API_KEY` in Render environment variables before exposin
 
 ## Current endpoints
 - `GET /health`: public liveness only; does not prove integrations are ready.
-- `GET /readiness`: reports configuration presence, not whether credentials work.
-- `POST /products/validate`: validates product fields without saving them.
-- `POST /products`: saves product data to PostgreSQL; returns 503 if persistence is unavailable.
-- `GET /products/{product_id}`: retrieves a saved product.
-- `POST /products/{product_id}/content`: calls the configured DeepSeek Flash API using product text and supplied image URL; stores an auditable content version containing Pin Idea, Title, Description, and Alt Text.
-- `GET /products/{product_id}/content`: returns version history for the product.
-- `POST /publish` with JSON `{"product_id": 123, "content_version_id": 456}` and headers `X-API-Key` + `X-Pinterest-Account-ID`: publishes an existing content version using the connected OAuth credential from the encrypted Neon credential vault. The original product image URL and exact affiliate destination link are used.
-- `POST /products/{product_id}/content/{content_version_id}/publish`: same version-specific publishing gateway; requires `X-API-Key` and `X-Pinterest-Account-ID`.
-- `POST /workflow/publish-product`: generates image/copy, then uses the same publication-ledger gateway; requires `X-API-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body.
-- `POST /workflow/publish-hub-pin`: Hub service publishing entry point; requires `X-Credential-Ingest-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body.
+- `GET /readiness`: protected configuration/readiness summary; never returns credential values.
+- `POST /products/validate`, `POST /products`, `GET /products/{product_id}`, and content-version routes: product/content management.
+- `POST /workflow/publish-product`: Model 1 generation workflow; requires `X-API-Key`, `Idempotency-Key`, and a connected `account_id` in the JSON body. It resolves an existing Pinterest board through read-only paginated GET requests and does not create a board.
+- `POST /integrations/pinterest/publish-manual`: Modern Living Hub manual publishing handoff; requires `X-Credential-Ingest-Key` and `Idempotency-Key`. It verifies the stored account identity and selected board before delegating to the canonical publisher.
+- `GET /publications/{publication_id}` and `GET /publications/{publication_id}/pinterest-verification`: protected publication status and read-only board/Pin verification. The verification route never creates or changes Pinterest objects.
+- `POST /publications/{publication_id}/reconcile`: operator-authenticated state reconciliation only; it never sends a Pin write.
+- `POST /integrations/pinterest/analytics/run` and `POST /learning-loop/run`: organic Pinterest analytics ingestion and descriptive reporting. Missing provider metrics remain `null`; they are not fabricated as zero.
+- `POST /integrations/pinterest/operation`: bounded account/board/disconnect operations; unsupported operations such as generic `create_pin` are rejected.
+- Legacy `POST /publish` and `POST /products/{product_id}/content/{content_version_id}/publish` return HTTP 410 and cannot publish.
 
-All Pin-creation routes share one publication-ledger orchestrator. The generated and Hub workflows insert product, content, and the pending publication reservation in one Neon transaction before the Pinterest POST. A pending, uncertain, or successful attempt blocks automatic duplicate creation. The compatibility endpoints select the encrypted OAuth credential with `X-Pinterest-Account-ID`; the legacy plaintext `PINTEREST_ACCESS_TOKEN` is not used for publishing. Credential lookup automatically refreshes expiring access tokens when the Pinterest app credentials are configured; if they are missing or refresh fails, the request fails closed before a Pin write.
-- `POST /learning-loop/run`: protected, real account-scoped Pinterest analytics ingestion; persists snapshots and descriptive aggregates. It does not train predictive ML.\n- `POST /learning-loop` (legacy): returns 501; use `/learning-loop/run` for the real Learning Loop.
+Every Pin creation path delegates to `app/publishing_gateway.py`; it contains the sole application HTTP `POST /pins` call. The gateway validates Pin text and required fields before reserving the ledger, blocks pending/unknown/succeeded duplicates, and records definite or uncertain outcomes. Unknown outcomes require read-only verification and explicit operator reconciliation before any retry. The generic workflow Pinterest helper also rejects direct `POST /pins` calls.
 
-A timed-out Pinterest request or ambiguous server error is recorded as uncertain; automatic retry is blocked. Check the Pinterest board before attempting a retry to avoid accidental duplicate Pins.
+The workflow generation reservation stores an idempotency fingerprint, lease, and reusable image/content checkpoints. Reusing a key with a different request is rejected; a live lease blocks concurrent provider calls; retryable failures can reuse completed checkpoints. A process crash between a provider response and its checkpoint commit can still cause that provider stage to run again after lease expiry; exactly-once provider billing cannot be guaranteed.
+
+Pinterest credentials are selected by account ID from the encrypted Neon credential vault. OAuth refresh is a separate protected operation; do not force expiry or rotate a valid production credential for testing. `ads:read`, advertiser-account discovery, and audience insights are deferred to Model 2 and are not active in the current Hub/Agent integration.
 
 ## Versioned database migrations
 Migrations are in `migrations/` and tracked in `schema_migrations`. Run them explicitly before using persistence endpoints. DDL does not run per request. Production migration execution should be a controlled release step and tested against staging first.
@@ -52,11 +52,10 @@ Migrations are in `migrations/` and tracked in `schema_migrations`. Run them exp
 ## Configuration
 - `APP_API_KEY`: protect operational endpoints.
 - `DATABASE_URL`: Neon PostgreSQL connection string.
-- `PINTEREST_BOARD_ID`: board used by the compatibility content-version publishing endpoints.
-- `PINTEREST_ACCESS_TOKEN`: deprecated legacy value; active publishing routes use the encrypted OAuth credential vault and do not read this token.
+- - `PINTEREST_ACCESS_TOKEN`: deprecated legacy value; active publishing routes use the encrypted OAuth credential vault and do not read this token.
 - `PINTEREST_TOKEN_ENCRYPTION_KEY`: decrypts the OAuth credential stored in Neon; it must remain identical to the key used to encrypt existing credentials.
-- `PINTEREST_CLIENT_ID` and `PINTEREST_CLIENT_SECRET`: Pinterest developer app credentials, stored only in the Agent server environment. Required for automatic refresh when an access token is within five minutes of expiry. The refresh token is rotated and re-encrypted in Neon. A per-account PostgreSQL advisory transaction lock serializes automatic refreshes across app instances.
-- `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`: server-side Cloudflare Workers AI access; image-generation service is pending.
+- `PINTEREST_CLIENT_ID` and `PINTEREST_CLIENT_SECRET`: Pinterest developer app credentials, stored only in the Agent server environment and used by the protected OAuth refresh flow. Never force expiry or rotate a valid production credential for testing.
+- `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`: server-side Cloudflare Workers AI image-generation access. `CLOUDFLARE_IMAGE_MAX_BYTES` defaults to 10 MiB and bounds the streamed image response.
 - `LLM_API_KEY`: DeepSeek API key.
 - `LLM_BASE_URL`: defaults to `https://api.deepseek.com`.
 - `LLM_MODEL`: defaults to `deepseek-flash`.
@@ -76,14 +75,14 @@ The authenticated endpoint is included in `main`:
 
 `POST /workflow/publish-product`
 
-It generates a product lifestyle image with Cloudflare Workers AI, converts the generated image to a data URL and sends it directly to Pinterest using image_base64 (no separate image-hosting service), then generates Pin Idea/title/description/alt text with DeepSeek, stores the product and content version, finds or creates the requested Pinterest board using the encrypted OAuth credential in Neon, publishes through Pinterest API v5, and records the returned Pin ID.
+It verifies the connected account and resolves an existing requested board through read-only paginated GET requests, generates a product lifestyle image with Cloudflare Workers AI, generates Pin Idea/title/description/alt text with DeepSeek, checkpoints reusable outputs, persists the product and content version, publishes through the canonical Pinterest publication gateway, and records the returned Pin ID. It does not create a missing board.
 
 Required server-side Render environment:
 - `APP_API_KEY`: required by the new workflow endpoint.
 - `DATABASE_URL`: Neon database URL containing the existing credential vault and publication tables.
 - `PINTEREST_TOKEN_ENCRYPTION_KEY`: same base64-encoded 32-byte key used to encrypt the already-stored Pinterest credential.
 - `CLOUDFLARE_API_TOKEN`: token with Workers AI Run permission. The current `image_base64` flow does not upload to Cloudflare Images.
-- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account that owns Workers AI and Images.
+- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account that owns Workers AI.
 - `LLM_API_KEY`: DeepSeek API key.
 - Optional: `CLOUDFLARE_IMAGE_MODEL` (default `@cf/black-forest-labs/flux-1-schnell`), `LLM_MODEL`, `LLM_BASE_URL`, `PINTEREST_API_BASE_URL`.
 
@@ -99,7 +98,7 @@ Example request (send `X-API-Key` securely; include a unique `Idempotency-Key` f
 }
 ```
 
-Idempotency: `Idempotency-Key` is required (8–200 characters). A key already accepted for a product is rejected with HTTP 409 to prevent accidentally starting a duplicate workflow. Reuse the original key on retry. Because this endpoint fails closed with HTTP 409 rather than replaying a stored response, reconcile the existing product/publication record before taking any further action; never use a new key merely to bypass a 409.
+Idempotency: `Idempotency-Key` is required (8–200 characters). The request fingerprint is bound to the key. A different payload with the same key returns HTTP 409; a concurrent active generation returns HTTP 409 with a retry hint. A retry with the same key can recover persisted image/content checkpoints. Publication pending/unknown/succeeded states still block blind duplicate Pin creation; inspect and reconcile before retrying an uncertain publish.
 
 Important: keep the `DATABASE_URL` pointed at the intended Neon database and keep `PINTEREST_TOKEN_ENCRYPTION_KEY` identical to the key used for existing credentials. Pinterest receives generated image bytes using its documented `image_base64` media source; no Cloudflare Images upload or public image URL is required. New workflow product rows store `image_url = NULL` to avoid persisting Base64 image payloads. Provider diagnostics have verified the live database and Pinterest account read, DeepSeek model access, and Cloudflare Workers AI API access; a prior real diagnostic also exercised image/content generation. The complete `/workflow/publish-product` route must still only be considered live-verified after a user-approved new publication returns a real Pin ID and the publication record is checked. Never call it as a diagnostic: it publishes a real Pin and provider usage may be billable. Check the board and publication record before retrying any request with an uncertain outcome.
 
@@ -111,3 +110,9 @@ Generated image bytes are kept in process memory only and sent to Pinterest thro
 ## Current verification note — 2026-10-27
 
 The earlier statement that real Pinterest publishing was wholly unverified is superseded: the project history records one approved real Pin published and verified at https://www.pinterest.com/pin/1069323505300280780/. Do not publish another Pin without separate explicit approval. PB-03 is closed by merged PR #21; do not reopen it. Real OAuth consent/handoff, real token-refresh lifecycle, and a persisted production analytics snapshot are separate gates and must not be conflated with the successful Pin.
+
+## Organic Analytics and Model 2 boundary
+
+The current Learning Loop ingests organic Pin metrics for impressions, saves, Pin clicks, and outbound clicks. Missing values remain unknown (`null`); derived rates are calculated only when the required source metrics are present. It stores descriptive snapshots and does not train a predictive ML model.
+
+Advertiser-account discovery, audience insights, and the Pinterest `ads:read` OAuth scope are **deferred to Model 2**. They are not exposed in the current Modern Living Hub UI or active Agent routes. Do not request `ads:read`, reconnect the account, or trigger new consent for Model 1. Historical audience-insight migration artifacts, if present, do not mean the feature is enabled.

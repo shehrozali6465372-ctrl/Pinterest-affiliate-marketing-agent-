@@ -1,5 +1,5 @@
 """Server-side environment settings for the Pinterest agent."""
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import unicodedata
 
@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     cloudflare_api_token: str | None = None
     cloudflare_account_id: str | None = None
     cloudflare_image_model: str = "@cf/black-forest-labs/flux-1-schnell"
+    cloudflare_image_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=25 * 1024 * 1024)
+    workflow_checkpoint_retention_hours: int = Field(default=72, ge=1, le=720)
     llm_api_key: str | None = None
     llm_base_url: str = "https://api.deepseek.com"
     llm_model: str = "deepseek-flash"
