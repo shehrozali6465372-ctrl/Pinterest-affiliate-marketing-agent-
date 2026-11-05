@@ -812,3 +812,11 @@ User instruction: continue the project fix loop and do not stop until all fixabl
 - Hub server dependency audit: npm audit --audit-level=moderate completed successfully with 0 vulnerabilities. This is based on the current package-lock.json dependency tree.
 - Agent requirements.txt uses version ranges rather than exact pins. pip-audit --no-deps is therefore not applicable to the requirements file; the successful pip-audit --local result only covers packages installed in the current virtual environment. Full resolution audit remains unverified.
 - No commit, push, PR, merge, deployment, production DB mutation, Pinterest write, Pin, or Board creation.
+
+## 2026-11-05 — Feature branch publication and CI result
+- With explicit user approval, committed the reviewed Agent changes on `fix/pb06-analytics-forward-port` as `703775e7e7eee823bae8ed63230a0daa807ecf10` and pushed only that feature branch. No push to `main`.
+- Exact-head GitHub Actions run `42039435164` for commit `703775e7e7eee823bae8ed63230a0daa807ecf10` completed with conclusion **success**. This is the first CI result for the reviewed Agent commit (not the older 2026-11-03 run).
+- Hub companion PR #21 is open as a draft and remains unmerged. Hub feature branch was reconciled with latest Hub `main`; its exact-head security workflow run `42041112958` completed successfully.
+- Hub merge reconciliation keeps current `main` authoritative for Product Tag/Existing Pins UI and API (not reintroduced), retains affiliate scheduler and canonical Hub publishing gateway, and ports only Model 1 organic analytics plus read-only Trends/Featured Topics. Advertiser/Audience routes remain deferred.
+- Local Agent suite against isolated Neon test branch: 146 passed, 1 skipped; migration 011/012 remain test-branch-only. Full declared requirements resolver audit remains unknown; installed local environment audit passed.
+- No production migration, SQL write, Render environment update, deployment, OAuth reconnect/refresh, Pinterest Pin/Board creation, or merge to either repository's `main` was performed. Agent Render auto-deploy remains attached to `main`; feature-branch push did not deploy.

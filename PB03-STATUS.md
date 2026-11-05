@@ -277,3 +277,11 @@ Static security scan: Bandit passed. Dependency audit: `pip-audit` could not com
 - Manual and workflow publishing paths both call app/publishing_gateway.py; generic Pinterest operation cannot create Pins; legacy direct publish routes are retired with HTTP 410. All checked API/service authentication dependencies fail closed. No Pin/Board API write was made.
 - Current code remains local/uncommitted; no exact-head GitHub CI result exists. Production Neon has not received migrations 011/012. Full requirements resolver audit remains unknown; installed-local-environment audit found no known vulnerabilities.
 - No production migration/write, deployment, push, PR, merge, token refresh, Pinterest write, Pin, or Board creation. Render Agent main auto-deploy remains enabled.
+
+## 2026-11-05 — Feature branch publication and CI result
+- With explicit user approval, committed the reviewed Agent changes on `fix/pb06-analytics-forward-port` as `703775e7e7eee823bae8ed63230a0daa807ecf10` and pushed only that feature branch. No push to `main`.
+- Exact-head GitHub Actions run `42039435164` for commit `703775e7e7eee823bae8ed63230a0daa807ecf10` completed with conclusion **success**. This is the first CI result for the reviewed Agent commit (not the older 2026-11-03 run).
+- Hub companion PR #21 is open as a draft and remains unmerged. Hub feature branch was reconciled with latest Hub `main`; its exact-head security workflow run `42041112958` completed successfully.
+- Hub merge reconciliation keeps current `main` authoritative for Product Tag/Existing Pins UI and API (not reintroduced), retains affiliate scheduler and canonical Hub publishing gateway, and ports only Model 1 organic analytics plus read-only Trends/Featured Topics. Advertiser/Audience routes remain deferred.
+- Local Agent suite against isolated Neon test branch: 146 passed, 1 skipped; migration 011/012 remain test-branch-only. Full declared requirements resolver audit remains unknown; installed local environment audit passed.
+- No production migration, SQL write, Render environment update, deployment, OAuth reconnect/refresh, Pinterest Pin/Board creation, or merge to either repository's `main` was performed. Agent Render auto-deploy remains attached to `main`; feature-branch push did not deploy.
