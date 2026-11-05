@@ -22,8 +22,8 @@ jobs:
     timeout-minutes: 3
     env:
       AGENT_BASE_URL: https://pinterest-affiliate-marketing-agent.onrender.com
-      APP_API_KEY: \${{ secrets.PINTEREST_AGENT_APP_API_KEY }}
-      PUBLICATION_ID: \${{ inputs.publication_id }}
+      APP_API_KEY: ${{ secrets.PINTEREST_AGENT_APP_API_KEY }}
+      PUBLICATION_ID: ${{ inputs.publication_id }}
     steps:
       - name: Validate secret presence without revealing it
         shell: bash
