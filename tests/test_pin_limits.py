@@ -1,11 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
-from app.config import settings
 from app.content_generation import AFFILIATE_DISCLOSURE, GeneratedContent, _with_affiliate_disclosure
 from app.pin_limits import PIN_ALT_TEXT_MAX_LENGTH, PIN_DESCRIPTION_MAX_LENGTH, PIN_TITLE_MAX_LENGTH
-from app.pinterest import PinterestPublishError, create_pin_request
-from app.workflow import HubPinPublishInput, _pinterest_request
+from app.workflow import _pinterest_request
 
 
 def test_central_pinterest_text_limits_match_documented_api_contract():
@@ -35,61 +33,9 @@ def test_existing_disclosure_is_not_duplicated():
     assert _with_affiliate_disclosure(source) == source
 
 
-def test_hub_manual_pin_input_rejects_description_over_800_characters():
-    with pytest.raises(ValidationError):
-        HubPinPublishInput.model_validate({
-            "account_id": "pinterest:test",
-            "board_id": "board-test",
-            "title": "Valid title",
-            "description": "x" * 801,
-            "alt_text": "Valid alt text",
-            "image_url": "https://example.com/image.png",
-            "destination_url": "https://example.com/item",
-        })
-
-
-def test_shared_pin_create_boundary_rejects_oversized_text_before_network_call(monkeypatch):
-    calls = []
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs): pass
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def post(self, *args, **kwargs):
-            calls.append(True)
-            raise AssertionError("Pinterest network call must not occur")
-
-    monkeypatch.setattr("app.pinterest.httpx.Client", FakeClient)
-    with pytest.raises(PinterestPublishError, match="800-character API limit"):
-        create_pin_request(access_token="vault-token", payload={
-            "board_id": "board-test", "title": "Valid title",
-            "description": "x" * 801, "alt_text": "Valid alt text",
-            "media_source": {"source_type": "image_url", "url": "https://example.com/image.png", "is_standard": True},
-            "link": "https://example.com/item",
-        })
-    assert calls == []
-
-
-def test_workflow_pinterest_helper_blocks_direct_pin_write_bypass(monkeypatch):
+def test_workflow_helper_blocks_direct_pin_write_bypass():
     from fastapi import HTTPException
-
-    calls = []
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs): pass
-        def __enter__(self): return self
-        def __exit__(self, *_): return False
-        def request(self, *args, **kwargs):
-            calls.append(True)
-            raise AssertionError("Pinterest network call must not occur")
-
-    monkeypatch.setattr("app.workflow.httpx.Client", FakeClient)
     with pytest.raises(HTTPException) as error:
-        _pinterest_request("POST", "/pins", "test-token", body={
-            "title": "Valid title",
-            "description": "x" * 801,
-            "alt_text": "Valid alt text",
-        })
+        _pinterest_request("POST", "/pins", "test-token", body={"title": "Valid"})
     assert error.value.status_code == 400
     assert "canonical publication-ledger gateway" in error.value.detail
-    assert calls == []

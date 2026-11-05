@@ -57,7 +57,8 @@ def test_board_resolution_checks_later_pages_before_creating(monkeypatch):
     assert all(call[0] == "GET" for call in calls)
 
 
-def test_board_resolution_creates_only_after_all_pages(monkeypatch):
+def test_board_resolution_never_creates_missing_board(monkeypatch):
+    from fastapi import HTTPException
     calls = []
 
     def fake_request(method, path, token, *, body=None):
@@ -66,10 +67,14 @@ def test_board_resolution_creates_only_after_all_pages(monkeypatch):
             return 200, {"items": [{"id": "board-1", "name": "Other"}], "bookmark": "page-2"}
         if method == "GET" and "bookmark=page-2" in path:
             return 200, {"items": []}
-        if method == "POST" and path == "/boards":
-            return 201, {"id": "new-board"}
-        raise AssertionError(f"Unexpected request: {method} {path}")
+        raise AssertionError("The workflow must not create a Pinterest board")
 
     monkeypatch.setattr(workflow, "_pinterest_request", fake_request)
-    assert workflow._ensure_board("test-token", "Kitchen", "Kitchen board") == "new-board"
-    assert [call[0] for call in calls] == ["GET", "GET", "POST"]
+    try:
+        workflow._ensure_board("test-token", "Kitchen", "Kitchen board")
+    except HTTPException as error:
+        assert error.status_code == 422
+    else:
+        raise AssertionError("Missing board should be rejected")
+    assert len(calls) == 2
+    assert all(call[0] == "GET" for call in calls)

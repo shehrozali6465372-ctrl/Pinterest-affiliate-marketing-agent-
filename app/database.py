@@ -263,12 +263,12 @@ def persist_manual_publish_draft(
             """INSERT INTO products
                    (product_name, product_details, image_url, affiliate_url,
                     idempotency_key, request_fingerprint)
-               VALUES (%s, %s, NULL, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s)
                ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
                DO NOTHING
                RETURNING id, product_name, product_details, image_url, affiliate_url,
                          created_at, idempotency_key, request_fingerprint""",
-            (title, description or title, affiliate_url, idempotency_key, request_fingerprint),
+            (title, description or title, image_url, affiliate_url, idempotency_key, request_fingerprint),
         ).fetchone()
         created = product is not None
         if created:
@@ -488,6 +488,8 @@ def begin_publish_attempt(
             (content_version_id, board_id),
         ).fetchone()
         if row:
+            if row.get("account_id") != account_id:
+                return {"blocked": True, "account_mismatch": True, **dict(row)}
             state = row["status"]
             if state in {"succeeded", "pending", "unknown"}:
                 return {"blocked": True, **dict(row)}

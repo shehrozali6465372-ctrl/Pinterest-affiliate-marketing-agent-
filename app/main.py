@@ -284,18 +284,11 @@ class PinterestOperationInput(BaseModel):
     payload: dict[str, object] = Field(default_factory=dict)
 
 
-class PinterestAccountInput(BaseModel):
-    account_id: str = Field(min_length=1, max_length=200)
-
 
 class PinterestAnalyticsIntegrationInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
     period_days: int = Field(default=30, ge=1, le=90)
 
-
-class PinterestAudienceInsightsInput(BaseModel):
-    account_id: str = Field(min_length=1, max_length=200)
-    ad_account_id: str = Field(min_length=1, max_length=18, pattern=r"^\d+$")
 
 
 def require_credential_ingest_key(
@@ -311,33 +304,6 @@ def run_pinterest_analytics_integration(payload: PinterestAnalyticsIntegrationIn
     """Run read-only Pinterest organic analytics ingestion through the trusted Hub boundary."""
     from app.learning import LearningRequest, run_learning_loop
     return run_learning_loop(LearningRequest(account_id=payload.account_id, period_days=payload.period_days))
-
-
-@app.post("/integrations/pinterest/ad-accounts", dependencies=[Depends(require_credential_ingest_key)])
-def list_pinterest_ad_accounts_integration(payload: PinterestAccountInput) -> dict[str, object]:
-    """List advertiser accounts; this operation is read-only and requires ads:read."""
-    from app.learning import list_ad_accounts
-    try:
-        return list_ad_accounts(payload.account_id)
-    except LookupError:
-        raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from None
-    except Exception:
-        raise HTTPException(status_code=502, detail="Could not list Pinterest advertiser accounts.") from None
-
-
-@app.post("/integrations/pinterest/audience-insights/run", dependencies=[Depends(require_credential_ingest_key)])
-def run_pinterest_audience_insights_integration(payload: PinterestAudienceInsightsInput) -> dict[str, object]:
-    """Fetch and persist aggregated Pinterest audience insights; no audience is created."""
-    from app.learning import run_audience_insights
-    try:
-        result = run_audience_insights(payload.account_id, payload.ad_account_id)
-    except LookupError:
-        raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    except Exception:
-        raise HTTPException(status_code=502, detail="Could not fetch or persist Pinterest audience insights.") from None
-    return result
 
 
 @app.post("/integrations/pinterest/refresh")
@@ -433,7 +399,7 @@ def refresh_pinterest_credential(
             now + timedelta(seconds=int(token_data["refresh_token_expires_in"]))
         ).isoformat()
     else:
-        refresh_token_expires_at = None
+        refresh_token_expires_at = stored_refresh_expiry
 
     try:
         saved = store_pinterest_credential({
@@ -455,7 +421,13 @@ def refresh_pinterest_credential(
         "refreshed": True,
         "account_id": saved["account_id"],
         "expires_at": saved.get("expires_at").isoformat() if saved.get("expires_at") else expires_at,
-        "refresh_token_expires_at": saved.get("refresh_token_expires_at").isoformat() if saved.get("refresh_token_expires_at") else refresh_token_expires_at,
+        "refresh_token_expires_at": (
+            saved.get("refresh_token_expires_at").isoformat()
+            if saved.get("refresh_token_expires_at")
+            else refresh_token_expires_at.isoformat()
+            if isinstance(refresh_token_expires_at, datetime)
+            else refresh_token_expires_at
+        ),
     }
 
 
@@ -773,6 +745,49 @@ def get_publication_status(publication_id: int) -> dict[str, object]:
         if row.get(field) is not None:
             row[field] = row[field].isoformat()
     return row
+
+
+@app.get("/publications/{publication_id}/pinterest-verification", dependencies=[Depends(require_configured_api_key)])
+def verify_publication_on_pinterest(publication_id: int) -> dict[str, object]:
+    """Verify a stored successful Pin by reading every board page and its Pin detail."""
+    if publication_id <= 0:
+        raise HTTPException(status_code=422, detail="publication_id must be positive")
+    from app.database import get_publication
+    from app.credential_vault import get_pinterest_credential
+    from app.pinterest import PinterestReadError, get_pin_read_only, list_board_pins_read_only
+    try:
+        publication = get_publication(publication_id)
+        if publication is None:
+            raise HTTPException(status_code=404, detail="Publication not found")
+        if publication.get("status") != "succeeded" or not publication.get("pinterest_pin_id"):
+            raise HTTPException(status_code=409, detail="Only a confirmed successful publication can be verified")
+        if not publication.get("account_id") or not publication.get("board_id"):
+            raise HTTPException(status_code=409, detail="Publication is missing account or board ownership metadata")
+        credential = get_pinterest_credential(publication["account_id"])
+        token = credential["access_token"]
+        board = list_board_pins_read_only(board_id=str(publication["board_id"]), access_token=token)
+        pin = get_pin_read_only(pin_id=str(publication["pinterest_pin_id"]), access_token=token)
+    except HTTPException:
+        raise
+    except LookupError:
+        raise HTTPException(status_code=409, detail="Pinterest account is not connected in Neon") from None
+    except PinterestReadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="Read-only Pinterest verification could not be completed") from None
+    pin_id = str(publication["pinterest_pin_id"])
+    return {
+        "publication_id": publication_id,
+        "pinterest_pin_id": pin_id,
+        "pagination_complete": bool(board.get("pagination_complete")),
+        "board_pages_read": board.get("pages_read", 0),
+        "stored_pin_found_on_board": any(
+            isinstance(item, dict) and str(item.get("id")) == pin_id
+            for item in board.get("items", []) if isinstance(board.get("items"), list)
+        ),
+        "pin_detail_board_matches": str(pin.get("board_id")) == str(publication["board_id"]),
+        "read_only": True,
+    }
 
 
 @app.post("/publications/{publication_id}/reconcile", dependencies=[Depends(require_configured_api_key)])

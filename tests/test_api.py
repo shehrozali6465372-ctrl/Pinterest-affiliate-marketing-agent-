@@ -1014,43 +1014,11 @@ def test_readiness_rejects_present_but_invalid_encryption_key(monkeypatch):
     assert "present-but-not-valid-base64" not in str(body)
 
 
-def test_analytics_integration_routes_require_service_credential(monkeypatch):
+def test_analytics_integration_route_requires_service_credential(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "private-ingest-test")
     body = {"account_id": "pinterest:account-a"}
-    assert client.post("/integrations/pinterest/ad-accounts", json=body).status_code == 401
     assert client.post("/integrations/pinterest/analytics/run", json=body).status_code == 401
-    assert client.post(
-        "/integrations/pinterest/audience-insights/run",
-        json={**body, "ad_account_id": "123456789"},
-    ).status_code == 401
 
-
-def test_audience_insights_integration_validates_ad_account_id(monkeypatch):
-    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "private-ingest-test")
-    response = client.post(
-        "/integrations/pinterest/audience-insights/run",
-        json={"account_id": "pinterest:account-a", "ad_account_id": "not-an-id"},
-        headers={"X-Credential-Ingest-Key": "private-ingest-test"},
-    )
-    assert response.status_code == 422
-
-
-def test_ad_account_integration_uses_read_only_learning_service(monkeypatch):
-    from app import learning
-
-    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "private-ingest-test")
-    monkeypatch.setattr(
-        learning,
-        "list_ad_accounts",
-        lambda account_id: {"ok": True, "ad_accounts": [{"id": "123456789", "name": "Demo"}]},
-    )
-    response = client.post(
-        "/integrations/pinterest/ad-accounts",
-        json={"account_id": "pinterest:account-a"},
-        headers={"X-Credential-Ingest-Key": "private-ingest-test"},
-    )
-    assert response.status_code == 200
-    assert response.json()["ad_accounts"][0]["id"] == "123456789"
 
 
 def test_workflow_rejects_stored_account_identity_mismatch_before_board_or_generation(monkeypatch):

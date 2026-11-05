@@ -360,3 +360,21 @@ def test_manual_gateway_keeps_pending_reservation_when_success_ledger_write_fail
     after = len([call for call in gateway["http"].calls if call[0] == "POST" and call[1].endswith("/pins")])
     assert retry.status_code == 409
     assert after == before
+
+
+def test_manual_gateway_never_reuses_success_from_different_or_unknown_account(gateway, monkeypatch):
+    import app.database as database
+
+    monkeypatch.setattr(database, "begin_publish_attempt", lambda **kw: {
+        "id": 77, "blocked": True, "account_mismatch": True,
+        "status": "succeeded", "account_id": None, "pinterest_pin_id": "legacy-foreign-pin",
+    })
+    response = client.post(
+        "/integrations/pinterest/publish-manual", json=PAYLOAD,
+        headers={"X-Credential-Ingest-Key": "test-ingest-key",
+                 "Idempotency-Key": "manual-pin-account-mismatch"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "publication_account_mismatch"
+    assert not any(call[0] == "POST" and call[1].endswith("/pins")
+                   for call in gateway["http"].calls)

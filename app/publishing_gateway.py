@@ -9,6 +9,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.config import settings
+from app.pin_limits import validate_pin_text_fields
 
 
 def publish_pin(
@@ -21,6 +22,19 @@ def publish_pin(
     from app.database import begin_publish_attempt, finish_publish_attempt
 
     try:
+        validate_pin_text_fields(title=title, description=description, alt_text=alt_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"{exc} No Pin publish request was sent.") from None
+    if not access_token or not access_token.strip():
+        raise HTTPException(status_code=503, detail="Pinterest access token is unavailable; no Pin publish request was sent.")
+    if not board_id or not board_id.strip() or not account_id or not account_id.strip():
+        raise HTTPException(status_code=422, detail="Pinterest account and board are required; no Pin publish request was sent.")
+    if not isinstance(media_source, dict) or not media_source:
+        raise HTTPException(status_code=422, detail="Pinterest media source is required; no Pin publish request was sent.")
+    if not isinstance(destination_url, str) or not destination_url.strip():
+        raise HTTPException(status_code=422, detail="Pinterest destination URL is required; no Pin publish request was sent.")
+
+    try:
         attempt = begin_publish_attempt(
             product_id=product_id, content_version_id=content_version_id,
             board_id=board_id, account_id=account_id,
@@ -29,6 +43,11 @@ def publish_pin(
         raise HTTPException(status_code=503, detail="Could not reserve publication ledger; no Pin publish request was sent.") from None
 
     if attempt.get("blocked"):
+        if attempt.get("account_mismatch"):
+            raise HTTPException(status_code=409, detail={
+                "code": "publication_account_mismatch",
+                "message": "An existing publication belongs to a different or unknown Pinterest account; it cannot be reused.",
+            })
         if attempt.get("status") == "succeeded":
             return {
                 "published": True, "already_published": True,

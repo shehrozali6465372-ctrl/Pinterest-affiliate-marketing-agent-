@@ -70,6 +70,11 @@ def _release_generation_lease_safely(idempotency_key: str, lease_token: str) -> 
 
 
 def _pinterest_request(method: str, path: str, token: str, *, body: dict | None = None) -> tuple[int, dict]:
+    if method.upper() == "POST" and path.split("?", 1)[0].rstrip("/") == "/pins":
+        raise HTTPException(
+            status_code=400,
+            detail="Pinterest Pin creation is only allowed through the canonical publication-ledger gateway.",
+        )
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
             response = client.request(
