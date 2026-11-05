@@ -68,7 +68,7 @@ def publish_pin(
     }
     base = settings.pinterest_api_base_url.rstrip("/")
     try:
-        with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
             response = client.post(
                 f"{base}/pins",
                 headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
