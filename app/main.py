@@ -841,3 +841,7 @@ def learning_loop_unavailable() -> None:
 
 from app.affiliate_scheduler import router as affiliate_scheduler_router
 app.include_router(affiliate_scheduler_router)
+
+
+from app.dashboard import router as dashboard_router
+app.include_router(dashboard_router)
