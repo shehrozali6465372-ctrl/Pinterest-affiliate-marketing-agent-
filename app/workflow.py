@@ -76,7 +76,7 @@ def _pinterest_request(method: str, path: str, token: str, *, body: dict | None 
             detail="Pinterest Pin creation is only allowed through the canonical publication-ledger gateway.",
         )
     try:
-        with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
             response = client.request(
                 method, f"{settings.pinterest_api_base_url.rstrip('/')}{path}",
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
