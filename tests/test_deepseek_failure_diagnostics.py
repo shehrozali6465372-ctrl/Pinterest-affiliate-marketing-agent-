@@ -32,7 +32,7 @@ def test_deepseek_diagnostic_failure_summary_is_sanitized(monkeypatch):
         def get(self, *args, **kwargs): return FakeResponse()
 
     monkeypatch.setattr(diagnostics.httpx, "Client", FakeHttpClient)
-    monkeypatch.setattr("app.media_generation.generate_and_host_pin_image", lambda **kwargs: {"image_url": "data:image/png;base64,abc", "model": "safe-test-model"})
+    monkeypatch.setattr("app.media_generation.generate_pin_image", lambda **kwargs: {"image_url": "data:image/png;base64,abc", "model": "safe-test-model"})
     monkeypatch.setattr("app.pinterest.image_media_source", lambda url: {"source_type": "image_base64"})
 
     def fail_generation(**kwargs):

@@ -145,7 +145,7 @@ def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
     """Verify live dependencies without hosting an image or publishing a Pin; provider usage may be billable."""
     from app.database import connection
     from app.credential_vault import get_pinterest_credential
-    from app.media_generation import ImageGenerationError, generate_and_host_pin_image
+    from app.media_generation import ImageGenerationError, generate_pin_image
     from app.pinterest import image_media_source
     from app.content_generation import generate_pin_content
 
@@ -182,7 +182,7 @@ def run_live_diagnostics(payload: DiagnosticRunInput) -> dict[str, object]:
     prerequisites_ok = bool(checks.get("database", {}).get("ok") and checks.get("pinterest", {}).get("ok"))
     if prerequisites_ok:
         try:
-            media = generate_and_host_pin_image(product_name=payload.product_name, product_details=payload.product_details)
+            media = generate_pin_image(product_name=payload.product_name, product_details=payload.product_details)
             media_source = image_media_source(media["image_url"])
             checks["cloudflare_image_generation"] = {
                 "ok": bool(media.get("image_url")) and media_source.get("source_type") == "image_base64",

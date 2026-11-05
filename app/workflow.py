@@ -1,8 +1,11 @@
 """Authenticated end-to-end product-to-Pinterest publishing workflow."""
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import logging
+import uuid
 from urllib.parse import urlsplit
 
 import httpx
@@ -10,14 +13,18 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
-from app.content_generation import ContentGenerationError, generate_pin_content
+from app.content_generation import ContentGenerationError, GeneratedContent, generate_pin_content
 from app.credential_vault import get_pinterest_credential
 from app.database import (
     begin_publish_attempt, create_product_with_content_version,
     finish_publish_attempt, get_product_by_idempotency_key,
+    reserve_workflow_generation, save_workflow_generation_image,
+    save_workflow_generation_content, release_workflow_generation,
+    complete_workflow_generation,
 )
-from app.media_generation import ImageGenerationError, generate_and_host_pin_image
+from app.media_generation import ImageGenerationError, generate_pin_image
 from app.pinterest import image_media_source
+from app.publishing_gateway import publish_pin
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflow", tags=["end-to-end"])
@@ -51,6 +58,17 @@ class ProductWorkflowInput(BaseModel):
         return value
 
 
+def _release_generation_lease_safely(idempotency_key: str, lease_token: str) -> None:
+    """Best-effort cleanup that never masks the original workflow failure."""
+    try:
+        release_workflow_generation(idempotency_key=idempotency_key, lease_token=lease_token)
+    except Exception as exc:
+        logger.error(
+            "workflow stage=generation_lease_release outcome=failed exception_type=%s",
+            type(exc).__name__,
+        )
+
+
 def _pinterest_request(method: str, path: str, token: str, *, body: dict | None = None) -> tuple[int, dict]:
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
@@ -67,17 +85,28 @@ def _pinterest_request(method: str, path: str, token: str, *, body: dict | None 
     return response.status_code, payload
 
 
-def _ensure_board(token: str, name: str, description: str) -> str:
+def _ensure_board(token: str, name: str, description: str = "") -> str:
+    """Resolve an existing owned board only; this workflow never creates boards."""
     _, response = _pinterest_request("GET", "/boards?page_size=100", token)
-    items = response.get("items", []) if isinstance(response, dict) else []
-    for board in items:
-        if isinstance(board, dict) and board.get("name", "").casefold() == name.casefold() and board.get("id"):
-            return str(board["id"])
-    _, created = _pinterest_request("POST", "/boards", token, body={"name": name, "description": description})
-    board_id = created.get("id") if isinstance(created, dict) else None
-    if not isinstance(board_id, str) or not board_id:
-        raise HTTPException(status_code=502, detail="Pinterest did not return a board ID; board creation was not confirmed.")
-    return board_id
+    seen: set[str] = set()
+    for page_number in range(100):
+        if not isinstance(response, dict):
+            raise HTTPException(status_code=502, detail="Pinterest returned an invalid board-list response.")
+        items = response.get("items", [])
+        for board in items if isinstance(items, list) else []:
+            if isinstance(board, dict) and board.get("name", "").casefold() == name.casefold() and board.get("id"):
+                return str(board["id"])
+        bookmark = response.get("bookmark")
+        if not isinstance(bookmark, str) or not bookmark:
+            break
+        if bookmark in seen:
+            raise HTTPException(status_code=502, detail="Pinterest returned a repeated board pagination cursor; board verification stopped.")
+        seen.add(bookmark)
+        if page_number == 99:
+            raise HTTPException(status_code=503, detail="Pinterest board list exceeded the safe verification limit; no board was created.")
+        from urllib.parse import urlencode
+        _, response = _pinterest_request("GET", f"/boards?{urlencode({'page_size': 100, 'bookmark': bookmark})}", token)
+    raise HTTPException(status_code=422, detail="The requested Pinterest board does not exist on this connected account. Create it in Pinterest, then retry; this workflow does not create boards.")
 
 
 @router.post("/publish-product", dependencies=[Depends(_require_api_key)])
@@ -85,7 +114,15 @@ def publish_product_end_to_end(
     payload: ProductWorkflowInput,
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> dict[str, object]:
-    """Generate image and copy before persisting, then publish one Pin."""
+    """Reserve provider work, checkpoint reusable outputs, persist, then publish one Pin."""
+    request_fingerprint = hashlib.sha256(json.dumps({
+        "product_name": payload.product_name,
+        "product_details": payload.product_details,
+        "affiliate_url": payload.affiliate_url,
+        "account_id": payload.account_id,
+        "board_name": payload.board_name,
+        "board_description": payload.board_description,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     try:
         existing = get_product_by_idempotency_key(idempotency_key)
     except Exception as exc:
@@ -106,12 +143,19 @@ def publish_product_end_to_end(
 
     # Validate the stored OAuth token before invoking billable image/LLM providers.
     try:
-        _pinterest_request("GET", "/user_account", credential["access_token"])
+        _, account_data = _pinterest_request("GET", "/user_account", credential["access_token"])
     except HTTPException as exc:
         raise HTTPException(
             status_code=503 if exc.status_code >= 500 else 401,
             detail="Stored Pinterest credential could not be verified. Reconnect the account before publishing.",
         ) from exc
+    actual_user_id = account_data.get("id") if isinstance(account_data, dict) else None
+    expected_user_id = credential.get("pinterest_user_id")
+    if (not isinstance(actual_user_id, (str, int))
+            or not expected_user_id
+            or str(actual_user_id) != str(expected_user_id)
+            or payload.account_id != f"pinterest:{expected_user_id}"):
+        raise HTTPException(status_code=409, detail="Stored Pinterest credential identity does not match the requested account; no Pin publish request was sent.")
 
     token = credential["access_token"]
     # Resolve the destination before invoking billable providers or consuming the
@@ -126,27 +170,83 @@ def publish_product_end_to_end(
         logger.error("workflow stage=board_resolution outcome=failed exception_type=%s", type(exc).__name__)
         raise
 
-    # Generate both external-provider outputs before consuming the persisted key.
-    # A transient DeepSeek failure therefore leaves no product row behind and the
-    # same Idempotency-Key remains retryable.
+    # Acquire a durable cross-process lease before any billable provider call.
+    # Provider outputs are checkpointed so a later-stage retry can reuse them.
+    lease_token = str(uuid.uuid4())
     try:
-        media = generate_and_host_pin_image(
-            product_name=payload.product_name,
-            product_details=payload.product_details,
+        reservation = reserve_workflow_generation(
+            idempotency_key=idempotency_key,
+            request_fingerprint=request_fingerprint,
+            lease_token=lease_token,
         )
-    except ImageGenerationError as exc:
-        logger.error("workflow stage=image_generation outcome=failed detail=%s", str(exc)[:180])
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        if str(exc) == "idempotency_key_payload_mismatch":
+            raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different workflow input.") from None
+        raise
+    except Exception as exc:
+        logger.error("workflow stage=generation_reservation outcome=failed exception_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Could not reserve workflow generation; no billable provider was called.") from exc
 
-    try:
-        generated, model_id = generate_pin_content(
-            product_name=payload.product_name,
-            product_details=payload.product_details,
-            image_url=media["image_url"],
-        )
-    except ContentGenerationError as exc:
-        logger.error("workflow stage=content_generation outcome=failed detail=%s", str(exc)[:180])
-        raise HTTPException(status_code=503, detail="Content generation failed before product persistence; retry with the same Idempotency-Key.") from exc
+    if not reservation["acquired"]:
+        if reservation["status"] == "persisted":
+            raise HTTPException(status_code=409, detail="This Idempotency-Key has already been persisted; inspect its product/publication record.")
+        raise HTTPException(status_code=409, detail={
+            "code": "workflow_generation_in_progress",
+            "message": "Another request owns the generation lease for this Idempotency-Key. Retry after its lease expires or completes.",
+        }, headers={"Retry-After": "30"})
+
+    media = None
+    if reservation.get("image_data_url"):
+        media = {"image_url": reservation["image_data_url"], "model": reservation["image_model"]}
+    else:
+        try:
+            media = generate_pin_image(
+                product_name=payload.product_name,
+                product_details=payload.product_details,
+            )
+            save_workflow_generation_image(
+                idempotency_key=idempotency_key, lease_token=lease_token,
+                image_data_url=media["image_url"], image_model=media["model"],
+            )
+        except ImageGenerationError as exc:
+            _release_generation_lease_safely(idempotency_key, lease_token)
+            logger.error("workflow stage=image_generation outcome=failed detail=%s", str(exc)[:180])
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            _release_generation_lease_safely(idempotency_key, lease_token)
+            logger.error("workflow stage=image_checkpoint outcome=failed exception_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Image generation/checkpoint failed; retry with the same Idempotency-Key.") from exc
+
+    if reservation.get("generated_content"):
+        try:
+            generated = GeneratedContent.model_validate(reservation["generated_content"])
+            model_id = reservation["content_model"]
+        except Exception as exc:
+            _release_generation_lease_safely(idempotency_key, lease_token)
+            logger.error("workflow stage=cached_content_validation outcome=failed exception_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Cached generated content is invalid; lease released. Retry with the same Idempotency-Key after the checkpoint is repaired.") from exc
+    else:
+        try:
+            generated, model_id = generate_pin_content(
+                product_name=payload.product_name,
+                product_details=payload.product_details,
+                image_url=media["image_url"],
+            )
+            save_workflow_generation_content(
+                idempotency_key=idempotency_key, lease_token=lease_token,
+                generated_content={
+                    "pin_idea": generated.pin_idea, "title": generated.title,
+                    "description": generated.description, "alt_text": generated.alt_text,
+                }, content_model=model_id,
+            )
+        except ContentGenerationError as exc:
+            _release_generation_lease_safely(idempotency_key, lease_token)
+            logger.error("workflow stage=content_generation outcome=failed detail=%s", str(exc)[:180])
+            raise HTTPException(status_code=503, detail="Content generation failed; the saved image will be reused on retry with the same Idempotency-Key.") from exc
+        except Exception as exc:
+            _release_generation_lease_safely(idempotency_key, lease_token)
+            logger.error("workflow stage=content_checkpoint outcome=failed exception_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Content generation/checkpoint failed; retry with the same Idempotency-Key.") from exc
 
     try:
         product, content = create_product_with_content_version(
@@ -155,6 +255,8 @@ def publish_product_end_to_end(
             image_url=None,
             affiliate_url=payload.affiliate_url,
             idempotency_key=idempotency_key,
+            request_fingerprint=request_fingerprint,
+            lease_token=lease_token,
             provider="deepseek",
             model_id=model_id,
             prompt_version="pin-content-v1",
@@ -163,62 +265,37 @@ def publish_product_end_to_end(
             description=generated.description,
             alt_text=generated.alt_text,
         )
-    except Exception as exc:
-        logger.error("workflow stage=product_content_persistence outcome=failed exception_type=%s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. If the transaction rolled back, retry with the same Idempotency-Key; otherwise inspect the stored product before retrying.") from exc
-
-    attempt = begin_publish_attempt(
-        product_id=product["id"], content_version_id=content["id"],
-        board_id=board_id, account_id=payload.account_id,
-    )
-    if attempt.get("blocked"):
-        if attempt.get("status") == "succeeded":
-            return {
-                "published": True, "already_published": True,
-                "pin_id": attempt.get("pinterest_pin_id"), "board_id": board_id,
-                "product_id": product["id"], "content_version_id": content["id"],
-                "image_source": "pinterest_base64" if media["image_url"].startswith("data:") else "image_url",
-            }
-        raise HTTPException(status_code=409, detail="A previous publish attempt is pending or uncertain. Check the Pinterest board before retrying.")
-
-    body = {
-        "board_id": board_id, "title": generated.title, "description": generated.description,
-        "alt_text": generated.alt_text,
-        "media_source": image_media_source(media["image_url"]),
-        "link": payload.affiliate_url,
-    }
-    try:
-        http_status, result = _pinterest_request("POST", "/pins", token, body=body)
-        pin_id = result.get("id") if isinstance(result, dict) else None
-        if not isinstance(pin_id, str) or not pin_id:
-            finish_publish_attempt(attempt["id"], status="unknown", http_status=http_status, error_code="missing_pin_id", response_metadata={})
-            raise HTTPException(status_code=502, detail="Pinterest returned no Pin ID; outcome is uncertain. Verify the board before retrying.")
-        saved = finish_publish_attempt(
-            attempt["id"], status="succeeded", pinterest_pin_id=pin_id,
-            http_status=http_status,
-            response_metadata={"id": pin_id, "board_id": board_id, "created_at": result.get("created_at")},
-        )
-    except HTTPException as exc:
-        try:
-            if exc.status_code >= 500:
-                finish_publish_attempt(attempt["id"], status="unknown", error_code="pinterest_outcome_uncertain", response_metadata={})
-            else:
-                finish_publish_attempt(attempt["id"], status="failed", http_status=exc.status_code, error_code="pinterest_request_rejected", response_metadata={})
-        except Exception:
-            pass
+    except ValueError as exc:
+        _release_generation_lease_safely(idempotency_key, lease_token)
+        if str(exc) == "idempotency_key_payload_mismatch":
+            raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different workflow input.") from None
         raise
     except Exception as exc:
-        try:
-            finish_publish_attempt(attempt["id"], status="unknown", error_code="publish_recording_error", response_metadata={})
-        except Exception:
-            pass
-        raise HTTPException(status_code=502, detail="Publish outcome may be uncertain; check Pinterest before retrying.") from exc
+        logger.error("workflow stage=product_content_persistence outcome=failed exception_type=%s", type(exc).__name__)
+        _release_generation_lease_safely(idempotency_key, lease_token)
+        raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. Cached provider outputs remain available for retry with the same Idempotency-Key.") from exc
+
+    result = publish_pin(
+        product_id=product["id"], content_version_id=content["id"],
+        board_id=board_id, account_id=payload.account_id,
+        access_token=token, title=content["title"],
+        description=content["description"], alt_text=content["alt_text"],
+        media_source=image_media_source(media["image_url"]),
+        destination_url=payload.affiliate_url,
+    )
+    if result.get("already_published"):
+        return {
+            **result,
+            "image_source": "pinterest_base64" if media["image_url"].startswith("data:") else "image_url",
+        }
+    saved_http_status = result.get("http_status")
+
 
     return {
-        "published": True, "already_published": False, "pin_id": saved["pinterest_pin_id"],
+        "published": True, "already_published": False, "pin_id": result["pin_id"],
         "board_id": board_id, "product_id": product["id"], "content_version_id": content["id"],
         "title": generated.title, "description": generated.description, "alt_text": generated.alt_text,
         "image_source": "pinterest_base64" if media["image_url"].startswith("data:") else "image_url", "affiliate_url": payload.affiliate_url,
         "provider": "DeepSeek", "model": model_id, "image_model": media["model"],
-        "http_status": saved["http_status"],
+        "http_status": saved_http_status,
     }

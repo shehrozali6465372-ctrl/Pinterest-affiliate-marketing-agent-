@@ -36,9 +36,9 @@ Set a strong random `APP_API_KEY` in Render environment variables before exposin
 - `GET /products/{product_id}`: retrieves a saved product.
 - `POST /products/{product_id}/content`: calls the configured DeepSeek Flash API using product text and supplied image URL; stores an auditable content version containing Pin Idea, Title, Description, and Alt Text.
 - `GET /products/{product_id}/content`: returns version history for the product.
-- `POST /publish` with JSON `{"product_id": 123, "content_version_id": 456}`: publishes an existing content version using the Pinterest v5 API. The original product image URL and exact affiliate destination link are used. Success requires a returned Pin ID, and successful duplicate attempts are blocked.
-- `POST /products/{product_id}/content/{content_version_id}/publish`: version-specific publishing endpoint.
-- `POST /learning-loop/run`: protected, real account-scoped Pinterest analytics ingestion; persists snapshots and descriptive aggregates. It does not train predictive ML.\n- `POST /learning-loop` (legacy): returns 501; use `/learning-loop/run` for the real Learning Loop.
+- `POST /publish` and `POST /products/{product_id}/content/{content_version_id}/publish`: retired legacy publishing routes; return HTTP 410 and never issue Pinterest requests. Static `PINTEREST_ACCESS_TOKEN` / board configuration is not an approved publishing credential path. Use the account-scoped encrypted-credential integration instead.
+- `POST /learning-loop/run`: protected, real account-scoped Pinterest analytics ingestion; persists snapshots and descriptive aggregates. It does not train predictive ML.
+- `POST /learning-loop` (legacy): returns 501; use `/learning-loop/run` for the real Learning Loop.
 
 A timed-out Pinterest request or ambiguous server error is recorded as uncertain; automatic retry is blocked. Check the Pinterest board before attempting a retry to avoid accidental duplicate Pins.
 
@@ -48,7 +48,7 @@ Migrations are in `migrations/` and tracked in `schema_migrations`. Run them exp
 ## Configuration
 - `APP_API_KEY`: protect operational endpoints.
 - `DATABASE_URL`: Neon PostgreSQL connection string.
-- `PINTEREST_ACCESS_TOKEN`, `PINTEREST_BOARD_ID`: authorized Pinterest API access.
+- `PINTEREST_ACCESS_TOKEN`, `PINTEREST_BOARD_ID`: deprecated legacy settings; ignored by all publishing routes. Pins must use the encrypted account-scoped credential vault.
 - `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`: server-side Cloudflare Workers AI access; image-generation service is pending.
 - `LLM_API_KEY`: DeepSeek API key.
 - `LLM_BASE_URL`: defaults to `https://api.deepseek.com`.
@@ -69,7 +69,7 @@ The authenticated endpoint is included in `main`:
 
 `POST /workflow/publish-product`
 
-It generates a product lifestyle image with Cloudflare Workers AI, converts the generated image to a data URL and sends it directly to Pinterest using image_base64 (no separate image-hosting service), then generates Pin Idea/title/description/alt text with DeepSeek, stores the product and content version, finds or creates the requested Pinterest board using the encrypted OAuth credential in Neon, publishes through Pinterest API v5, and records the returned Pin ID.
+It generates a product lifestyle image with Cloudflare Workers AI, converts the generated image to a data URL and sends it directly to Pinterest using image_base64 (no separate image-hosting service), then generates Pin Idea/title/description/alt text with DeepSeek, stores the product and content version, verifies the stored OAuth account identity and resolves an existing owned Pinterest board using the encrypted OAuth credential in Neon (it never creates a board), then delegates Pin creation and publication-ledger recording to the shared publishing gateway.
 
 Required server-side Render environment:
 - `APP_API_KEY`: required by the new workflow endpoint.
