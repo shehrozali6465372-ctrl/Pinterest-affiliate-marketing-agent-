@@ -316,14 +316,16 @@ Use this checkpoint and the latest owner-approved status above as the current pr
 
 ## Authoritative Agent Model 1 reconciliation checkpoint — 2026-11-05
 
-This checkpoint supersedes earlier Agent PR/branch status entries above where they conflict. It records local verification only; the new branch has not yet been pushed, merged, or deployed.
+This checkpoint supersedes earlier Agent PR/branch status entries above where they conflict. The replacement branch is pushed and PR #62 is open; it has not been merged or deployed.
 
 ### Current Agent mainline reconciliation
 
 - Current Agent `origin/main` base inspected: `955c583498a43e2c9a0c8baec584128defd83e3e` (`Add draft-first affiliate product scheduler`). The scheduler code and router are preserved in the reconciliation branch.
 - New local branch: `fix/pb06-mainline-reconcile`.
-- Latest local commit: `4927a9d9b1624022099245303422cbd45e904315` (`Reconcile Model 1 publishing gateway with current main`). Branch is clean and is three commits ahead of current `origin/main`.
-- The earlier Agent PR #61 (`fix/pb06-analytics-forward-port`) remains open and dirty/unmergeable. It has not been merged or force-pushed. Do not merge PR #61. The new branch is the clean mainline-based replacement candidate; it is not pushed and no replacement PR has been opened yet.
+- Reconciliation code commit: `4927a9d9b1624022099245303422cbd45e904315` (`Reconcile Model 1 publishing gateway with current main`). The context checkpoint was committed separately afterward.
+- Replacement PR #62: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/62, branch `fix/pb06-mainline-reconcile`, base `main`. PR is **OPEN, READY, and mergeable**. GitHub reports no merge conflict.
+- PR #62 exact-head checks on `629eda3a10e094b62bc00ba4989e46722492a304` passed: Python tests run `42056670696` (run #579) and Python CI run `42056670730` (run #699). A subsequent context-only commit is being added; its exact-head CI must also pass before merge.
+- Earlier Agent PR #61 (`fix/pb06-analytics-forward-port`) remains open and dirty/unmergeable. It has not been merged or force-pushed. Do not merge PR #61; close it as superseded only after PR #62 is merged.
 
 ### Reconciled implementation
 
@@ -350,11 +352,11 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 
 - Production Neon migrations 011/012 were applied and read-only verified earlier on production branch `br-shy-sea-arz8zzkh`: `products.request_fingerprint`, `workflow_generation_reservations`, its expiry index, and both `schema_migrations` ledger entries are present. No additional production schema/data mutation occurred in this reconciliation.
 - Modern Living Hub PR #21 remains merged/deployed as recorded above. No new Hub change or deployment was made here.
-- No Agent merge, push, Render deployment, live Pinterest request, Pin creation, Board creation, OAuth refresh/reconnect, token rotation, or production database write occurred for this checkpoint. All provider-facing tests used mocks; PostgreSQL integration used only the isolated Neon test branch.
+- The new Agent branch was pushed and PR #62 opened; no Agent merge or Render deployment has occurred. No live Pinterest request, Pin creation, Board creation, OAuth refresh/reconnect, token rotation, or production database write occurred. All provider-facing tests used mocks; PostgreSQL integration used only the isolated Neon test branch.
 
 ### Next execution order
 
-1. Push `fix/pb06-mainline-reconcile` as a new remote branch; do not force-push the old PR #61 branch.
-2. Open a replacement Agent PR against current `main` and run exact-head GitHub CI, including the required `test` and `pytest` checks.
-3. Merge only after exact-head checks are green and GitHub permits the protected merge. Then verify the exact Render deployment commit and read-only health/readiness/diagnostic endpoints.
+1. Let the context-only PR #62 head update finish exact-head GitHub CI; verify required `test` and `pytest` checks are green.
+2. Merge PR #62 only when exact-head checks are green and GitHub permits the protected merge. Then close PR #61 as superseded.
+3. Verify the exact Agent Render deployment commit and read-only health/readiness/diagnostic endpoints after merge.
 4. Do not use a live Pin or Board creation as a test. Do not trigger OAuth refresh; PB-05 remains condition-based until natural refresh is due.
