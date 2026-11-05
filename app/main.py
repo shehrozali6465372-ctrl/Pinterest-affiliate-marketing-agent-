@@ -496,7 +496,7 @@ def publish_manual_pin(
 
     # Verify account and board ownership before persisting or reserving a publish.
     try:
-        with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=8.0)) as client:
             account_response = client.get(f"{base}/user_account", headers={"Authorization": f"Bearer {token}"})
             if not account_response.is_success:
                 raise HTTPException(status_code=401 if account_response.status_code in (401, 403) else 502, detail="Stored Pinterest account could not be verified.")
@@ -530,7 +530,7 @@ def publish_manual_pin(
             pagination_limited = True
         seen_bookmarks.add(bookmark)
         try:
-            with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+            with httpx.Client(timeout=httpx.Timeout(60.0, connect=8.0)) as client:
                 page_response = client.get(
                     f"{base}/boards",
                     params={"page_size": 100, "bookmark": bookmark},
