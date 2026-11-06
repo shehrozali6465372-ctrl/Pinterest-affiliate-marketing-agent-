@@ -308,7 +308,6 @@ def run_one_due_job() -> dict[str, object]:
             result = publish_product_end_to_end(
                 payload,
                 idempotency_key=claimed["idempotency_key"],
-                x_request_id=f"affiliate-scheduler-{claimed['id']}",
             )
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, str) else "workflow_rejected"
