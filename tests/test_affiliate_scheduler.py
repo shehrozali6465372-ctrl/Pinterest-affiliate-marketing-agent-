@@ -148,3 +148,65 @@ def test_worker_with_no_due_jobs_does_not_invoke_publish(monkeypatch):
     result = affiliate_scheduler.run_one_due_job()
 
     assert result == {"claimed": False, "processed": False, "reason": "no_due_job"}
+
+
+def test_worker_calls_workflow_with_supported_signature_without_publishing(monkeypatch):
+    from contextlib import contextmanager
+    from app import affiliate_scheduler, workflow
+
+    claimed = {
+        "id": 101,
+        "schedule_id": 9,
+        "idempotency_key": "scheduler-test-idempotency-key",
+        "attempt_count": 1,
+        "source_id": 33,
+    }
+    details = {
+        "account_id": "pinterest:123",
+        "board_name": "Home Finds",
+        "board_description": "Kitchen organization",
+        "product_name": "Organizer",
+        "product_details": "Kitchen drawer organizer",
+        "affiliate_url": "https://example.com/item",
+    }
+    workflow_calls = []
+
+    class Result:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class FakeConnection:
+        def execute(self, query, params=None):
+            if "WITH candidate AS" in query:
+                return Result(claimed)
+            if "SELECT s.account_id, s.board_name" in query:
+                return Result(details)
+            return Result()
+
+    @contextmanager
+    def fake_connection():
+        yield FakeConnection()
+
+    def fake_workflow(payload, *, idempotency_key):
+        workflow_calls.append((payload, idempotency_key))
+        return {
+            "published": False,
+            "already_published": False,
+            "product_id": 501,
+            "pin_id": None,
+        }
+
+    monkeypatch.setattr(affiliate_scheduler, "connection", fake_connection)
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", fake_workflow)
+
+    result = affiliate_scheduler.run_one_due_job()
+
+    assert result["status"] == "succeeded"
+    assert result["published"] is False
+    assert len(workflow_calls) == 1
+    payload, key = workflow_calls[0]
+    assert payload.product_name == "Organizer"
+    assert key == claimed["idempotency_key"]
