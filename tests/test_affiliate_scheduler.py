@@ -18,7 +18,7 @@ def test_schedule_input_limits_sources_to_ten():
     with pytest.raises(ValueError):
         CreateScheduleInput(
             account_id="pinterest:123", timezone="America/New_York",
-            starts_on=date(2026, 11, 5), sources=[source] * 11,
+            starts_on=date(2099, 11, 5), sources=[source] * 11,
         )
 
 
@@ -26,7 +26,7 @@ def test_schedule_input_rejects_invalid_timezone():
     with pytest.raises(ValueError):
         CreateScheduleInput(
             account_id="pinterest:123", timezone="Not/A_Timezone",
-            starts_on=date(2026, 11, 5),
+            starts_on=date(2099, 11, 5),
             sources=[{
                 "product_name": "Organizer",
                 "product_details": "Kitchen drawer organizer",
@@ -61,7 +61,7 @@ def test_create_draft_preserves_affiliate_url_and_does_not_enqueue(monkeypatch):
     payload = CreateScheduleInput(
         account_id="pinterest:123",
         timezone="America/New_York",
-        starts_on=date(2026, 11, 5),
+        starts_on=date(2099, 11, 5),
         sources=[{
             "product_name": "Organizer",
             "product_details": "Kitchen drawer organizer",
