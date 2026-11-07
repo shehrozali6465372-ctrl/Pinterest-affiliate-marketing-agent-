@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
+from app import ucos_browser_client
 from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
 from app.publishing_gateway import publish_pin
 
@@ -141,6 +142,41 @@ class PublishRequest(BaseModel):
     content_version_id: int = Field(gt=0)
 
 
+class ProductResearchRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    marketplace: str = Field(min_length=2, max_length=5, pattern=r"^[A-Za-z]{2}(?:-[A-Za-z]{2})?$")
+    search_query: str | None = Field(default=None, min_length=1, max_length=500)
+    product_url: HttpUrl | None = None
+    fields: list[str] = Field(default_factory=lambda: ["title", "price", "currency", "product_url", "image_url"], min_length=1, max_length=9)
+    limit: int = Field(default=10, ge=1, le=20)
+    require_affiliate_link: bool = False
+
+    @field_validator("search_query")
+    @classmethod
+    def strip_search_query(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("search_query must not be blank")
+        return value
+
+    @field_validator("fields")
+    @classmethod
+    def validate_research_fields(cls, value: list[str]) -> list[str]:
+        allowed = {"title", "price", "currency", "product_url", "image_url", "category", "brand", "specifications", "availability"}
+        if len(set(value)) != len(value) or any(item not in allowed for item in value):
+            raise ValueError("fields contain duplicates or unsupported values")
+        return value
+
+    @field_validator("product_url")
+    @classmethod
+    def validate_research_product_url(cls, value: HttpUrl | None) -> HttpUrl | None:
+        if value is not None and (value.scheme != "https" or value.username or value.password or value.port):
+            raise ValueError("product_url must be HTTPS without credentials or a port")
+        return value
+
+
 def _serialize_row(row: dict) -> dict[str, object]:
     result = dict(row)
     created_at = result.get("created_at")
@@ -152,6 +188,26 @@ def _serialize_row(row: dict) -> dict[str, object]:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "pinterest-affiliate-model-1"}
+
+
+@app.post("/product-research", dependencies=[Depends(require_api_key)])
+def product_research(payload: ProductResearchRequest) -> dict[str, object]:
+    """Run research only through the authenticated UCOS provider-adapter gateway."""
+    if bool(payload.search_query) == bool(payload.product_url):
+        raise HTTPException(status_code=422, detail="provide exactly one of search_query or product_url")
+    try:
+        return ucos_browser_client.research_product(
+            source=payload.source,
+            marketplace=payload.marketplace,
+            search_query=payload.search_query,
+            product_url=str(payload.product_url) if payload.product_url else None,
+            fields=payload.fields,
+            limit=payload.limit,
+            require_affiliate_link=payload.require_affiliate_link,
+        )
+    except ucos_browser_client.UCOSBrowserError as exc:
+        code = str(exc)
+        raise HTTPException(status_code=503, detail={"error": "product_research_unavailable", "reason": code}) from exc
 
 
 @app.get("/readiness", dependencies=[Depends(require_api_key)])
