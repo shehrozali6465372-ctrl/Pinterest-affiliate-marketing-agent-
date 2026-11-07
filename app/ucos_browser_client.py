@@ -37,8 +37,10 @@ def _request(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise UCOSBrowserError("browser_service_timeout") from exc
     except httpx.HTTPError as exc:
         raise UCOSBrowserError("browser_service_unreachable") from exc
-    if response.status_code in (401, 403):
+    if response.status_code == 401:
         raise UCOSBrowserError("browser_service_auth_rejected")
+    if response.status_code == 403:
+        raise UCOSBrowserError("browser_service_access_blocked")
     if response.status_code == 429:
         raise UCOSBrowserError("browser_service_rate_limited")
     if response.status_code == 503:
@@ -74,18 +76,43 @@ def research_product(*, source: str, marketplace: str, search_query: str | None 
     return _request("/tool/product/research", payload)
 
 
-def amazon_product(*, product_url: str, marketplace: str = "amazon.com",
-                   fields: list[str] | None = None, generate_affiliate_link: bool = False,
-                   timeout_ms: int = 30000) -> dict[str, Any]:
-    """Call the isolated Amazon tool. The browser service's policy gate remains authoritative."""
-    if not product_url.startswith("https://"):
-        raise ValueError("product_url must use HTTPS")
+
+def amazon_affiliate_url(*, keyword: str, marketplace: str = "amazon.com",
+                         timeout_ms: int = 30000) -> str:
+    """Return only the SiteStripe Associates URL for an Amazon search keyword."""
+    keyword = keyword.strip()
+    if not keyword or len(keyword) > 300:
+        raise ValueError("keyword is required and must be <= 300 characters")
+    allowed_marketplaces = {
+        "amazon.com", "amazon.co.uk", "amazon.ca", "amazon.de", "amazon.fr",
+        "amazon.it", "amazon.es", "amazon.nl", "amazon.se", "amazon.pl",
+        "amazon.com.be", "amazon.com.au", "amazon.co.jp", "amazon.in",
+        "amazon.com.mx", "amazon.com.br", "amazon.sg", "amazon.ae", "amazon.sa",
+        "amazon.eg",
+    }
+    marketplace = marketplace.strip().lower()
+    if marketplace not in allowed_marketplaces:
+        raise ValueError("unsupported Amazon marketplace")
     if not 1000 <= timeout_ms <= 60000:
         raise ValueError("timeout_ms must be between 1000 and 60000")
-    return _request("/tool/amazon/product", {
+    response = _request("/tool/amazon/product", {
         "profile_ref": "amazon-primary", "marketplace": marketplace,
-        "product_url": product_url,
-        "fields": fields or ["title", "price", "availability"],
-        "generate_affiliate_link": generate_affiliate_link,
-        "timeout_ms": timeout_ms,
+        "keyword": keyword, "timeout_ms": timeout_ms,
     })
+    if response.get("state") != "completed":
+        raise UCOSBrowserError("browser_service_invalid_state")
+    result = response.get("result")
+    affiliate_url = result.get("affiliate_url") if isinstance(result, dict) else None
+    if not isinstance(affiliate_url, str):
+        raise UCOSBrowserError("browser_service_affiliate_url_missing")
+    from urllib.parse import parse_qs
+    parsed = urlsplit(affiliate_url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    allowed_hosts = ({d for d in allowed_marketplaces}
+                     | {"www." + d for d in allowed_marketplaces}
+                     | {"amzn.to"})
+    if parsed.scheme != "https" or host not in allowed_hosts:
+        raise UCOSBrowserError("browser_service_affiliate_url_invalid")
+    if host != "amzn.to" and not any(parse_qs(parsed.query).get("tag", [])):
+        raise UCOSBrowserError("browser_service_affiliate_url_invalid")
+    return affiliate_url

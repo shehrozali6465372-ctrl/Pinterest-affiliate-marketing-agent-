@@ -142,6 +142,20 @@ class PublishRequest(BaseModel):
     content_version_id: int = Field(gt=0)
 
 
+class AmazonAffiliateURLRequest(BaseModel):
+    keyword: str = Field(min_length=1, max_length=300)
+    marketplace: str = Field(default="amazon.com", min_length=3, max_length=32)
+    timeout_ms: int = Field(default=30000, ge=1000, le=60000)
+
+    @field_validator("keyword")
+    @classmethod
+    def strip_keyword(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("keyword must not be blank")
+        return value
+
+
 class ProductResearchRequest(BaseModel):
     source: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
     marketplace: str = Field(min_length=2, max_length=5, pattern=r"^[A-Za-z]{2}(?:-[A-Za-z]{2})?$")
@@ -208,6 +222,25 @@ def product_research(payload: ProductResearchRequest) -> dict[str, object]:
     except ucos_browser_client.UCOSBrowserError as exc:
         code = str(exc)
         raise HTTPException(status_code=503, detail={"error": "product_research_unavailable", "reason": code}) from exc
+
+
+@app.post("/amazon-affiliate-url", dependencies=[Depends(require_api_key)])
+def amazon_affiliate_url(payload: AmazonAffiliateURLRequest) -> dict[str, str]:
+    """Return only the SiteStripe affiliate URL for the requested Amazon keyword."""
+    try:
+        affiliate_url = ucos_browser_client.amazon_affiliate_url(
+            keyword=payload.keyword,
+            marketplace=payload.marketplace,
+            timeout_ms=payload.timeout_ms,
+        )
+        return {"affiliate_url": affiliate_url}
+    except ucos_browser_client.UCOSBrowserError as exc:
+        reason = str(exc)
+        status_code = 403 if reason == "browser_service_access_blocked" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={"error": "amazon_affiliate_url_unavailable", "reason": reason},
+        ) from exc
 
 
 @app.get("/readiness", dependencies=[Depends(require_api_key)])
