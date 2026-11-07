@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,9 +39,10 @@ def test_create_draft_preserves_affiliate_url_and_does_not_enqueue(monkeypatch):
     from app import affiliate_scheduler
 
     calls = []
+    starts_on = date.today() + timedelta(days=1)
     schedule_row = {
         "id": 71, "account_id": "pinterest:123", "timezone": "America/New_York",
-        "starts_on": date(2026, 11, 5), "ends_on": date(2026, 12, 4),
+        "starts_on": starts_on, "ends_on": starts_on + timedelta(days=29),
         "daily_pin_limit": 5, "board_name": "Home Finds", "status": "draft",
     }
 
@@ -61,7 +62,7 @@ def test_create_draft_preserves_affiliate_url_and_does_not_enqueue(monkeypatch):
     payload = CreateScheduleInput(
         account_id="pinterest:123",
         timezone="America/New_York",
-        starts_on=date(2099, 11, 5),
+        starts_on=starts_on,
         sources=[{
             "product_name": "Organizer",
             "product_details": "Kitchen drawer organizer",
