@@ -23,9 +23,6 @@ class Settings(BaseSettings):
     pinterest_token_encryption_key: str | None = None
     pinterest_client_id: str | None = None
     pinterest_client_secret: str | None = None
-    # UCOS Personal Browser service-to-service client (agent token only).
-    ucos_browser_base_url: str | None = None
-    ucos_browser_agent_token: str | None = None
 
     @field_validator("llm_api_key", "cloudflare_api_token", "app_api_key", mode="before")
     @classmethod
