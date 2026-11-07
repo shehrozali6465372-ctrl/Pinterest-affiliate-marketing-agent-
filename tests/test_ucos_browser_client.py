@@ -60,7 +60,7 @@ def test_amazon_keyword_returns_only_affiliate_url_and_uses_agent_endpoint(monke
     assert result == affiliate_url
     assert seen["url"].endswith("/tool/amazon/product")
     assert seen["json"] == {
-        "profile_ref": "amazon-primary", "marketplace": "amazon.com",
+        "profile_ref": "amazon-agent", "marketplace": "amazon.com",
         "keyword": "spice rack", "timeout_ms": 30000,
     }
     assert seen["read_timeout"] == 105.0
