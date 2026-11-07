@@ -40,22 +40,48 @@ def test_research_requires_exactly_one_query_or_url(monkeypatch):
         browser.research_product(source="x", marketplace="US", search_query="x", product_url="https://example.com")
 
 
-def test_amazon_request_is_bounded_and_uses_agent_endpoint(monkeypatch):
+def test_amazon_keyword_returns_only_affiliate_url_and_uses_agent_endpoint(monkeypatch):
     configure(monkeypatch)
     seen = {}
+    affiliate_url = "https://www.amazon.com/dp/B000000000?tag=site-20&linkCode=ogi"
     class Client:
         def __init__(self, **kwargs): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def post(self, url, **kwargs):
             seen.update(url=url, **kwargs)
-            return httpx.Response(200, json={"status": "partial", "affiliate_link": None}, request=httpx.Request("POST", url))
+            return httpx.Response(200, json={
+                "state": "completed", "result": {"affiliate_url": affiliate_url}
+            }, request=httpx.Request("POST", url))
     monkeypatch.setattr(browser.httpx, "Client", Client)
-    result = browser.amazon_product(product_url="https://www.amazon.com/dp/B000000000")
-    assert result["status"] == "partial"
+    result = browser.amazon_affiliate_url(keyword="  spice rack  ")
+    assert result == affiliate_url
     assert seen["url"].endswith("/tool/amazon/product")
-    assert seen["json"]["profile_ref"] == "amazon-primary"
-    assert seen["json"]["generate_affiliate_link"] is False
+    assert seen["json"] == {
+        "profile_ref": "amazon-primary", "marketplace": "amazon.com",
+        "keyword": "spice rack", "timeout_ms": 30000,
+    }
+
+
+def test_amazon_keyword_rejects_invalid_or_missing_affiliate_url(monkeypatch):
+    configure(monkeypatch)
+    class Client:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def post(self, url, **kwargs):
+            return httpx.Response(200, json={"state": "completed", "result": {"affiliate_url": "https://example.com/not-affiliate"}}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(browser.httpx, "Client", Client)
+    with pytest.raises(browser.UCOSBrowserError, match="affiliate_url_invalid"):
+        browser.amazon_affiliate_url(keyword="spice rack")
+
+
+def test_amazon_keyword_validates_input(monkeypatch):
+    configure(monkeypatch)
+    with pytest.raises(ValueError, match="keyword is required"):
+        browser.amazon_affiliate_url(keyword="  ")
+    with pytest.raises(ValueError, match="unsupported Amazon marketplace"):
+        browser.amazon_affiliate_url(keyword="rack", marketplace="example.com")
 
 
 def test_redirects_are_not_followed(monkeypatch):
