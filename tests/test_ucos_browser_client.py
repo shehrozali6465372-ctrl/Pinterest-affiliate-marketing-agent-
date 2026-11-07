@@ -45,7 +45,8 @@ def test_amazon_keyword_returns_only_affiliate_url_and_uses_agent_endpoint(monke
     seen = {}
     affiliate_url = "https://www.amazon.com/dp/B000000000?tag=site-20&linkCode=ogi"
     class Client:
-        def __init__(self, **kwargs): pass
+        def __init__(self, **kwargs):
+            seen["read_timeout"] = kwargs["timeout"].read
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def post(self, url, **kwargs):
@@ -61,6 +62,7 @@ def test_amazon_keyword_returns_only_affiliate_url_and_uses_agent_endpoint(monke
         "profile_ref": "amazon-primary", "marketplace": "amazon.com",
         "keyword": "spice rack", "timeout_ms": 30000,
     }
+    assert seen["read_timeout"] == 75.0
 
 
 def test_amazon_keyword_rejects_invalid_or_missing_affiliate_url(monkeypatch):

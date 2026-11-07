@@ -18,7 +18,7 @@ class UCOSBrowserError(RuntimeError):
     """Safe, classified browser-service integration error."""
 
 
-def _request(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _request(path: str, payload: dict[str, Any], *, timeout_seconds: float = 40.0) -> dict[str, Any]:
     base_url = (settings.ucos_browser_base_url or "").strip().rstrip("/")
     token = settings.ucos_browser_agent_token or ""
     if not base_url or not token:
@@ -27,7 +27,7 @@ def _request(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
         raise UCOSBrowserError("browser_service_url_invalid")
     try:
-        with httpx.Client(timeout=httpx.Timeout(40.0, connect=8.0), follow_redirects=False) as client:
+        with httpx.Client(timeout=httpx.Timeout(timeout_seconds, connect=min(8.0, timeout_seconds)), follow_redirects=False) as client:
             response = client.post(
                 f"{base_url}{path}",
                 json=payload,
@@ -95,10 +95,13 @@ def amazon_affiliate_url(*, keyword: str, marketplace: str = "amazon.com",
         raise ValueError("unsupported Amazon marketplace")
     if not 1000 <= timeout_ms <= 60000:
         raise ValueError("timeout_ms must be between 1000 and 60000")
+    # The browser performs navigation, search-result selection, and SiteStripe
+    # capture in one request. Allow bounded time for all stages rather than
+    # timing out at the old generic 40-second product-research limit.
     response = _request("/tool/amazon/product", {
         "profile_ref": "amazon-primary", "marketplace": marketplace,
         "keyword": keyword, "timeout_ms": timeout_ms,
-    })
+    }, timeout_seconds=max(75.0, timeout_ms / 1000 + 45.0))
     if response.get("state") != "completed":
         raise UCOSBrowserError("browser_service_invalid_state")
     result = response.get("result")
