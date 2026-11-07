@@ -104,7 +104,7 @@ def amazon_affiliate_url(*, keyword: str, marketplace: str = "amazon.com",
     # capture in one request. Allow bounded time for all stages rather than
     # timing out at the old generic 40-second product-research limit.
     response = _request("/tool/amazon/product", {
-        "profile_ref": "amazon-primary", "marketplace": marketplace,
+        "profile_ref": "amazon-agent", "marketplace": marketplace,
         "keyword": keyword, "timeout_ms": timeout_ms,
     }, timeout_seconds=max(_CONNECT_TIMEOUT_SECONDS, _RENDER_COLD_START_SECONDS + timeout_ms / 1000 + _COLD_START_MARGIN_SECONDS))
     if response.get("state") != "completed":
