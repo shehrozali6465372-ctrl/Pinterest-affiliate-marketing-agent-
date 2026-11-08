@@ -185,7 +185,9 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
 
     class FakeConnection:
         def execute(self, query, params=None):
-            if "SELECT s.id AS schedule_id" in query:
+            if "SELECT s.id AS schedule_id" in query and "s.niche_id IS NOT NULL" in query:
+                return Result(None)
+            if "SELECT s.id AS schedule_id" in query and "s.niche_id IS NULL" in query:
                 return Result({"schedule_id": 9, "account_id": "pinterest:123", "niche_id": None, "timezone": "UTC"})
             if "SELECT id, account_id, niche_id, timezone, daily_pin_limit" in query:
                 return Result({"id": 9, "account_id": "pinterest:123", "niche_id": None, "timezone": "UTC", "daily_pin_limit": 5, "status": "active"})

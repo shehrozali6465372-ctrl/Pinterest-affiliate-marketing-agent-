@@ -369,49 +369,67 @@ def run_one_due_job() -> dict[str, object]:
                 """
             )
 
-            # Candidate discovery is deliberately non-locking. For Model 2,
-            # the account profile row is then locked before schedule/job rows,
-            # serializing quota evaluation across every schedule for this account.
-            hint = conn.execute(
+            # Lock a Model 2 account profile during candidate discovery. SKIP
+            # LOCKED lets another worker choose a different account rather than
+            # queue behind a busy account whose quota may already be exhausted.
+            # The lock order remains profile -> niche -> assignment -> schedule -> job.
+            model2_hint = conn.execute(
                 """
                 SELECT s.id AS schedule_id, s.account_id, s.niche_id, s.timezone
                 FROM affiliate_pin_jobs j
                 JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id
-                LEFT JOIN model2_account_profiles ap ON ap.account_id = s.account_id
-                LEFT JOIN model2_account_niches an
+                JOIN model2_account_profiles ap ON ap.account_id = s.account_id
+                JOIN model2_account_niches an
                   ON an.account_id = s.account_id AND an.niche_id = s.niche_id
-                LEFT JOIN model2_niches n ON n.id = s.niche_id
-                LEFT JOIN pinterest_credentials pc ON pc.account_id = s.account_id
-                WHERE j.status = 'queued' AND j.run_at <= now() AND s.status = 'active'
+                JOIN model2_niches n ON n.id = s.niche_id
+                JOIN pinterest_credentials pc ON pc.account_id = s.account_id
+                WHERE s.niche_id IS NOT NULL
+                  AND j.status = 'queued' AND j.run_at <= now() AND s.status = 'active'
+                  AND ap.status = 'active' AND an.status = 'active'
+                  AND n.status = 'active' AND pc.status = 'connected'
                   AND (
-                    (s.niche_id IS NULL AND (
+                    SELECT count(*)
+                    FROM affiliate_pin_jobs day_jobs
+                    JOIN affiliate_publishing_schedules day_s ON day_s.id = day_jobs.schedule_id
+                    WHERE day_s.account_id = s.account_id
+                      AND day_jobs.status IN ('processing', 'succeeded')
+                      AND (
+                        CASE
+                          WHEN day_jobs.status = 'processing' THEN COALESCE(day_jobs.locked_at, day_jobs.run_at)
+                          ELSE COALESCE(day_jobs.finished_at, day_jobs.run_at)
+                        END AT TIME ZONE ap.timezone
+                      )::date = (now() AT TIME ZONE ap.timezone)::date
+                  ) < s.daily_pin_limit
+                ORDER BY j.run_at, j.id
+                FOR UPDATE OF ap SKIP LOCKED
+                LIMIT 1
+                """
+            ).fetchone()
+
+            # Legacy Model 1 schedules have no Model 2 profile/niche lock. The
+            # existing one-active-schedule index means locking their schedule
+            # row serializes their legacy per-schedule quota check.
+            legacy_hint = None
+            if not model2_hint:
+                legacy_hint = conn.execute(
+                    """
+                    SELECT s.id AS schedule_id, s.account_id, s.niche_id, s.timezone
+                    FROM affiliate_pin_jobs j
+                    JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id
+                    WHERE s.niche_id IS NULL
+                      AND j.status = 'queued' AND j.run_at <= now() AND s.status = 'active'
+                      AND (
                         SELECT count(*) FROM affiliate_pin_jobs same_day
                         WHERE same_day.schedule_id = s.id
                           AND same_day.local_run_date = j.local_run_date
                           AND same_day.status IN ('processing', 'succeeded')
-                    ) < s.daily_pin_limit)
-                    OR
-                    (s.niche_id IS NOT NULL
-                     AND ap.status = 'active' AND an.status = 'active'
-                     AND n.status = 'active' AND pc.status = 'connected'
-                     AND (
-                        SELECT count(*)
-                        FROM affiliate_pin_jobs day_jobs
-                        JOIN affiliate_publishing_schedules day_s ON day_s.id = day_jobs.schedule_id
-                        WHERE day_s.account_id = s.account_id
-                          AND day_jobs.status IN ('processing', 'succeeded')
-                          AND (
-                            CASE
-                              WHEN day_jobs.status = 'processing' THEN COALESCE(day_jobs.locked_at, day_jobs.run_at)
-                              ELSE COALESCE(day_jobs.finished_at, day_jobs.run_at)
-                            END AT TIME ZONE ap.timezone
-                          )::date = (now() AT TIME ZONE ap.timezone)::date
-                     ) < s.daily_pin_limit)
-                  )
-                ORDER BY j.run_at, j.id
-                LIMIT 1
-                """
-            ).fetchone()
+                      ) < s.daily_pin_limit
+                    ORDER BY j.run_at, j.id
+                    FOR UPDATE OF s SKIP LOCKED
+                    LIMIT 1
+                    """
+                ).fetchone()
+            hint = model2_hint or legacy_hint
             if not hint:
                 return {"claimed": False, "processed": False, "reason": "no_due_job"}
 

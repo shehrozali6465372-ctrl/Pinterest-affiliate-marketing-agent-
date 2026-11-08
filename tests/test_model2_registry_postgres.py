@@ -1698,3 +1698,108 @@ def test_model2_worker_passes_exact_niche_and_serializes_concurrent_account_quot
     assert first_result["status"] == "succeeded"
     assert observed and observed[0][0] == model2_db["niche_a"]
     assert second == {"claimed": False, "processed": False, "reason": "no_due_job"}
+
+
+def test_model2_worker_retry_preserves_job_key_and_uncertain_result_is_quarantined(model2_db, monkeypatch):
+    from fastapi import HTTPException
+    from app import database, workflow
+    from app.affiliate_scheduler import run_one_due_job
+
+    schedule_id, _ = _create_and_activate_model2_schedule(model2_db["account_a"], model2_db["niche_a"])
+    with database.connection() as conn:
+        job = conn.execute(
+            "SELECT id, idempotency_key FROM affiliate_pin_jobs WHERE schedule_id = %s ORDER BY id LIMIT 1",
+            (schedule_id,),
+        ).fetchone()
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE id = %s",
+            (job["id"],),
+        )
+
+    workflow_calls = []
+    def retry_once(payload, *, idempotency_key):
+        workflow_calls.append((payload.niche_id, idempotency_key))
+        if len(workflow_calls) == 1:
+            raise HTTPException(status_code=503, detail="temporary test failure")
+        return {"published": False, "already_published": False, "product_id": None, "pin_id": None}
+
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", retry_once)
+    first = run_one_due_job()
+    assert first["status"] == "retry_queued"
+    with database.connection() as conn:
+        stored = conn.execute(
+            "SELECT status, idempotency_key FROM affiliate_pin_jobs WHERE id = %s",
+            (job["id"],),
+        ).fetchone()
+        assert stored["status"] == "queued"
+        assert stored["idempotency_key"] == job["idempotency_key"]
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE id = %s",
+            (job["id"],),
+        )
+    second = run_one_due_job()
+    assert second["status"] == "succeeded"
+    assert len(workflow_calls) == 2
+    assert workflow_calls[0] == workflow_calls[1]
+    assert workflow_calls[0][0] == model2_db["niche_a"]
+
+    # A separate due job with an ambiguous outcome becomes uncertain and is
+    # never offered to the workflow again by a later worker invocation.
+    next_id, _ = _create_and_activate_model2_schedule(model2_db["account_b"], model2_db["niche_b"])
+    with database.connection() as conn:
+        uncertain_job = conn.execute(
+            "SELECT id FROM affiliate_pin_jobs WHERE schedule_id = %s ORDER BY id LIMIT 1",
+            (next_id,),
+        ).fetchone()
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE id = %s",
+            (uncertain_job["id"],),
+        )
+    uncertain_calls = []
+    def ambiguous(payload, *, idempotency_key):
+        uncertain_calls.append(idempotency_key)
+        raise HTTPException(status_code=409, detail="publish outcome uncertain")
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", ambiguous)
+    uncertain_result = run_one_due_job()
+    assert uncertain_result["status"] == "uncertain"
+    assert run_one_due_job() == {"claimed": False, "processed": False, "reason": "no_due_job"}
+    assert len(uncertain_calls) == 1
+    with database.connection() as conn:
+        state = conn.execute(
+            "SELECT status FROM affiliate_pin_jobs WHERE id = %s",
+            (uncertain_job["id"],),
+        ).fetchone()
+    assert state["status"] == "uncertain"
+
+
+def test_model2_workers_for_different_accounts_claim_independently(model2_db, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from app import database, workflow
+    from app.affiliate_scheduler import run_one_due_job
+
+    schedule_a, _ = _create_and_activate_model2_schedule(model2_db["account_a"], model2_db["niche_a"])
+    schedule_b, _ = _create_and_activate_model2_schedule(model2_db["account_b"], model2_db["niche_b"])
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE schedule_id IN (%s, %s)",
+            (schedule_a, schedule_b),
+        )
+
+    both_in_workflow = Barrier(2)
+    observed = []
+    def concurrent_workflow(payload, *, idempotency_key):
+        observed.append((payload.account_id, payload.niche_id))
+        both_in_workflow.wait(timeout=10)
+        return {"published": False, "already_published": False, "product_id": None, "pin_id": None}
+
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", concurrent_workflow)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(run_one_due_job), pool.submit(run_one_due_job)]
+        results = [future.result(timeout=15) for future in futures]
+
+    assert all(result["status"] == "succeeded" for result in results)
+    assert set(observed) == {
+        (model2_db["account_a"], model2_db["niche_a"]),
+        (model2_db["account_b"], model2_db["niche_b"]),
+    }
