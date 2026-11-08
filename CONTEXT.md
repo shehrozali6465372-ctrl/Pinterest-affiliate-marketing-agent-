@@ -360,3 +360,129 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 2. Merge PR #62 only when exact-head checks are green and GitHub permits the protected merge. Then close PR #61 as superseded.
 3. Verify the exact Agent Render deployment commit and read-only health/readiness/diagnostic endpoints after merge.
 4. Do not use a live Pin or Board creation as a test. Do not trigger OAuth refresh; PB-05 remains condition-based until natural refresh is due.
+
+
+## Model 2 architecture-first directive — 2026-11-08 (owner instruction; current)
+
+- Owner explicitly directed: **freeze the complete Model 2 architecture first, lock it, and only then implement in that exact order.** Do not continue coding features before architecture approval/freeze.
+- Owner's permanent implementation rule reaffirmed: **never recreate functionality that is already implemented.** Inspect and verify existing code, schemas, routes and tests first; reuse completed Model 1 capabilities; implement only demonstrated gaps. Do not repeat work or create duplicate systems.
+- The detailed architecture baseline is `docs/MODEL2-FOUNDATION.md`. It defines Model 2 objectives, existing Model 1 reuse boundaries, target components/data flow, schema/security rules, explicit exclusions, sequential implementation gates 0–10, and evidence requirements.
+- Current status of architecture document: **FROZEN / LOCKED** per the owner's direct instruction to create and lock the architecture before implementation. Any architecture change requires an explicit owner-approved revision.
+- Existing artifacts in the isolated Model 2 worktree remain draft only:
+  - `migrations/013_model2_account_niche_registry.sql`
+  - `tests/test_model2_registry_migration.py`
+  - `tests/test_model2_registry_postgres.py`
+  - `docs/MODEL2-FOUNDATION.md`
+  These were created before the architecture-first instruction. They must be reviewed against the approved architecture; retain, revise or remove only after review. Do not apply migration 013 to production.
+- Verified current branch/worktree: `feat/model2-open-source-reuse` at the production-main-derived baseline `785efd99849627062c1fff8504d21ca91abfee8e`; four Model 2 draft files are untracked. No commit/push/PR/merge/deploy has occurred in this checkpoint.
+- Runtime tests remain **NOT RUN** in this isolated worktree because pytest/runtime dependencies and PostgreSQL client were unavailable. Earlier static checks passed only; do not report integration tests as passing.
+- Hard boundaries remain: do not touch the owner backup worktree or clean production snapshot; no production DB migration/write, Render deploy, OAuth refresh/rotation, live scheduler run, real Pinterest Pin/Board creation, image hosting, Personal Browser/UCOS Browser integration, or Modern Living Hub coupling.
+- Next permitted work: Phase 1 existing-capability inventory only, following the frozen sequence. Before every implementation item, inspect current code/schema/routes/tests and prove the capability is missing; skip anything already implemented and verified, recording its evidence instead of rebuilding it. Any proposed architecture change requires explicit owner approval.
+
+
+## Mandatory open-source reuse rule — 2026-11-08 (owner hard rule)
+
+- Owner added a permanent hard rule: **when a suitable open-source solution exists and has been verified, use/reuse it. Do not build the same capability from scratch. Implement only the functionality that cannot be satisfied by a verified suitable open-source option or by existing project code.**
+- Apply this rule before every Model 2 implementation phase:
+  1. Inspect the current repository and its existing dependencies/components first.
+  2. Search for a suitable open-source project/library only where a genuine gap remains.
+  3. Verify the candidate's actual repository, current maintenance/activity, release/API compatibility, security posture where evidence is available, dependency/supply-chain implications, and exact license/obligations.
+  4. Prefer existing project code or a compatible, maintained open-source dependency over custom implementation when it meets the requirements.
+  5. If no suitable verified option exists, document the search/evaluation and why candidates fail; then implement only the smallest missing component.
+  6. Add tests and integration adapters around the selected solution; do not fork/rewrite its core functionality unnecessarily.
+- "Open source" alone is not sufficient verification. Do not import code or add a dependency until license compatibility and obligations are reviewed. AGPL-3.0 projects (including Postiz/Postmill references previously reviewed) remain **not approved for code import** unless the owner separately authorizes after license review. Their architecture may be used as reference only.
+- Do not invent a library's capabilities, maintenance status, license, security properties or compatibility. Record sources/versions and evidence; if a candidate cannot be verified, treat it as unverified and do not rely on it.
+- This rule applies alongside the existing no-duplication rule: reuse verified Model 1 functionality first, then verified compatible open-source solutions, and custom-build only the residual gap.
+- Update the frozen architecture's engineering rules and sequential phase gates to require an open-source reuse assessment before custom implementation. This is an owner-directed clarification to the frozen baseline; record it as an approved architecture revision/addendum rather than silently changing scope.
+
+
+## Model 2 Phase 1 — existing capability inventory checkpoint (2026-11-08)
+
+- **Phase 1 source inventory completed** in `docs/MODEL2-PHASE1-INVENTORY.md`. Scope covered current FastAPI routes/auth dependencies, Pydantic models/validation, database helpers/migrations, credential vault, publishing gateway/ledger, workflow, scheduler, Learning Loop/raw analytics, dashboard, dependencies and related tests.
+- Current source baseline is commit `785efd99849627062c1fff8504d21ca91abfee8e` in isolated worktree `/root/restore-staging/Pinterest-Agent-model2-worktree`, branch `feat/model2-open-source-reuse`.
+- Existing capabilities confirmed for reuse: FastAPI routing, Pydantic validation, Psycopg 3 pool/migration abstraction, encrypted OAuth credential vault, canonical publishing gateway and publication ledger, product/content persistence, workflow reservations/checkpoints, draft-first scheduler, raw Pin analytics/Learning Loop, read-only dashboard/diagnostics, and direct Base64 media flow.
+- Genuine Model 2 gaps identified: account profile/ownership authorization; metadata-only connected-credential lookup (current vault getters decrypt and return token material internally); niche taxonomy and account–niche repository/API; explicit niche attribution to content/publications; account+niche learning projection; multi-niche schedule policy; account/niche dashboard isolation; and a true per-user/tenant auth model. Shared API key is service authentication, not proof of human ownership.
+- Existing scheduler has one-active-schedule-per-account uniqueness and no niche dimension. Do not implement multi-niche scheduling until Phase 9 design proves board/account quotas, idempotency and recovery.
+- Open-source assessment: current stack already has suitable verified components (FastAPI MIT, Pydantic MIT, Psycopg 3 LGPL-3.0-only, cryptography Apache-2.0 OR BSD-3-Clause; Python stdlib `zoneinfo`). Reuse these; no new package is currently justified. Official license/source references are recorded in the Phase 1 inventory. Exact resolved dependency tree/SBOM not verified because requirements are ranges and no lockfile was found.
+- Draft migration 013 and its two tests already existed as untracked artifacts before this phase. They are proposals only and require Phase 2 schema review; no Model 2 API/repository implementation exists yet.
+- Test execution: `python3 -m pytest --version` failed with `No module named pytest`; full pytest and PostgreSQL integration tests remain **NOT RUN**. `git diff --check` passed. No production verification was performed.
+- No production DB changes, Render deployment, GitHub commit/push/PR/merge, OAuth operation, Pinterest write, Pin/Board creation, image hosting, or changes to owner backup/clean snapshot occurred.
+- **Next sequence:** Phase 2 schema review only. Review migration 013 against frozen constraints, identify necessary corrections, inspect migration runner/rollback and attribution constraints, and evaluate whether the four proposed tables are sufficient. Do not apply it to production.
+
+
+## Model 2 Phase 2 — schema review checkpoint (2026-11-08)
+
+- Draft migration `013_model2_account_niche_registry.sql` reviewed against frozen architecture and existing migrations. Detailed findings saved in `docs/MODEL2-PHASE2-SCHEMA-REVIEW.md`.
+- **Phase 2 remains IN PROGRESS / NOT CLOSED.** Owner decision A was received and the isolated migration/test draft was revised; runtime verification and remaining exit gates are pending.
+- Remaining implementation constraints:
+  1. Owner selected a single-operator deployment model; shared API key remains service authentication, not a distinct human identity.
+  2. Account profile is not FK-linked to the existing `pinterest_credentials.account_id`; canonical `pinterest:` ID validation is not enforced.
+  3. Revised draft adds immutable publication-to-niche attribution with composite account and niche foreign keys; gateway transaction integration remains future work.
+  4. Revised draft bounds JSONB settings and restricts metrics to existing Learning Loop metric keys and nonnegative numeric/null values.
+  5. Profile timezone only has a length check; reuse existing Python `ZoneInfo` validator.
+  6. Revised draft uses pause/archive states and restrictive foreign keys; credential status remains authoritative in the existing vault.
+  7. Existing Agent trends validators already support US and GB+IE; revised draft reuses that taxonomy.
+  8. Existing scheduler has one active schedule per account and no niche dimension; multi-niche scheduling remains Phase 9 design only.
+- Four static test functions for the revised migration were manually invoked and passed. PostgreSQL test source now covers credential/profile linkage, membership, primary-niche uniqueness, account separation, immutable publication attribution, raw analytics lineage capture, deferred source-count checks and cross-account rejection; real PostgreSQL execution remains pending.
+- Open-source decision: reuse current FastAPI/Pydantic/Psycopg 3/cryptography stack and Python stdlib `zoneinfo`; no new package or ORM is justified. License/source evidence is recorded in `docs/MODEL2-PHASE1-INVENTORY.md`. No external dependency added.
+- Environment: no `psql`, `pg_isready`, `postgres`, or `pytest` executable; system Python 3.11.2 has no pytest. No DB connection or runtime integration test was attempted.
+- No application source code was changed during Phase 2 review; the isolated migration and test drafts were revised after owner decision A. No production DB, Render, GitHub write, OAuth, Pinterest API write, Pin or Board was touched.
+- Owner decision A received: one operator manages multiple Pinterest accounts. No multi-tenant users or synthetic owner identity is introduced.
+- Revised migration 013 and both focused test files remain draft-only. Next: validate migration SQL and static tests, then run PostgreSQL integration only against a verified disposable database. Do not advance to Phase 3 until Phase 2 exit gates pass.
+
+## Model 2 Phase 2 — owner model decision and revised schema draft (2026-11-08)
+
+- Owner selected **A: one owner/operator manages multiple Pinterest accounts**. Model 2 is deployment-scoped to one operator; no multi-tenant users/tenants or synthetic owner IDs will be introduced. Each Pinterest account remains separately scoped by the existing canonical pinterest:<user_id> account ID.
+- Existing shared API key is service authentication only, not proof of a distinct human identity. Do not invent created_by_user_id or claim multi-user isolation. Registry write routes remain behind the existing protected operator/service boundary.
+- Revised only the isolated draft migration 013 and its two tests; updated docs/MODEL2-PHASE2-SCHEMA-REVIEW.md.
+- Revised schema includes: profile FK to existing pinterest_credentials(account_id) with canonical pinterest: prefix validation; active|paused operator profile state (credential status remains authoritative in existing vault); restrictive FKs/no cascaded historical deletion; explicit immutable model2_publication_niche_attributions keyed to exact publication/account/niche mapping; bounded JSONB settings (empty until defined) and metrics (existing four Learning Loop metric keys only); sample_size <= source_snapshot_count; existing US / GB+IE market taxonomy reused.
+- Attribution must be written inside the existing publishing gateway's PostgreSQL reservation transaction before provider network I/O in a later approved implementation phase. Existing raw analytics remain in pin_analytics_snapshots and join through publication_id. No legacy NULL-account publication may be guessed or backfilled.
+- Metadata-only credential existence lookup, gateway attribution integration, timezone validation via existing ZoneInfo, repository/API work, and PostgreSQL integration tests remain future phase work. No app source was modified.
+- git diff --check passed after the edits. Pytest and PostgreSQL migration/integration tests have not been run in this checkpoint. No PostgreSQL connection, production DB mutation, commit/push/PR/merge/deploy, OAuth operation, Pinterest API write, Pin/Board creation, image hosting, or changes to owner backup/clean production snapshot occurred.
+
+- This 2026-11-08 owner-decision checkpoint supersedes the earlier Phase 2 review bullets that said the ownership model was undecided and that attribution did not exist in the draft. Phase 2 is still not closed; schema/runtime verification remains pending.
+
+- Deeper lineage review added a sixth draft table, model2_learning_snapshot_sources. It links each aggregate to exact pin_analytics_snapshots.id, publication, account and niche via composite restrictive FKs. Deferred constraint triggers validate source_snapshot_count equals source rows and sample_size equals distinct attributed publications at transaction commit. Source lineage is immutable. Static test coverage expanded to this lineage contract. This is still an unapplied draft; PostgreSQL execution is pending.
+
+- Further lineage hardening: Model 1's Learning Loop uses ON CONFLICT DO UPDATE for an existing Pinterest Pin/date-range analytics row. The Model 2 source-lineage table now captures the exact JSONB metrics via a BEFORE INSERT trigger, so later Model 1 refreshes cannot rewrite the historical input used by a Model 2 aggregate. PostgreSQL test source now exercises source capture, immutability, deferred count mismatch and cross-account rejection. Test fixture teardown truncates only immutable lineage tables inside the explicitly disposable TEST_DATABASE_URL database and cleans its uniquely named synthetic rows. None of these PostgreSQL tests have been executed locally.
+
+- PostgreSQL test-source review caught and corrected the count-trigger preconditions: membership-only aggregates now declare zero source rows, while the cross-account rejection case also uses zero counts so its expected FK failure is not masked by a deferred count error. The positive lineage test now refreshes a raw analytics row after aggregation and asserts the immutable captured metrics remain unchanged.
+
+- Phase 2 gate clarified: metadata-only credential lookup and gateway attribution integration are future Phase 4/6 implementation requirements, not prerequisites to schema-review closure. Phase 2 itself remains open until migration 013 executes successfully on a verified disposable PostgreSQL 16 database, focused static + PostgreSQL tests pass, test cleanup is verified, a forward-fix recovery plan is documented, and owner accepts the final schema contract. No TEST_DATABASE_URL is configured on the current device, and no pytest/PostgreSQL server binaries are available; no DB was contacted.
+
+### Model 2 Phase 2 — additional source-only audit findings (2026-11-08)
+
+- Re-ran the four static migration test functions directly: **4/4 passed**. Python compilation of both Model 2 test files passed; `git diff --check` passed. These are static/source checks only, not pytest collection or PostgreSQL execution.
+- Additional concurrency review identified an unresolved race in `model2_validate_learning_snapshot_source_counts`: two transactions may concurrently add different source rows to an already-committed learning snapshot. Without serialization on the parent snapshot row, each deferred trigger may count only its own uncommitted row and both transactions could commit, violating the final source count. Required before approval: parent-row serialization with a documented lock order and a real two-connection PostgreSQL regression test. Migration 013 was not changed pending executable verification.
+- The PostgreSQL fixture truncates both immutable lineage tables during cleanup. This is safe only on a dedicated disposable test database with serialized tests; parallel fixtures could erase each other's rows. Before any run, independently verify TEST_DATABASE_URL is disposable and distinct from DATABASE_URL, and run the test file without parallel workers. A parallel-safe cleanup design remains future work if parallel execution is required.
+- Current environment still has no pytest, psql, postgres, initdb, psycopg, psycopg_pool, or SQL parser package; TEST_DATABASE_URL is unset. The `docker` executable is a previously identified udocker wrapper, not verified Docker Engine. No database was contacted and no migration was applied.
+- Phase 2 remains IN PROGRESS. Active isolated worktree only; no application source edits, commit, push, PR, deployment, production DB operation, OAuth action, Pinterest write, Pin/Board creation, or Personal Browser activity.
+
+
+### Model 2 Phase 2 — concurrency serialization draft update (2026-11-08)
+
+- Addressed the source-only concurrency finding in migration 013 draft: added `model2_lock_learning_snapshot_source_parent()` and a `BEFORE INSERT` trigger that obtains `SELECT ... FOR UPDATE` on the parent learning snapshot before accepting a source row. Writers targeting the same snapshot serialize; callers inserting across multiple snapshots should use ascending learning_snapshot_id lock order. This is a draft-level design fix, not a runtime-verified guarantee.
+- Added static regression `test_model2_learning_source_writers_serialize_on_parent_snapshot` and two-connection PostgreSQL regression `test_model2_learning_source_concurrent_inserts_are_serialized`. The runtime test holds writer one open, starts writer two, asserts it blocks, then expects writer two to fail deferred source-count validation after writer one commits.
+- Latest checks: **5/5 static migration test functions manually passed**; `py_compile` passed for both Model 2 test files; `git diff --check` passed. These are source/static checks only.
+- PostgreSQL runtime tests remain NOT RUN. Current environment: `TEST_DATABASE_URL` unset, `DATABASE_URL` unset, pytest/psycopg/psycopg_pool/psql/postgres/initdb unavailable. No DB was contacted. No migration applied.
+- Fixture still uses database-wide TRUNCATE for immutable lineage tables; only run the PostgreSQL file serially on a verified disposable TEST_DATABASE_URL. Parallel-safe fixture cleanup is not implemented.
+- Phase 2 remains IN PROGRESS. Do not advance to Phase 3, production migration, commit/push/PR/merge/deploy, OAuth or Pinterest writes until all Phase 2 gates and owner schema acceptance are complete.
+
+
+### Model 2 Phase 2 — approved test environment provisioning and verification (2026-11-08)
+
+- Owner approved a test-only local PostgreSQL environment. Device inspection: Debian 12 ARM64, root shell with no Linux capabilities, approx. 8.4 GB free disk initially.
+- Installed official PostgreSQL server/client **16.15** from PGDG APT repository; signing key fingerprint verified as `B97B 0AFC AA1A 47F0 44F2 44A0 7FCC 7D46 ACCC 4CF8` (full fingerprint in Phase 2 review). Installed no project dependencies or changed requirements/lockfiles.
+- Created external venv `/root/.venvs/model2-pg16` with pytest 9.2.0, Psycopg 3.3.8, psycopg-pool 3.3.3, Pydantic Settings 2.16.2 and pglast 8.7.
+- Local PostgreSQL cluster creation is not possible in this Android-hosted kernel: initdb repeatedly fails with `could not create shared memory segment: Function not implemented` on `shmget`; kernel SysV shared-memory sysctls are absent and `unshare -Ur` fails with `Invalid argument`. Mmap/huge-pages settings did not resolve it. The package post-install default cluster also failed; `pg_lsclusters` reports no cluster. No PostgreSQL server started and no migration was executed.
+- `DATABASE_URL` and `TEST_DATABASE_URL` were both unset. Tests were run from `/tmp` with secret-bearing environment variables explicitly unset; no repository `.env` file was loaded. No production DB or external provider was contacted.
+- Updated migration 013 concurrency protection: added `source_lock_version BIGINT NOT NULL DEFAULT 0 CHECK (source_lock_version >= 0)` to `model2_learning_snapshots`; the BEFORE INSERT source trigger increments this field via a real parent UPDATE. This serializes READ COMMITTED writers and causes stale REPEATABLE READ/SERIALIZABLE writers to receive serialization failure rather than commit using an old snapshot. Lock ordering for multi-snapshot source writes remains ascending learning_snapshot_id.
+- Expanded two-connection regression test to cover READ COMMITTED (deferred count rejection) and REPEATABLE READ (SerializationFailure). It establishes the second transaction's snapshot before the first commits and observes actual lock wait using `pg_blocking_pids()`. Test is authored but not executed due unavailable local server.
+- Latest actual `pytest -q` on both Model 2 test files: **5 passed, 9 skipped**; all 5 static tests passed, all 9 PostgreSQL integration cases skipped because TEST_DATABASE_URL is unset. This is not an integration-test pass.
+- Both test files `py_compile`: PASS. `pglast 8.7` parsed all **14/14 numbered migration SQL files** and all **5/5 PL/pgSQL functions** in migration 013. `git diff --check`: PASS. Parser success is not live PostgreSQL execution.
+- Phase 2 remains IN PROGRESS / NOT CLOSED. Need a Linux host or CI runner with functional PostgreSQL 16 shared memory/IPC and normal filesystem ownership to run full migration sequence and integration tests against a verified disposable DB. Keep tests serial because fixture teardown globally truncates immutable lineage tables.
+- No commit, push, PR, merge, deploy, production DB action, OAuth operation, Pinterest API write, real Pin/Board creation, or Personal Browser activity occurred. Owner backup worktree and clean production snapshot remain untouched.
+
+- Owner approved a dedicated PostgreSQL 16 GitHub Actions test workflow and push limited to the Model 2 feature branch. Added `.github/workflows/model2-postgres-integration.yml`: push trigger only for `feat/model2-open-source-reuse`, PR target `main`, manual dispatch; ephemeral loopback-only `postgres:16` service/database `model2_test`; `DATABASE_URL` forced empty; TEST_DATABASE_URL target asserted before running the two Model 2 test files. The test fixture invokes `database.run_migrations()` and applies all numbered migrations to that ephemeral DB. No secrets or production service configuration are passed. No PR creation, merge, deployment or production DB operation approved.
+- Local workflow validation: no YAML parser installed yet. Python compile and `git diff --check` pass; local pytest remains 5 passed / 9 skipped because PostgreSQL server cannot start on the Android kernel. GitHub Actions run will be the first actual database execution.
+- CI preparation review found the new concurrency test used suffixed product/pin/board identifiers that exact-match fixture teardown would miss. Updated teardown to prefix-match the test-specific UUID suffix across analytics, publications, products and content versions; added a static regression assertion. Latest local result: **6 static tests passed, 9 PostgreSQL integration tests skipped**; workflow YAML parsed with PyYAML; `git diff --check` passed. The PostgreSQL cases still await GitHub-hosted PostgreSQL 16 execution.
