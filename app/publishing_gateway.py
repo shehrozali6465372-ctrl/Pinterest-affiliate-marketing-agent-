@@ -16,7 +16,7 @@ def publish_pin(
     *, product_id: int, content_version_id: int, board_id: str,
     account_id: str | None, access_token: str, title: str,
     description: str, alt_text: str, media_source: dict[str, object],
-    destination_url: str,
+    destination_url: str, niche_id: int | None = None,
 ) -> dict[str, object]:
     """Reserve and create exactly one Pin, recording definite/uncertain outcomes."""
     from app.database import begin_publish_attempt, finish_publish_attempt
@@ -33,12 +33,21 @@ def publish_pin(
         raise HTTPException(status_code=422, detail="Pinterest media source is required; no Pin publish request was sent.")
     if not isinstance(destination_url, str) or not destination_url.strip():
         raise HTTPException(status_code=422, detail="Pinterest destination URL is required; no Pin publish request was sent.")
+    if niche_id is not None and (
+        isinstance(niche_id, bool) or not isinstance(niche_id, int) or niche_id <= 0
+    ):
+        raise HTTPException(status_code=422, detail="niche_id must be a positive integer; no Pin publish request was sent.")
 
     try:
-        attempt = begin_publish_attempt(
-            product_id=product_id, content_version_id=content_version_id,
-            board_id=board_id, account_id=account_id,
-        )
+        reservation_kwargs = {
+            "product_id": product_id,
+            "content_version_id": content_version_id,
+            "board_id": board_id,
+            "account_id": account_id,
+        }
+        if niche_id is not None:
+            reservation_kwargs["niche_id"] = niche_id
+        attempt = begin_publish_attempt(**reservation_kwargs)
     except Exception:
         raise HTTPException(status_code=503, detail="Could not reserve publication ledger; no Pin publish request was sent.") from None
 
@@ -47,6 +56,26 @@ def publish_pin(
             raise HTTPException(status_code=409, detail={
                 "code": "publication_account_mismatch",
                 "message": "An existing publication belongs to a different or unknown Pinterest account; it cannot be reused.",
+            })
+        if attempt.get("niche_attribution_mismatch"):
+            raise HTTPException(status_code=409, detail={
+                "code": "publication_niche_attribution_mismatch",
+                "message": "This publication is already attributed to a different niche; attribution is immutable.",
+            })
+        if attempt.get("niche_attribution_missing"):
+            raise HTTPException(status_code=409, detail={
+                "code": "publication_niche_attribution_missing",
+                "message": "This existing publication has no niche attribution and cannot be retroactively attributed.",
+            })
+        if attempt.get("niche_assignment_inactive"):
+            raise HTTPException(status_code=409, detail={
+                "code": "niche_assignment_inactive",
+                "message": "The account profile, niche assignment or niche is no longer active; no Pin request was sent.",
+            })
+        if attempt.get("niche_account_not_connected"):
+            raise HTTPException(status_code=409, detail={
+                "code": "niche_account_not_connected",
+                "message": "The Pinterest account is not connected; no Pin request was sent.",
             })
         if attempt.get("status") == "succeeded":
             return {

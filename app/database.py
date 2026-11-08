@@ -472,10 +472,57 @@ def cleanup_expired_workflow_checkpoints(*, retention_hours: int = 72, batch_siz
         return len(rows)
 
 
+def _model2_publication_assignment_block_reason(conn, account_id: str, niche_id: int) -> str | None:
+    """Lock and validate the exact active Model 2 assignment before attribution."""
+    assignment = conn.execute(
+        """
+        SELECT ap.status AS account_status,
+               an.status AS assignment_status,
+               n.status AS niche_status
+        FROM model2_account_profiles AS ap
+        JOIN model2_account_niches AS an
+          ON an.account_id = ap.account_id
+        JOIN model2_niches AS n
+          ON n.id = an.niche_id
+        WHERE ap.account_id = %s AND an.niche_id = %s
+        FOR SHARE OF ap, an, n
+        """,
+        (account_id, niche_id),
+    ).fetchone()
+    if assignment is None or (
+        assignment["account_status"] != "active"
+        or assignment["assignment_status"] != "active"
+        or assignment["niche_status"] != "active"
+    ):
+        return "niche_assignment_inactive"
+
+    # Reuse the credential-vault's metadata-only check; never decrypt or refresh
+    # a token inside the publication reservation transaction.
+    from app.credential_vault import pinterest_account_is_connected_in_transaction
+
+    if not pinterest_account_is_connected_in_transaction(conn, account_id):
+        return "niche_account_not_connected"
+    return None
+
+
 def begin_publish_attempt(
-    *, product_id: int, content_version_id: int, board_id: str, account_id: str | None = None
+    *,
+    product_id: int,
+    content_version_id: int,
+    board_id: str,
+    account_id: str | None = None,
+    niche_id: int | None = None,
+    attribution_source: str = "workflow",
 ) -> dict:
-    """Reserve one publish attempt per version/board, and retain its owning account."""
+    """Reserve one publish attempt and optional immutable niche attribution atomically."""
+    if niche_id is not None:
+        if isinstance(niche_id, bool) or not isinstance(niche_id, int) or niche_id <= 0:
+            raise ValueError("niche_id must be a positive integer")
+        if not account_id or not account_id.strip():
+            raise ValueError("account_id is required when niche_id is supplied")
+        if attribution_source not in {"workflow", "operator_verified"}:
+            raise ValueError("unsupported niche attribution source")
+
     with connection() as conn:
         lock_key = f"{content_version_id}:{board_id}"
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
@@ -487,12 +534,55 @@ def begin_publish_attempt(
             """,
             (content_version_id, board_id),
         ).fetchone()
+
         if row:
             if row.get("account_id") != account_id:
                 return {"blocked": True, "account_mismatch": True, **dict(row)}
+
             state = row["status"]
+            attribution = None
+            if niche_id is not None or state == "failed":
+                attribution = conn.execute(
+                    """
+                    SELECT niche_id
+                    FROM model2_publication_niche_attributions
+                    WHERE publication_id = %s
+                    """,
+                    (row["id"],),
+                ).fetchone()
+
+            if niche_id is not None and attribution is not None:
+                if attribution["niche_id"] != niche_id:
+                    return {"blocked": True, "niche_attribution_mismatch": True, **dict(row)}
+            if niche_id is not None and attribution is None and state in {"succeeded", "pending", "unknown"}:
+                # Never retroactively attribute a legacy or in-flight publication.
+                return {"blocked": True, "niche_attribution_missing": True, **dict(row)}
+
             if state in {"succeeded", "pending", "unknown"}:
                 return {"blocked": True, **dict(row)}
+
+            # A failed reservation is retryable. If it already has an immutable
+            # attribution, preserve and validate it even if this retry omitted niche_id.
+            effective_niche_id = (
+                niche_id if niche_id is not None
+                else (attribution["niche_id"] if attribution is not None else None)
+            )
+            if effective_niche_id is not None:
+                block_reason = _model2_publication_assignment_block_reason(
+                    conn, account_id, effective_niche_id
+                )
+                if block_reason:
+                    return {"blocked": True, block_reason: True, **dict(row)}
+                if attribution is None:
+                    conn.execute(
+                        """
+                        INSERT INTO model2_publication_niche_attributions
+                            (publication_id, account_id, niche_id, attribution_source)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (row["id"], account_id, effective_niche_id, attribution_source),
+                    )
+
             row = conn.execute(
                 """
                 UPDATE pin_publications
@@ -506,6 +596,14 @@ def begin_publish_attempt(
                 (account_id, row["id"]),
             ).fetchone()
             return {"blocked": False, **dict(row)}
+
+        if niche_id is not None:
+            block_reason = _model2_publication_assignment_block_reason(
+                conn, account_id, niche_id
+            )
+            if block_reason:
+                return {"blocked": True, block_reason: True}
+
         row = conn.execute(
             """
             INSERT INTO pin_publications
@@ -515,6 +613,16 @@ def begin_publish_attempt(
             """,
             (product_id, content_version_id, board_id, account_id),
         ).fetchone()
+
+        if niche_id is not None:
+            conn.execute(
+                """
+                INSERT INTO model2_publication_niche_attributions
+                    (publication_id, account_id, niche_id, attribution_source)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (row["id"], account_id, niche_id, attribution_source),
+            )
         return {"blocked": False, **dict(row)}
 
 

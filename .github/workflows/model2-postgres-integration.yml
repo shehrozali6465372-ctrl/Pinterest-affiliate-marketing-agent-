@@ -77,6 +77,8 @@ jobs:
           tests/test_model2_domain.py
           tests/test_model2_repository.py
           tests/test_model2_registry_api.py
+          tests/test_model2_niche_context.py
+          tests/test_deepseek_completion.py
           tests/test_api.py
           tests/test_model2_registry_migration.py
           tests/test_model2_registry_postgres.py

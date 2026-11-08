@@ -579,3 +579,27 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Focused API/domain/repository run: 64 passed, 1 warning. Existing Model 1 API regression suite: 40 passed, 1 warning. Full repository suite: 237 passed, 34 skipped, 1 warning. Database tests skipped locally because DB env vars are unset.
 - Dedicated GitHub Actions workflow has been expanded to run Model 2 API tests and existing Model 1 API regressions alongside the disposable PostgreSQL tests. CI for the new Phase 5 changes is pending.
 - Phase 5 is NOT closed until feature-branch CI passes on the exact API commit and verifies no provider/production side effects.
+
+### Model 2 Phase 5 — Protected Registry API CLOSED (2026-11-09)
+
+- Phase 5 is formally closed; final evidence is in docs/MODEL2-PHASE5-PROTECTED-API.md section 7.
+- Commit b16511de0fa15d9ac07f5dc2e201eadb231b6d25 was pushed only to feat/model2-open-source-reuse.
+- Authoritative GitHub Actions run 42527370397 succeeded: 127 passed, 0 failed, 1 non-blocking Starlette/httpx deprecation warning. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42527370397
+- All 14 numbered migrations recorded; post-test cleanup found zero fixture rows; ephemeral PostgreSQL 16.15 service stopped.
+- Shared fail-closed API-key auth is in app/auth.py and reused by app.main. Model 2 routes use only Phase 3 domain contracts and Phase 4 repositories; all routes protected, path/body IDs matched, lifecycle updates explicit, response allowlists forbid unapproved fields. No provider/Pinterest/publishing side effects.
+- Local full suite: 238 passed, 34 skipped, 1 warning. CI executed all PostgreSQL tests.
+- No Neon/production DB, migration, OAuth/provider action, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
+- Next: Phase 6 — Niche Context Integration. Inspect the existing workflow/content-generation path first; add only optional validated niche context, preserving existing Model 1 behavior when no niche context is supplied.
+
+
+### Model 2 Phase 6 — Niche Context Integration IN PROGRESS (2026-11-09)
+
+- Phase 5 is closed. Phase 6 implementation details are in docs/MODEL2-PHASE6-NICHE-CONTEXT.md.
+- Existing Model 1 workflow/content generator and single publishing gateway are reused; no second workflow or publisher.
+- Added optional niche_id to the existing workflow. With no niche_id, the original Model 1 request fingerprint, prompt content, prompt version pin-content-v1, generator arguments and gateway arguments are preserved.
+- With niche_id, the workflow requires the exact active account profile + assignment + niche, sends bounded structured metadata as untrusted descriptive context to the existing DeepSeek prompt, includes the metadata snapshot in the workflow fingerprint, and records prompt version pin-content-v2-niche-context.
+- Existing publication reservation transaction now locks profile, assignment, niche and connected credential metadata, then inserts the existing pin_publications row and immutable Model 2 attribution in the same transaction before Pinterest POST /pins. No token decryption/refresh is added.
+- Existing failed attributed publications preserve and revalidate their niche on retry. Explicit niche retry may attribute a failed legacy reservation; succeeded/pending/unknown legacy publications without attribution cannot be backfilled. Mismatched niche retry and inactive assignment/credential are blocked before Pinterest POST.
+- Added workflow/gateway/prompt tests, repository tests, and disposable PostgreSQL attribution/retry tests. CI workflow includes these new tests.
+- Focused local suite: 40 passed. Full local suite: 256 passed, 43 skipped, 1 warning. All local DB skips are expected because database env vars are unset; no database was contacted locally.
+- Phase 6 remains IN PROGRESS until GitHub Actions disposable PostgreSQL integration and cleanup checks pass on the exact feature commit. No real Pin/Board, provider/OAuth action, production DB/migration, PR, merge or deployment.

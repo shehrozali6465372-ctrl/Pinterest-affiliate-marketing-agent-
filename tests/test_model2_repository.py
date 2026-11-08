@@ -289,3 +289,86 @@ def test_save_assignment_requires_connected_credential_for_active_mapping(monkey
         )
     assert len(conn.calls) == 3
     assert "FOR SHARE" in conn.calls[2][0]
+
+
+def test_get_active_niche_context_is_scoped_and_returns_only_approved_metadata(monkeypatch):
+    context_row = {
+        "account_status": "active",
+        "assignment_status": "active",
+        "niche_status": "active",
+        "niche_id": 9,
+        "slug": "home-decor",
+        "display_name": "Home Decor",
+        "description": "Storage and styling",
+        "default_region": "US",
+    }
+    conn = FakeConnection([context_row])
+    patch_connection(monkeypatch, conn)
+
+    result = model2_repository.get_active_account_niche_context(
+        "pinterest:123456789", 9
+    )
+
+    assert result == {
+        "niche_id": 9,
+        "slug": "home-decor",
+        "display_name": "Home Decor",
+        "description": "Storage and styling",
+        "default_region": "US",
+    }
+    query, params = conn.calls[0]
+    assert "WHERE ap.account_id = %s AND an.niche_id = %s" in query
+    assert "FOR SHARE OF ap, an, n" in query
+    assert params == ("pinterest:123456789", 9)
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {
+            "account_status": "paused",
+            "assignment_status": "active",
+            "niche_status": "active",
+        },
+        {
+            "account_status": "active",
+            "assignment_status": "paused",
+            "niche_status": "active",
+        },
+        {
+            "account_status": "active",
+            "assignment_status": "active",
+            "niche_status": "archived",
+        },
+    ],
+)
+def test_get_active_niche_context_rejects_inactive_state(monkeypatch, row):
+    conn = FakeConnection([row])
+    patch_connection(monkeypatch, conn)
+
+    with pytest.raises(Model2ConflictError, match="must all be active"):
+        model2_repository.get_active_account_niche_context(
+            "pinterest:123456789", 9
+        )
+
+
+def test_get_active_niche_context_rejects_missing_mapping(monkeypatch):
+    conn = FakeConnection([None])
+    patch_connection(monkeypatch, conn)
+
+    with pytest.raises(Model2NotFoundError, match="does not exist"):
+        model2_repository.get_active_account_niche_context(
+            "pinterest:123456789", 9
+        )
+
+
+def test_get_active_niche_context_rejects_invalid_niche_id(monkeypatch):
+    conn = FakeConnection([])
+    patch_connection(monkeypatch, conn)
+
+    with pytest.raises(ValueError, match="positive integer"):
+        model2_repository.get_active_account_niche_context(
+            "pinterest:123456789", True
+        )
+
+    assert conn.calls == []

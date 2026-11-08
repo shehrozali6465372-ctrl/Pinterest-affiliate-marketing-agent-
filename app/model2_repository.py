@@ -296,3 +296,49 @@ def list_account_niche_assignments(account_id: str) -> list[dict]:
             (account_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_active_account_niche_context(account_id: str, niche_id: int) -> dict:
+    """Return one exact active account+niche prompt context; never infer a niche."""
+    account_id = AccountProfileInput(account_id=account_id).account_id
+    if isinstance(niche_id, bool) or not isinstance(niche_id, int) or niche_id <= 0:
+        raise ValueError("niche_id must be a positive integer")
+
+    with connection() as conn:
+        row = conn.execute(
+            """
+            SELECT ap.status AS account_status,
+                   an.status AS assignment_status,
+                   n.status AS niche_status,
+                   n.id AS niche_id,
+                   n.slug,
+                   n.display_name,
+                   n.description,
+                   n.default_region
+            FROM model2_account_profiles AS ap
+            JOIN model2_account_niches AS an
+              ON an.account_id = ap.account_id
+            JOIN model2_niches AS n
+              ON n.id = an.niche_id
+            WHERE ap.account_id = %s AND an.niche_id = %s
+            FOR SHARE OF ap, an, n
+            """,
+            (account_id, niche_id),
+        ).fetchone()
+
+    if row is None:
+        raise Model2NotFoundError("Account niche assignment does not exist")
+    if (
+        row["account_status"] != "active"
+        or row["assignment_status"] != "active"
+        or row["niche_status"] != "active"
+    ):
+        raise Model2ConflictError("Account profile, niche assignment and niche must all be active")
+
+    return {
+        "niche_id": row["niche_id"],
+        "slug": row["slug"],
+        "display_name": row["display_name"],
+        "description": row["description"],
+        "default_region": row["default_region"],
+    }

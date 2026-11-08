@@ -12,7 +12,9 @@ from app.model2_domain import AccountNicheAssignmentInput, AccountProfileInput, 
 from app.model2_repository import (
     Model2AccountNotConnectedError,
     Model2ConflictError,
+    Model2NotFoundError,
     create_niche,
+    get_active_account_niche_context,
     list_account_niche_assignments,
     save_account_niche_assignment,
     save_account_profile,
@@ -820,3 +822,269 @@ def test_model2_repository_rejects_active_assignment_when_credential_is_revoked(
                 status="active",
             )
         )
+
+
+def _model2_publication_fixture(model2_db, label):
+    suffix = model2_db["suffix"]
+    product = database.create_product(
+        product_name=f"Model2 test product {suffix} {label}",
+        product_details="Disposable PostgreSQL test fixture; no real product.",
+        image_url=None,
+        affiliate_url="https://example.invalid/model2-test",
+        idempotency_key=f"model2-publish-{suffix}-{label}",
+    )
+    content = database.create_content_version(
+        product_id=product["id"],
+        provider="test-stub",
+        model_id="model2-test",
+        prompt_version="model2-test",
+        pin_idea="fixture only",
+        title="fixture only",
+        description="fixture only",
+        alt_text="fixture only",
+    )
+    return product, content
+
+
+def test_model2_active_niche_context_is_exactly_account_scoped(model2_db):
+    context = get_active_account_niche_context(
+        model2_db["account_a"], model2_db["niche_a"]
+    )
+    assert context["niche_id"] == model2_db["niche_a"]
+    assert context["slug"] == f"test-niche-a-{model2_db['suffix']}"
+    assert context["default_region"] == "US"
+
+    with pytest.raises(Model2NotFoundError):
+        get_active_account_niche_context(
+            model2_db["account_a"], model2_db["niche_b"]
+        )
+
+
+def test_model2_active_niche_context_rejects_paused_assignment(model2_db):
+    with database.connection() as conn:
+        conn.execute(
+            """
+            UPDATE model2_account_niches SET status = 'paused'
+            WHERE account_id = %s AND niche_id = %s
+            """,
+            (model2_db["account_a"], model2_db["niche_a"]),
+        )
+
+    with pytest.raises(Model2ConflictError, match="must all be active"):
+        get_active_account_niche_context(
+            model2_db["account_a"], model2_db["niche_a"]
+        )
+
+
+def test_model2_publication_reservation_inserts_attribution_atomically(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "new-attribution")
+    board_id = f"test-board-{model2_db['suffix']}-new-attribution"
+
+    reserved = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    assert reserved["blocked"] is False
+
+    with database.connection() as conn:
+        attribution = conn.execute(
+            """
+            SELECT publication_id, account_id, niche_id, attribution_source
+            FROM model2_publication_niche_attributions
+            WHERE publication_id = %s
+            """,
+            (reserved["id"],),
+        ).fetchone()
+    assert attribution == {
+        "publication_id": reserved["id"],
+        "account_id": model2_db["account_a"],
+        "niche_id": model2_db["niche_a"],
+        "attribution_source": "workflow",
+    }
+
+
+def test_model2_publication_reservation_rejects_inactive_assignment_before_ledger_insert(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "inactive-assignment")
+    board_id = f"test-board-{model2_db['suffix']}-inactive-assignment"
+    with database.connection() as conn:
+        conn.execute(
+            """
+            UPDATE model2_account_niches SET status = 'paused'
+            WHERE account_id = %s AND niche_id = %s
+            """,
+            (model2_db["account_a"], model2_db["niche_a"]),
+        )
+
+    result = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    assert result == {"blocked": True, "niche_assignment_inactive": True}
+    with database.connection() as conn:
+        count = conn.execute(
+            "SELECT count(*) AS n FROM pin_publications WHERE content_version_id = %s",
+            (content["id"],),
+        ).fetchone()["n"]
+    assert count == 0
+
+
+def test_model2_legacy_succeeded_publication_is_never_retroactively_attributed(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "legacy-success")
+    board_id = f"test-board-{model2_db['suffix']}-legacy-success"
+    reserved = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+    )
+    database.finish_publish_attempt(
+        reserved["id"],
+        status="succeeded",
+        pinterest_pin_id=f"model2-test-pin-{model2_db['suffix']}-legacy",
+        http_status=201,
+    )
+
+    blocked = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    assert blocked["blocked"] is True
+    assert blocked["niche_attribution_missing"] is True
+    with database.connection() as conn:
+        count = conn.execute(
+            "SELECT count(*) AS n FROM model2_publication_niche_attributions WHERE publication_id = %s",
+            (reserved["id"],),
+        ).fetchone()["n"]
+    assert count == 0
+
+
+def test_model2_failed_legacy_publication_can_gain_explicit_attribution_on_retry(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "failed-retry")
+    board_id = f"test-board-{model2_db['suffix']}-failed-retry"
+    reserved = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+    )
+    database.finish_publish_attempt(
+        reserved["id"],
+        status="failed",
+        http_status=400,
+        error_code="test_rejected",
+    )
+
+    retried = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    assert retried["blocked"] is False
+    assert retried["attempt_count"] == 2
+    with database.connection() as conn:
+        attribution = conn.execute(
+            """
+            SELECT account_id, niche_id, attribution_source
+            FROM model2_publication_niche_attributions
+            WHERE publication_id = %s
+            """,
+            (reserved["id"],),
+        ).fetchone()
+    assert attribution == {
+        "account_id": model2_db["account_a"],
+        "niche_id": model2_db["niche_a"],
+        "attribution_source": "workflow",
+    }
+
+
+def test_model2_failed_publication_cannot_change_immutable_niche_attribution(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "attribution-mismatch")
+    board_id = f"test-board-{model2_db['suffix']}-attribution-mismatch"
+    reserved = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    database.finish_publish_attempt(
+        reserved["id"],
+        status="failed",
+        http_status=400,
+        error_code="test_rejected",
+    )
+
+    blocked = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_b"],
+    )
+    assert blocked["blocked"] is True
+    assert blocked["niche_attribution_mismatch"] is True
+
+
+def test_model2_attributed_failed_publication_cannot_retry_after_assignment_pause(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "paused-retry")
+    board_id = f"test-board-{model2_db['suffix']}-paused-retry"
+    reserved = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    database.finish_publish_attempt(
+        reserved["id"],
+        status="failed",
+        http_status=400,
+        error_code="test_rejected",
+    )
+    with database.connection() as conn:
+        conn.execute(
+            """
+            UPDATE model2_account_niches SET status = 'paused'
+            WHERE account_id = %s AND niche_id = %s
+            """,
+            (model2_db["account_a"], model2_db["niche_a"]),
+        )
+
+    blocked = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+    )
+    assert blocked["blocked"] is True
+    assert blocked["niche_assignment_inactive"] is True
+
+
+def test_model2_publication_reservation_requires_connected_credential(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "revoked-account")
+    board_id = f"test-board-{model2_db['suffix']}-revoked-account"
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE pinterest_credentials SET status = 'revoked' WHERE account_id = %s",
+            (model2_db["account_a"],),
+        )
+
+    result = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    assert result == {"blocked": True, "niche_account_not_connected": True}

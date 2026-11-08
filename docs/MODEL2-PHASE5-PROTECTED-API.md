@@ -76,3 +76,34 @@ Phase 5 remains IN PROGRESS until:
 4. Confirm route responses and OpenAPI expose only approved non-secret fields.
 
 Next after Phase 5: Phase 6 — Niche Context Integration. Reuse existing workflow/content pipeline; no new workflow engine or publishing path.
+
+
+## 7. Final CI evidence and Phase 5 closure — 2026-11-09
+
+**Phase 5 — CLOSED / VERIFIED.**
+
+Authoritative GitHub Actions run:
+- Run: [42527370397](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42527370397)
+- Commit: \`b16511de0fa15d9ac07f5dc2e201eadb231b6d25\`
+- Branch: \`feat/model2-open-source-reuse\`
+- Result: **127 passed, 0 failed** in the CI test step (1 non-blocking Starlette/httpx TestClient deprecation warning).
+- Disposable PostgreSQL 16.15 service was used only by GitHub Actions.
+- All 14 numbered migrations were recorded in the fresh database.
+- The independent post-test cleanup gate verified zero synthetic Model 2 registry/learning rows and zero synthetic Model 1 analytics/publication/product/content-version rows.
+- The ephemeral PostgreSQL service container was stopped and removed.
+
+### Final review
+
+- Every \`/model2\` endpoint is protected by the same fail-closed shared API-key dependency.
+- Existing \`app.main.require_api_key\` remains available as an imported alias; \`require_configured_api_key\` is a backwards-compatible alias to the same implementation.
+- Existing Model 1 API regression suite passed after authentication consolidation.
+- Response models are explicit allowlists with \`extra="forbid"\`; an injected unapproved token field produces a safe response-validation failure and does not expose the value.
+- Path/body account and niche identifiers must match; lifecycle fields are explicit on PUT to prevent implicit reactivation/default resets.
+- Account-niche listing is scoped to one exact canonical account ID. The API does not claim multi-user/tenant ownership; the API key is service/operator authentication.
+- Routes call only Model 2 repositories. No provider, OAuth, Pinterest, publishing, scheduler, image or Learning Loop side effects.
+- Local full repository suite: **238 passed, 34 skipped, 1 warning**. Local database skips were intentionally gated; CI executed all PostgreSQL integration tests.
+- No Neon/production database, production migration, OAuth/provider operation, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
+
+**Phase 5 exit gates are satisfied. Phase 5 is formally closed.**
+
+**Next: Phase 6 — Niche Context Integration.** Reuse the existing Model 1 workflow and content-generation pipeline. First inspect prompt/content contracts and workflow call sites; only pass a validated optional niche context. The existing Model 1 behavior must remain byte-for-byte/semantically unchanged when niche context is absent. No second workflow engine or publisher.
