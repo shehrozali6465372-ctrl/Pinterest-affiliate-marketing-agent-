@@ -8,6 +8,16 @@ from uuid import uuid4
 import pytest
 
 from app import database
+from app.model2_domain import AccountNicheAssignmentInput, AccountProfileInput, NicheInput
+from app.model2_repository import (
+    Model2AccountNotConnectedError,
+    Model2ConflictError,
+    create_niche,
+    list_account_niche_assignments,
+    save_account_niche_assignment,
+    save_account_profile,
+    update_niche,
+)
 from psycopg.errors import CheckViolation, ForeignKeyViolation, RaiseException, SerializationFailure, UniqueViolation
 
 
@@ -27,6 +37,7 @@ def model2_db(monkeypatch):
     suffix = uuid4().hex[:12]
     account_a = f"pinterest:test-model2-a-{suffix}"
     account_b = f"pinterest:test-model2-b-{suffix}"
+    account_c = f"pinterest:test-model2-c-{suffix}"
     niche_a = f"test-niche-a-{suffix}"
     niche_b = f"test-niche-b-{suffix}"
     try:
@@ -35,10 +46,12 @@ def model2_db(monkeypatch):
                 """
                 INSERT INTO pinterest_credentials
                     (account_id, pinterest_user_id, access_token_ciphertext, status)
-                VALUES (%s, %s, %s, 'connected'), (%s, %s, %s, 'connected')
+                VALUES (%s, %s, %s, 'connected'), (%s, %s, %s, 'connected'),
+                       (%s, %s, %s, 'connected')
                 """,
                 (account_a, "test-user-a", b"test-ciphertext-a",
-                 account_b, "test-user-b", b"test-ciphertext-b"),
+                 account_b, "test-user-b", b"test-ciphertext-b",
+                 account_c, "test-user-c", b"test-ciphertext-c"),
             )
             conn.execute(
                 "INSERT INTO model2_account_profiles (account_id) VALUES (%s), (%s)",
@@ -63,6 +76,7 @@ def model2_db(monkeypatch):
         yield {
             "account_a": account_a,
             "account_b": account_b,
+            "account_c": account_c,
             "niche_a": niche_ids[niche_a],
             "niche_b": niche_ids[niche_b],
             "suffix": suffix,
@@ -96,20 +110,20 @@ def model2_db(monkeypatch):
                 (account_a, account_b),
             )
             conn.execute(
-                "DELETE FROM model2_account_niches WHERE account_id IN (%s, %s)",
-                (account_a, account_b),
+                "DELETE FROM model2_account_niches WHERE account_id IN (%s, %s, %s)",
+                (account_a, account_b, account_c),
             )
             conn.execute(
-                "DELETE FROM model2_account_profiles WHERE account_id IN (%s, %s)",
-                (account_a, account_b),
+                "DELETE FROM model2_account_profiles WHERE account_id IN (%s, %s, %s)",
+                (account_a, account_b, account_c),
             )
             conn.execute(
-                "DELETE FROM pinterest_credentials WHERE account_id IN (%s, %s)",
-                (account_a, account_b),
+                "DELETE FROM pinterest_credentials WHERE account_id IN (%s, %s, %s)",
+                (account_a, account_b, account_c),
             )
             conn.execute(
-                "DELETE FROM model2_niches WHERE slug IN (%s, %s)",
-                (niche_a, niche_b),
+                "DELETE FROM model2_niches WHERE slug LIKE %s",
+                (f"%-{suffix}",),
             )
         database.close_pool()
 
@@ -616,3 +630,193 @@ def test_model2_learning_source_concurrent_inserts_are_serialized(
         ).fetchone()
     assert counts["source_count"] == 1
     assert counts["publication_count"] == 1
+
+
+def test_model2_repository_onboards_profile_using_metadata_only_credential_check(model2_db):
+    from app.model2_repository import get_account_profile
+
+    created = save_account_profile(
+        AccountProfileInput(
+            account_id=model2_db["account_c"],
+            display_name="Repository Test Account",
+            timezone="Asia/Karachi",
+        )
+    )
+    assert created["account_id"] == model2_db["account_c"]
+    assert created["display_name"] == "Repository Test Account"
+    assert created["timezone"] == "Asia/Karachi"
+    assert get_account_profile(model2_db["account_c"])["status"] == "active"
+
+
+def test_model2_repository_rejects_reactivation_after_credential_revocation(model2_db):
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE pinterest_credentials SET status = 'revoked' WHERE account_id = %s",
+            (model2_db["account_a"],),
+        )
+
+    with pytest.raises(Model2AccountNotConnectedError):
+        save_account_profile(
+            AccountProfileInput(
+                account_id=model2_db["account_a"],
+                status="active",
+            )
+        )
+
+    paused = save_account_profile(
+        AccountProfileInput(
+            account_id=model2_db["account_a"],
+            status="paused",
+        )
+    )
+    assert paused["status"] == "paused"
+
+    with database.connection() as conn:
+        states = conn.execute(
+            """
+            SELECT status
+            FROM model2_account_niches
+            WHERE account_id = %s
+            """,
+            (model2_db["account_a"],),
+        ).fetchall()
+    assert states and all(row["status"] == "paused" for row in states)
+
+
+def test_model2_repository_primary_swap_and_account_scoped_listing(model2_db):
+    slug = f"repository-primary-{model2_db['suffix']}"
+    niche = create_niche(NicheInput(slug=slug, display_name="Repository Primary"))
+    save_account_niche_assignment(
+        AccountNicheAssignmentInput(
+            account_id=model2_db["account_a"],
+            niche_id=niche["id"],
+            is_primary=True,
+        )
+    )
+
+    account_a_rows = list_account_niche_assignments(model2_db["account_a"])
+    account_b_rows = list_account_niche_assignments(model2_db["account_b"])
+    assert {row["account_id"] for row in account_a_rows} == {model2_db["account_a"]}
+    assert {row["account_id"] for row in account_b_rows} == {model2_db["account_b"]}
+
+    active_primaries = [
+        row for row in account_a_rows
+        if row["is_primary"] and row["status"] == "active"
+    ]
+    assert len(active_primaries) == 1
+    assert active_primaries[0]["niche_id"] == niche["id"]
+    assert any(
+        row["niche_id"] == model2_db["niche_a"] and not row["is_primary"]
+        for row in account_a_rows
+    )
+    assert any(
+        row["niche_id"] == model2_db["niche_b"]
+        and row["is_primary"]
+        and row["status"] == "active"
+        for row in account_b_rows
+    )
+
+
+def test_model2_repository_archiving_niche_pauses_assignments_without_deleting_history(model2_db):
+    with database.connection() as conn:
+        slug = conn.execute(
+            "SELECT slug FROM model2_niches WHERE id = %s",
+            (model2_db["niche_a"],),
+        ).fetchone()["slug"]
+
+    update_niche(
+        model2_db["niche_a"],
+        NicheInput(
+            slug=slug,
+            display_name="Test Niche A",
+            status="archived",
+        ),
+    )
+
+    with database.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT is_primary, status
+            FROM model2_account_niches
+            WHERE account_id = %s AND niche_id = %s
+            """,
+            (model2_db["account_a"], model2_db["niche_a"]),
+        ).fetchone()
+    assert row == {"is_primary": True, "status": "paused"}
+
+
+def test_model2_repository_rejects_active_assignment_to_archived_niche(model2_db):
+    with database.connection() as conn:
+        slug = conn.execute(
+            "SELECT slug FROM model2_niches WHERE id = %s",
+            (model2_db["niche_a"],),
+        ).fetchone()["slug"]
+
+    update_niche(
+        model2_db["niche_a"],
+        NicheInput(slug=slug, display_name="Test Niche A", status="archived"),
+    )
+
+    with pytest.raises(Model2ConflictError, match="archived niche"):
+        save_account_niche_assignment(
+            AccountNicheAssignmentInput(
+                account_id=model2_db["account_a"],
+                niche_id=model2_db["niche_a"],
+                status="active",
+            )
+        )
+
+
+def test_model2_repository_serializes_concurrent_primary_selection(model2_db):
+    from concurrent.futures import ThreadPoolExecutor
+
+    first = create_niche(
+        NicheInput(
+            slug=f"concurrent-primary-a-{model2_db['suffix']}",
+            display_name="Concurrent Primary A",
+        )
+    )
+    second = create_niche(
+        NicheInput(
+            slug=f"concurrent-primary-b-{model2_db['suffix']}",
+            display_name="Concurrent Primary B",
+        )
+    )
+
+    def assign(niche_id):
+        return save_account_niche_assignment(
+            AccountNicheAssignmentInput(
+                account_id=model2_db["account_a"],
+                niche_id=niche_id,
+                is_primary=True,
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(assign, [first["id"], second["id"]]))
+
+    assert len(results) == 2
+    rows = list_account_niche_assignments(model2_db["account_a"])
+    active_primaries = [
+        row for row in rows
+        if row["is_primary"] and row["status"] == "active"
+    ]
+    assert len(active_primaries) == 1
+    assert active_primaries[0]["niche_id"] in {first["id"], second["id"]}
+
+
+def test_model2_repository_rejects_active_assignment_when_credential_is_revoked(model2_db):
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE pinterest_credentials SET status = 'revoked' WHERE account_id = %s",
+            (model2_db["account_a"],),
+        )
+
+    with pytest.raises(Model2AccountNotConnectedError):
+        save_account_niche_assignment(
+            AccountNicheAssignmentInput(
+                account_id=model2_db["account_a"],
+                niche_id=model2_db["niche_b"],
+                status="active",
+            )
+        )

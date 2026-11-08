@@ -217,3 +217,22 @@ def revoke_pinterest_credential(account_id: str) -> None:
     """Disable an account in the Agent database without exposing its token."""
     with connection() as conn:
         conn.execute("UPDATE pinterest_credentials SET status = 'revoked', updated_at = now() WHERE account_id = %s", (account_id,))
+
+
+def pinterest_account_is_connected_in_transaction(conn, account_id: str) -> bool:
+    """Check connection state using metadata only inside the caller's transaction.
+
+    This intentionally does not instantiate the cipher, read ciphertext, decrypt
+    tokens, or invoke OAuth refresh. FOR SHARE keeps the connected-state row stable
+    until the caller's transaction commits or rolls back.
+    """
+    row = conn.execute(
+        """
+        SELECT account_id
+        FROM pinterest_credentials
+        WHERE account_id = %s AND status = 'connected'
+        FOR SHARE
+        """,
+        (account_id,),
+    ).fetchone()
+    return row is not None

@@ -74,6 +74,8 @@ jobs:
       - name: Run Model 2 static and PostgreSQL integration tests
         run: >-
           python -m pytest -q
+          tests/test_model2_domain.py
+          tests/test_model2_repository.py
           tests/test_model2_registry_migration.py
           tests/test_model2_registry_postgres.py
 
@@ -95,7 +97,7 @@ jobs:
               checks = {
                   "credentials": "SELECT count(*) AS n FROM pinterest_credentials WHERE account_id LIKE 'pinterest:test-model2-%'",
                   "profiles": "SELECT count(*) AS n FROM model2_account_profiles WHERE account_id LIKE 'pinterest:test-model2-%'",
-                  "niches": "SELECT count(*) AS n FROM model2_niches WHERE slug LIKE 'test-niche-%' OR slug LIKE 'second-primary-%'",
+                  "niches": "SELECT count(*) AS n FROM model2_niches WHERE slug LIKE 'test-niche-%' OR slug LIKE 'second-primary-%' OR slug LIKE 'repository-primary-%' OR slug LIKE 'concurrent-primary-%'",
                   "mappings": "SELECT count(*) AS n FROM model2_account_niches WHERE account_id LIKE 'pinterest:test-model2-%'",
                   "learning": "SELECT count(*) AS n FROM model2_learning_snapshots WHERE account_id LIKE 'pinterest:test-model2-%'",
                   "sources": "SELECT count(*) AS n FROM model2_learning_snapshot_sources",

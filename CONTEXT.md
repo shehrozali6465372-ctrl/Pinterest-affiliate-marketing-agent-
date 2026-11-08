@@ -505,3 +505,53 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Final isolated CI gate run `42498159463` on commit `7c83183ba30fad5d4a85687237b6d58c1f46257b` passed on GitHub-hosted PostgreSQL 16.15: **15 passed, 0 failed, 0 skipped** (6 static + 9 PostgreSQL integration tests). Both READ COMMITTED and REPEATABLE READ concurrency regressions passed.
 - Post-test gate verified all **14/14 numbered migration files** are recorded in schema_migrations and zero synthetic test leftovers remain across credentials, profiles, niches, mappings, learning snapshots, sources, attributions, analytics, publications, products and content versions. Database target was loopback-only ephemeral `model2_test`; DATABASE_URL empty; service destroyed at job end.
 - Phase 2 technical gates satisfied, including full migration execution, focused tests, concurrency, cleanup and forward-fix recovery plan. Phase 2 remains awaiting explicit owner acceptance of final schema contract before Phase 3. No persistent DB/production migration authorized.
+
+### Model 2 Phase 2 — final schema accepted; Phase 2 closed (2026-11-09)
+
+- Owner explicitly approved the final Model 2 Phase 2 schema contract on 2026-11-09.
+- **Phase 2 is CLOSED / ACCEPTED.** The reviewed six-table additive registry, account–niche mapping rules, immutable publication attribution, exact raw analytics lineage capture, metric constraints, concurrency protection and deferred count invariants are accepted.
+- Technical evidence remains GitHub Actions run `42498273839` on commit `82d18765bc92451d8411b81406ef420f1836712b`: PostgreSQL 16.15, **15 passed / 0 failed / 0 skipped**, all 14 numbered migrations recorded, and zero synthetic fixture rows left after cleanup. Workflow: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42498273839
+- Acceptance closes the schema-design phase only. It does **not** authorize applying migration 013 to Neon or another persistent/shared DB, production backfill, PR creation, merge, deployment, OAuth/provider actions, or Pinterest writes. No real Pin/Board was created.
+- Next phase under the frozen architecture: **Phase 3 — Domain Contracts**. Follow `docs/MODEL2-FOUNDATION.md`; specify entities, invariants, state transitions and typed boundaries before implementation. Continue reusing Model 1 publisher, credential vault, publication ledger, scheduler, raw analytics and Learning Loop; do not duplicate them.
+- Active Model 2 worktree remains `/root/restore-staging/Pinterest-Agent-model2-worktree`, branch `feat/model2-open-source-reuse`. Owner backup worktree and clean production snapshot remain untouched. No commit, push, PR, merge or deployment was performed to record this approval.
+
+### Model 2 Phase 3 — Domain Contracts started (2026-11-09)
+
+- Phase 2 was formally closed after explicit owner schema acceptance; see `docs/MODEL2-PHASE2-SCHEMA-REVIEW.md` section 18.
+- Started Phase 3 in accordance with the frozen phase order. New artifacts: `app/model2_domain.py`, `tests/test_model2_domain.py`, and `docs/MODEL2-PHASE3-DOMAIN-CONTRACTS.md`.
+- Reuse assessment: existing Pydantic v2 is sufficient for typed contracts; existing stdlib `zoneinfo` validation in `app/affiliate_scheduler.py` is reused; existing region taxonomy `US|GB+IE` is reused from `app/trends.py` and `app/trend_visuals.py`. No new dependency/library added.
+- Added pure, side-effect-free contracts for canonical Pinterest account IDs, lowercase kebab-case niche slugs, account profile metadata/status/timezone, niche metadata/region/status, and account–niche assignment state/primary/settings rules. They do not perform DB, vault, Pinterest, OAuth or provider calls.
+- Initial focused domain suite: **22 passed**. Python compilation and `git diff --check` passed. Full combined Model 2 test run and final Phase 3 contract/security review are still pending; Phase 3 remains IN PROGRESS.
+- Primary uniqueness across multiple mappings remains a database/repository transaction invariant (Phase 4), not something a single input model can establish. Account connection and authorization also remain repository checks; the domain model does not claim either.
+- No migration, DB connection, credential access, OAuth/provider operation, Pinterest write, real Pin/Board, PR, commit, push, merge or deployment occurred. Active isolated worktree only; owner backup and clean production snapshot remain untouched.
+
+- Contract cross-check caught and corrected one subtle schema mismatch: migration 013's partial unique index counts only `is_primary=TRUE AND status='active'`, so a paused mapping may retain its primary flag. The initial Phase 3 validator was stricter than the approved schema; it was removed and a regression test now preserves the intended paused/reactivation semantics.
+- Combined latest local test run after correction: **28 passed, 9 skipped**. The 9 skipped cases are PostgreSQL integration tests because `TEST_DATABASE_URL` was explicitly unset; the 28 passing cases include 22 domain tests and 6 static migration tests. Python compilation and `git diff --check` passed. No DB was contacted.
+
+
+### Model 2 Phase 3 — Domain Contracts CLOSED (2026-11-09)
+
+- Phase 3 is formally closed; full contract/schema/security review is in `docs/MODEL2-PHASE3-DOMAIN-CONTRACTS.md` section 7.
+- Implemented pure Pydantic v2 contracts in `app/model2_domain.py`: canonical account IDs, bounded lowercase niche slugs, account profile metadata/status/timezone, niche metadata/region/status, and account–niche assignment fields/settings.
+- Reused existing Pydantic and stdlib `zoneinfo`; reused Model 1 `US|GB+IE` regions. No new project dependency or dependency-manifest change.
+- Final full repository suite: **204 passed, 27 skipped, 1 warning** (22.05s). All 27 skips were database integration gates because `DATABASE_URL`, `TEST_DATABASE_URL` and `PB10_TEST_DATABASE_URL` were unset. No database was contacted. The one non-blocking warning is Starlette's existing httpx/TestClient deprecation notice.
+- Focused Model 2 tests: **37 passed, 9 skipped** (the PostgreSQL integration tests intentionally skipped locally). Boundary coverage includes strict types, canonical account identity, slug grammar/length, timezone validity, supported region values, paused-primary behavior and closed settings contract.
+- Runtime packages required for full tests were installed only in isolated `/root/.venvs/model2-pg16` from existing `requirements.txt`; repository dependency files were not modified.
+- Security review: domain contracts contain no secrets or human actor identity; account ID validation does not establish connection or caller authorization. Phase 4 must enforce account existence and authorization in the repository/service boundary using a metadata-only credential query; do not call token-decrypting/refreshing `get_pinterest_credential` for existence checks.
+- No production DB, migration, OAuth/provider operation, Pinterest write, real Pin/Board, PR, commit, push, merge or deployment occurred.
+- **Next: Phase 4 — Repository Layer.** Its first task is to inspect and document existing transaction/pool patterns and the credential-vault metadata lookup boundary before writing repository code.
+
+
+### Model 2 Phase 4 — Repository Layer IN PROGRESS (2026-11-09)
+
+- Phase 3 Domain Contracts are formally closed; evidence is in `docs/MODEL2-PHASE3-DOMAIN-CONTRACTS.md` section 7.
+- Phase 4 inventory and implementation are documented in `docs/MODEL2-PHASE4-REPOSITORY-LAYER.md`.
+- Reused existing Psycopg 3 pool/connection/transaction pattern in `app/database.py`; no second pool or persistence framework.
+- Added metadata-only credential helper `pinterest_account_is_connected_in_transaction` in `app/credential_vault.py`. It selects only account_id for connected state with `FOR SHARE`; it does not read ciphertext, decrypt, refresh OAuth, or call Pinterest.
+- Added `app/model2_repository.py` for profile create/update/read/list, niche create/update/read/list, account–niche assignment upsert, and account-scoped assignment listing. Writes use one connection/transaction. Account profile row locking serializes assignment and primary-niche updates; archive/pause transitions retain rows and pause active mappings.
+- Added `tests/test_model2_repository.py` unit coverage and seven PostgreSQL integration cases in `tests/test_model2_registry_postgres.py` for metadata-only onboarding, revoked credential reactivation refusal, primary swap/account isolation, niche archival, archived-niche assignment rejection, and concurrent primary selection.
+- Updated the dedicated GitHub Actions workflow to run domain, repository, migration and PostgreSQL tests, and expanded post-test fixture cleanup checks for the new test niches.
+- Local focused Model 2 test run: **51 passed, 16 skipped** (16 PostgreSQL integration cases skipped because TEST_DATABASE_URL is unset).
+- Full repository run after implementation: **218 passed, 34 skipped, 1 warning**. Database integration gates intentionally skipped; no DATABASE_URL, TEST_DATABASE_URL or PB10_TEST_DATABASE_URL was set. No DB was contacted.
+- The 7 new PostgreSQL repository scenarios still require the dedicated disposable PostgreSQL 16 GitHub Actions run. Phase 4 is NOT closed until that CI evidence and cleanup gate pass.
+- No production DB, migration, provider/OAuth action, Pin/Board, commit, push, PR, merge or deployment has occurred for Phase 4 at this checkpoint.
