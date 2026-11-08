@@ -603,3 +603,16 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Added workflow/gateway/prompt tests, repository tests, and disposable PostgreSQL attribution/retry tests. CI workflow includes these new tests.
 - Focused local suite: 40 passed. Full local suite: 256 passed, 43 skipped, 1 warning. All local DB skips are expected because database env vars are unset; no database was contacted locally.
 - Phase 6 remains IN PROGRESS until GitHub Actions disposable PostgreSQL integration and cleanup checks pass on the exact feature commit. No real Pin/Board, provider/OAuth action, production DB/migration, PR, merge or deployment.
+
+
+### Model 2 Phase 6 — Niche Context Integration CLOSED (2026-11-09)
+
+- Phase 6 formally closed. Evidence: docs/MODEL2-PHASE6-NICHE-CONTEXT.md section 8.
+- Commit f8700286cd286a4601bc3d5afcf40500584fafef pushed only to feat/model2-open-source-reuse.
+- GitHub Actions run 42531360160 succeeded: 162 passed, 0 failed, 0 skipped, 1 non-blocking deprecation warning. Link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42531360160
+- All 14 numbered migrations recorded; fixture cleanup verified zero Model 2 and synthetic Model 1 rows; ephemeral PostgreSQL service removed.
+- No-context Model 1 workflow behavior regression-tested. Niche context is optional, exact-account scoped, active-state checked, bounded and treated as untrusted descriptive data. Fingerprint includes niche metadata snapshot and niche prompt version is distinct.
+- Existing publishing gateway and ledger reused; immutable attribution is reserved atomically before Pinterest POST. Legacy success/pending/unknown rows without attribution cannot be backfilled; inactive/mismatched cases block.
+- Local full suite: 256 passed, 43 skipped, 1 warning. CI executed the disposable PostgreSQL integration suite with no skips.
+- No real Pin/Board, Pinterest API write, OAuth refresh, production DB/migration, PR, merge or deployment occurred.
+- Next: Phase 7 — Niche Analytics Projection. Reuse Model 1 raw analytics and immutable Model 2 publication attribution, preserve exact source lineage, missing metrics remain unknown (not zero), read-only descriptive aggregates only.

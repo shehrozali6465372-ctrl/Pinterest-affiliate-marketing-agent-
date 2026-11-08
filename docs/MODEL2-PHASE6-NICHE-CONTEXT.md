@@ -1,6 +1,6 @@
 # Model 2 Phase 6 — Niche Context Integration
 
-**Status:** IN PROGRESS — implementation added; local unit/full-suite gates pass; disposable PostgreSQL CI gate pending.
+**Status:** CLOSED / VERIFIED — 2026-11-09.
 **Started:** 2026-11-09
 **Architecture authority:** \`docs/MODEL2-FOUNDATION.md\` (FROZEN)
 **Prerequisite:** Phase 5 closed; see \`docs/MODEL2-PHASE5-PROTECTED-API.md\`.
@@ -84,3 +84,30 @@ Implemented in the isolated Model 2 feature worktree:
 - Disposable PostgreSQL publication-attribution tests have not yet run. Phase 6 remains open until the feature-branch CI run proves them and the fixture cleanup gate passes.
 
 No real Pin/Board, Pinterest API request, OAuth refresh, production DB/migration, PR, merge or deployment has been performed.
+
+
+## 8. Final CI evidence and Phase 6 closure — 2026-11-09
+
+**Phase 6 — CLOSED / VERIFIED.**
+
+Authoritative GitHub Actions run:
+- Run: 42531360160
+- Commit: f8700286cd286a4601bc3d5afcf40500584fafef
+- Branch: feat/model2-open-source-reuse
+- Result: **162 passed, 0 failed, 0 skipped** in the CI test step; one non-blocking Starlette/httpx TestClient deprecation warning.
+- Disposable PostgreSQL 16 service used by GitHub Actions only.
+- All 14 numbered migrations recorded.
+- Independent post-test cleanup verified zero Model 2 fixture rows and zero synthetic Model 1 analytics/publication/product/content-version rows.
+- Ephemeral PostgreSQL service container stopped and removed.
+
+Final gate review:
+- No-context Model 1 workflow retains its original fingerprint, prompt, prompt version, generation call shape and publishing gateway call shape; regression tests passed.
+- Niche context is optional, exact-account scoped, active-state checked, bounded and treated as untrusted descriptive data.
+- Context snapshot participates in the workflow fingerprint; niche prompt has a separate version.
+- The existing publication gateway and ledger are reused. Attribution is committed in the same reservation transaction before any Pinterest POST.
+- Legacy succeeded/pending/unknown publications without attribution cannot be retroactively attributed. Failed legacy reservation requires an explicit active niche on retry. Mismatched niche retry and inactive assignment/credential are blocked.
+- No real Pin/Board, Pinterest API write, OAuth refresh, production DB/migration, PR, merge or deployment occurred.
+
+**Phase 6 exit gates satisfied. Phase 6 is formally closed.**
+
+Next: Phase 7 — Niche Analytics Projection. Reuse raw Model 1 analytics and immutable Model 2 publication attribution. Preserve exact raw source lineage; never fabricate zero for missing metrics. Keep aggregates descriptive/read-only; no predictive ML or autonomous strategy changes.
