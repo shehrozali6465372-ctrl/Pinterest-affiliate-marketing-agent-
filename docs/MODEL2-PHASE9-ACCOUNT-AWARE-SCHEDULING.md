@@ -1,6 +1,6 @@
 # Model 2 Phase 9 — Account-aware Scheduling Design
 
-**Status:** IMPLEMENTATION IN PROGRESS — owner approved the one-active-schedule-per-account design on 2026-11-09.
+**Status:** COMPLETE — owner-approved implementation and exact-head disposable PostgreSQL CI verified on 2026-11-09.
 **Date:** 2026-11-09
 **Architecture authority:** docs/MODEL2-FOUNDATION.md (FROZEN)
 **Prerequisites:** Phases 6, 7 and 8 closed.
@@ -112,10 +112,19 @@ The owner explicitly approved the recommended baseline: **one active schedule pe
 - Added scheduler tests to the dedicated disposable PostgreSQL GitHub Actions workflow and static migration contract tests.
 - Local focused tests: **17 passed, 38 skipped, 1 non-blocking warning**. The skipped tests include PostgreSQL integration cases because `TEST_DATABASE_URL` is unset locally; no database was contacted. Full local repository suite: **283 passed, 56 skipped, 1 non-blocking warning**. PostgreSQL integration tests skipped because DB environment variables are unset; no DB was contacted. Python compilation and `git diff --check` pass at this checkpoint.
 - First exact-head CI run on commit `8c675c7` passed **210 tests, 0 failed, 1 warning** against disposable PostgreSQL 16.15; all 15 migrations were recorded, Model 2/synthetic Model 1 fixtures were cleaned, and the PostgreSQL container was stopped. Run: `42536015181`.
-- The additional final concurrency/retry/quarantine regression tests were added after that run. Their exact-head CI verification is pending; Phase 9 remains IN PROGRESS until the follow-up CI passes.
+- Final concurrency/retry/quarantine follow-up is commit `761204b7e5d09cce6eb5f26543602702d5db606a`. Exact-head GitHub Actions run `42536328716` passed **212 tests, 0 failed, 1 warning** against disposable PostgreSQL 16.15. It verified all 15 numbered migrations, zero remaining Model 2 and synthetic Model 1 fixture rows, and completed the `Stop containers` job successfully.
+- Final adversarial coverage proves: same-account concurrent workers cannot exceed the account-local daily quota; different accounts can be claimed concurrently; retry preserves the original idempotency key; uncertain publication outcome is quarantined and never blindly replayed; exact niche is passed through; replacement waits for in-flight work; DST-aware day boundaries are 23/25 hours on transition days; and activated Model 2 schedule configuration is database-immutable.
+- Local full repository suite at final code checkpoint: **283 passed, 56 skipped, 1 non-blocking warning**. The 56 skips include PostgreSQL tests because local DB environment variables are unset; no local or production database was contacted. PostgreSQL proof comes from the dedicated CI run above.
 
 No live scheduler activation or queue execution, production/shared DB migration, provider/OAuth action, real Pin/Board, PR, merge or deployment is authorized. No actual Pinterest publishing call is made by the tests; workflow calls are mocked.
 
-## 9. Exit gate
+## 9. Exit gate — CLOSED 2026-11-09
 
-Phase 9 remains IN PROGRESS until exact-head disposable PostgreSQL CI passes all new and existing scheduler/Model 2 tests, all numbered migrations are recorded, fixtures are fully cleaned, and concurrency/quota/immutability tests pass. Production migration, live scheduler activation, provider/OAuth action, real Pin/Board, PR, merge and deployment remain separate approvals.
+All Phase 9 implementation gates passed on exact feature-branch head `761204b7e5d09cce6eb5f26543602702d5db606a`:
+- Dedicated PostgreSQL 16.15 GitHub Actions run `42536328716`: **212 passed, 0 failed, 1 non-blocking warning**.
+- All 15 numbered migrations applied and recorded in the disposable CI database.
+- Model 2 and synthetic Model 1 test fixtures verified cleaned; ephemeral PostgreSQL container stopped.
+- Same-account quota serialization, different-account parallelism, retry-key preservation, uncertain-outcome quarantine, assignment/context validation, schedule immutability and DST behavior are covered by passing tests.
+- Local full suite: **283 passed, 56 skipped, 1 warning**; local DB integration skips are not counted as PostgreSQL evidence.
+
+**Phase 9 is formally CLOSED for implementation and isolated feature-branch verification.** This does not authorize production/shared DB migration, live scheduler activation/execution, provider/OAuth actions, real Pin/Board, PR creation, merge or deployment. Each remains a separate owner approval.

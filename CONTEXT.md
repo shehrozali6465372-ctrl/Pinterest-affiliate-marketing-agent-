@@ -677,7 +677,7 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Next: Phase 9 — account-aware scheduling design only. Do not modify/activate live scheduler until design is separately reviewed and approved.
 
 
-### Model 2 Phase 9 — Account-aware Scheduling APPROVED / IMPLEMENTATION IN PROGRESS (2026-11-09)
+### Model 2 Phase 9 — Account-aware Scheduling CLOSED (2026-11-09)
 
 - Owner explicitly approved the recommended design: one active schedule per Pinterest account, one explicit niche per Model 2 schedule; multiple niche assignments remain allowed, simultaneous active niche schedules are deferred.
 - Design and implementation checkpoint: `docs/MODEL2-PHASE9-ACCOUNT-AWARE-SCHEDULING.md`. Frozen architecture remains `docs/MODEL2-FOUNDATION.md`.
@@ -688,5 +688,14 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Model 2 account-wide quota counts processing/succeeded jobs across all schedules for the same account using actual `locked_at`/`finished_at` timestamps with `run_at` fallback, account profile timezone and DST-aware local-day boundaries. Model 2 worker claims serialize on the account profile row before schedule/job locks. Legacy NULL-niche quota behavior remains per schedule/local date.
 - Added PostgreSQL integration tests for account+niche isolation, timezone mismatch, paused assignment, revoked credential metadata, processing-job replacement guard, prior-schedule event-time quota, exact niche pass-through, schedule immutability and concurrent worker quota. Added DST unit tests and scheduler tests to dedicated disposable PostgreSQL CI.
 - Local focused run: **17 passed, 38 skipped, 1 non-blocking Starlette/httpx warning**. PostgreSQL integration tests skipped because `TEST_DATABASE_URL` is unset; no database was contacted locally. Full local repository suite: **283 passed, 56 skipped, 1 non-blocking warning**. PostgreSQL integration tests skipped because DB environment variables are unset; no DB was contacted. Python compilation and `git diff --check` passed.
-- Exact-head GitHub Actions PostgreSQL verification, migration 014 application, cleanup and concurrency test evidence are still pending. Phase 9 is NOT closed.
+- Superseded by the final closure checkpoint at the end of this section: exact-head PostgreSQL CI passed 212 tests; all 15 migrations and cleanup verified.
 - No production/shared DB migration, live scheduler execution, provider/OAuth action, real Pin/Board, PR, merge or deployment. Workflow is mocked in tests; no real Pinterest publishing occurs.
+
+
+### Model 2 Phase 9 — FINAL CLOSURE (2026-11-09)
+
+- Phase 9 is formally closed for isolated feature-branch implementation and verification. Owner approved one active schedule per Pinterest account, with explicit niche attribution for Model 2 schedules.
+- Final code head: `761204b7e5d09cce6eb5f26543602702d5db606a`; follow-up GitHub Actions run `42536328716` succeeded: **212 passed, 0 failed, 1 non-blocking warning** on disposable PostgreSQL 16.15.
+- CI recorded all 15 numbered migrations, verified Model 2 and synthetic Model 1 fixtures cleaned, and completed container shutdown. The run included concurrent same-account quota serialization, independent different-account claims, retry idempotency-key preservation and uncertain-outcome quarantine tests.
+- Final local full suite: **283 passed, 56 skipped, 1 non-blocking warning**. Local DB tests were skipped because DB environment variables are unset; PostgreSQL evidence is the CI run above.
+- No production/shared DB migration, live scheduler execution, provider/OAuth action, real Pin/Board, PR, merge or deployment occurred or is authorized. These require separate approval.
