@@ -196,3 +196,12 @@ These are review findings, not verified runtime failures: no PostgreSQL instance
 - The three failed cases were one negative FK test and the two isolation-level concurrency cases. The other 12 cases passed, including full test module collection, most registry constraints and lineage checks. This is the first actual PostgreSQL runtime execution; do not describe the first run as passing.
 - Follow-up local checks after correcting the test setup: **6 static tests passed, 9 PostgreSQL tests skipped locally** because the Android kernel still cannot run PostgreSQL. Python compile, YAML parse, and `git diff --check` passed. The corrected database tests have not yet been rerun on GitHub.
 - Next: commit only the corrected PostgreSQL test and synchronized evidence notes to `feat/model2-open-source-reuse`, then verify the next workflow run and inspect both concurrency isolation outcomes. Phase 2 remains **IN PROGRESS / NOT CLOSED** until the complete focused PostgreSQL suite passes.
+
+
+## 14. Second GitHub PostgreSQL run — follow-up test corrections — 2026-11-08
+
+- Second workflow run `42497741517` on commit `ac731fc6efd540ab9b3373e8bcb73306bbd081f4` still failed: **12 passed, 3 failed**. The new log clarified two additional test-code defects; no migration SQL change was made.
+  1. The account–niche test incorrectly expected that an account could not be assigned a second non-primary niche. That contradicts the intended multi-niche registry. Corrected it to assert that an account may be assigned another niche with `is_primary=FALSE`, after which a snapshot for that explicit mapping is valid. The separate test still verifies only one active primary niche.
+  2. The concurrency test used dictionary-style row access on direct `psycopg.connect()` connections, whose default row factory returns tuples. The second writer therefore failed before signaling readiness. Corrected both PID and blocker-count reads to positional tuple access.
+- Latest local verification after these corrections: **6 static tests passed, 9 PostgreSQL integration tests skipped** (local PostgreSQL remains unavailable); Python compilation and `git diff --check` passed. Corrected database cases are not yet verified on a PostgreSQL server.
+- Next: push only the corrected test and evidence notes to the same Model 2 feature branch, then inspect the third workflow run. Phase 2 remains **IN PROGRESS / NOT CLOSED**.

@@ -141,16 +141,25 @@ def test_model2_registry_enforces_account_niche_membership(model2_db):
                         (model2_db["account_a"], model2_db["niche_b"]),
                     )
 
-        with conn.transaction():
-            with pytest.raises(ForeignKeyViolation):
-                with conn.transaction():
-                    conn.execute(
-                        """
-                        INSERT INTO model2_account_niches (account_id, niche_id, is_primary)
-                        VALUES (%s, %s, FALSE)
-                        """,
-                        (model2_db["account_a"], model2_db["niche_b"]),
-                    )
+        # An account may be assigned multiple niches; only the primary niche
+        # is unique. Once assigned, a snapshot for that account/niche is valid.
+        conn.execute(
+            """
+            INSERT INTO model2_account_niches (account_id, niche_id, is_primary)
+            VALUES (%s, %s, FALSE)
+            """,
+            (model2_db["account_a"], model2_db["niche_b"]),
+        )
+        conn.execute(
+            """
+            INSERT INTO model2_learning_snapshots
+                (account_id, niche_id, period_start, period_end, metrics,
+                 sample_size, source_snapshot_count)
+            VALUES (%s, %s, DATE '2026-01-01', DATE '2026-01-30',
+                    '{}'::jsonb, 0, 0)
+            """,
+            (model2_db["account_a"], model2_db["niche_b"]),
+        )
 
 
 def test_model2_registry_enforces_one_active_primary_niche(model2_db):
@@ -528,8 +537,8 @@ def test_model2_learning_source_concurrent_inserts_are_serialized(
                         (learning_id,),
                     )
                     outcomes["second_pid"] = conn.execute(
-                        "SELECT pg_backend_pid() AS pid"
-                    ).fetchone()["pid"]
+                        "SELECT pg_backend_pid()"
+                    ).fetchone()[0]
                     second_pid_ready.set()
                     conn.execute(
                         """
@@ -569,13 +578,13 @@ def test_model2_learning_source_concurrent_inserts_are_serialized(
         with psycopg.connect(TEST_DATABASE_URL) as monitor:
             wait_state = monitor.execute(
                 """
-                SELECT cardinality(pg_blocking_pids(pid)) AS blocker_count
+                SELECT cardinality(pg_blocking_pids(pid))
                 FROM pg_stat_activity
                 WHERE pid = %s
                 """,
                 (outcomes["second_pid"],),
             ).fetchone()
-        if wait_state and wait_state["blocker_count"] > 0:
+        if wait_state and wait_state[0] > 0:
             blocked = True
             break
         if second_finished.is_set():
