@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app import database
 from app.model2_domain import AccountNicheAssignmentInput, AccountProfileInput, NicheInput
@@ -112,6 +113,10 @@ def model2_db(monkeypatch):
             conn.execute(
                 "DELETE FROM model2_learning_snapshots WHERE account_id IN (%s, %s)",
                 (account_a, account_b),
+            )
+            conn.execute(
+                "DELETE FROM affiliate_publishing_schedules WHERE account_id IN (%s, %s, %s)",
+                (account_a, account_b, account_c),
             )
             conn.execute(
                 "DELETE FROM model2_account_niches WHERE account_id IN (%s, %s, %s)",
@@ -1497,3 +1502,199 @@ def test_model2_dashboard_lists_profiles_niches_and_evidence_without_secrets(mod
     assert "access_token" not in response.text
     assert "test-ciphertext-a" not in response.text
     assert "affiliate_url" not in response.text
+
+
+# Phase 9: account-aware scheduler integration. Every workflow call below is
+# mocked; these tests never contact Pinterest or create a Board/Pin.
+def _model2_schedule_payload(account_id, niche_id, *, timezone_name="UTC", daily_limit=1):
+    from app.affiliate_scheduler import CreateScheduleInput
+
+    return CreateScheduleInput(
+        account_id=account_id,
+        niche_id=niche_id,
+        timezone=timezone_name,
+        starts_on=datetime.now(timezone.utc).date() + timedelta(days=1),
+        days=1,
+        daily_pin_limit=daily_limit,
+        board_name="Existing Test Board",
+        sources=[{
+            "product_name": "Model2 scheduler test product",
+            "product_details": "Disposable scheduler integration fixture",
+            "affiliate_url": "https://example.invalid/model2-scheduler-test",
+        }],
+    )
+
+
+def _create_and_activate_model2_schedule(account_id, niche_id, *, daily_limit=1):
+    from app.affiliate_scheduler import create_draft_schedule, activate_schedule
+
+    draft = create_draft_schedule(_model2_schedule_payload(account_id, niche_id, daily_limit=daily_limit))
+    active = activate_schedule(draft["schedule_id"])
+    return draft["schedule_id"], active
+
+
+def test_model2_schedule_requires_exact_active_account_niche_and_profile_timezone(model2_db):
+    from app.affiliate_scheduler import create_draft_schedule
+
+    draft = create_draft_schedule(_model2_schedule_payload(model2_db["account_a"], model2_db["niche_a"]))
+    assert draft["niche_id"] == model2_db["niche_a"]
+    assert draft["jobs_created"] == 0
+    assert draft["publishing_started"] is False
+
+    with pytest.raises(HTTPException) as mismatch:
+        create_draft_schedule(_model2_schedule_payload(
+            model2_db["account_a"], model2_db["niche_a"], timezone_name="America/Los_Angeles"
+        ))
+    assert mismatch.value.status_code == 409
+
+    with pytest.raises(HTTPException) as cross_account:
+        create_draft_schedule(_model2_schedule_payload(model2_db["account_a"], model2_db["niche_b"]))
+    assert cross_account.value.status_code == 409
+
+
+def test_model2_schedule_activation_rechecks_paused_assignment_and_connected_metadata(model2_db):
+    from app import database
+    from app.affiliate_scheduler import create_draft_schedule, activate_schedule
+
+    draft = create_draft_schedule(_model2_schedule_payload(model2_db["account_a"], model2_db["niche_a"]))
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE model2_account_niches SET status = 'paused' WHERE account_id = %s AND niche_id = %s",
+            (model2_db["account_a"], model2_db["niche_a"]),
+        )
+    with pytest.raises(HTTPException) as paused:
+        activate_schedule(draft["schedule_id"])
+    assert paused.value.status_code == 409
+
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE model2_account_niches SET status = 'active' WHERE account_id = %s AND niche_id = %s",
+            (model2_db["account_a"], model2_db["niche_a"]),
+        )
+    credential_draft = create_draft_schedule(_model2_schedule_payload(model2_db["account_a"], model2_db["niche_a"]))
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE pinterest_credentials SET status = 'revoked' WHERE account_id = %s",
+            (model2_db["account_a"],),
+        )
+    with pytest.raises(HTTPException) as revoked:
+        activate_schedule(credential_draft["schedule_id"])
+    assert revoked.value.status_code == 409
+
+
+def test_model2_schedule_replacement_waits_for_old_processing_job(model2_db):
+    from app import database
+    from app.affiliate_scheduler import create_draft_schedule, activate_schedule, pause_schedule
+
+    old_id, _ = _create_and_activate_model2_schedule(model2_db["account_a"], model2_db["niche_a"])
+    pause_schedule(old_id)
+    with database.connection() as conn:
+        conn.execute(
+            """
+            WITH one_job AS (
+                SELECT id FROM affiliate_pin_jobs
+                WHERE schedule_id = %s ORDER BY id LIMIT 1
+            )
+            UPDATE affiliate_pin_jobs j SET status = 'processing', locked_at = now()
+            FROM one_job WHERE j.id = one_job.id
+            """,
+            (old_id,),
+        )
+    new_draft = create_draft_schedule(_model2_schedule_payload(model2_db["account_a"], model2_db["niche_a"]))
+    with pytest.raises(HTTPException) as outstanding:
+        activate_schedule(new_draft["schedule_id"])
+    assert outstanding.value.status_code == 409
+
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET status = 'failed', finished_at = now() WHERE schedule_id = %s AND status = 'processing'",
+            (old_id,),
+        )
+    assert activate_schedule(new_draft["schedule_id"])["status"] == "active"
+
+
+def test_model2_account_daily_quota_counts_prior_schedule_completion_by_event_time(model2_db, monkeypatch):
+    from app import database, workflow
+    from app.affiliate_scheduler import pause_schedule, run_one_due_job
+
+    old_id, _ = _create_and_activate_model2_schedule(model2_db["account_a"], model2_db["niche_a"])
+    pause_schedule(old_id)
+    with database.connection() as conn:
+        conn.execute(
+            """
+            UPDATE affiliate_pin_jobs
+            SET status = 'succeeded', finished_at = now(), local_run_date = CURRENT_DATE - 1
+            WHERE schedule_id = %s AND status = 'cancelled'
+            """,
+            (old_id,),
+        )
+    new_id, _ = _create_and_activate_model2_schedule(model2_db["account_a"], model2_db["niche_a"])
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE schedule_id = %s",
+            (new_id,),
+        )
+
+    calls = []
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", lambda *a, **k: calls.append((a, k)))
+    result = run_one_due_job()
+    assert result == {"claimed": False, "processed": False, "reason": "no_due_job"}
+    assert calls == []
+
+
+def test_model2_worker_passes_exact_niche_and_serializes_concurrent_account_quota(model2_db, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from app import database, workflow
+    from app.affiliate_scheduler import run_one_due_job
+
+    schedule_id, _ = _create_and_activate_model2_schedule(
+        model2_db["account_a"], model2_db["niche_a"], daily_limit=1
+    )
+    from psycopg.errors import CheckViolation
+    with database.connection() as conn:
+        with pytest.raises(CheckViolation):
+            with conn.transaction():
+                conn.execute(
+                    "UPDATE affiliate_publishing_schedules SET board_name = 'Changed after activation' WHERE id = %s",
+                    (schedule_id,),
+                )
+    with database.connection() as conn:
+        job = conn.execute(
+            "SELECT id, source_id, local_run_date FROM affiliate_pin_jobs WHERE schedule_id = %s ORDER BY id LIMIT 1",
+            (schedule_id,),
+        ).fetchone()
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE id = %s",
+            (job["id"],),
+        )
+        conn.execute(
+            """
+            INSERT INTO affiliate_pin_jobs
+                (schedule_id, source_id, run_at, local_run_date, daily_slot, idempotency_key)
+            VALUES (%s, %s, now() - interval '30 seconds', %s, 2, %s)
+            """,
+            (schedule_id, job["source_id"], job["local_run_date"], f"phase9-second-job-{model2_db['suffix']}"),
+        )
+
+    workflow_started = Event()
+    release_workflow = Event()
+    observed = []
+
+    def fake_workflow(payload, *, idempotency_key):
+        observed.append((payload.niche_id, idempotency_key))
+        workflow_started.set()
+        assert release_workflow.wait(10), "test workflow release timed out"
+        return {"published": False, "already_published": False, "product_id": None, "pin_id": None}
+
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", fake_workflow)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(run_one_due_job)
+        assert workflow_started.wait(10), "first worker did not claim a due job"
+        second = run_one_due_job()
+        release_workflow.set()
+        first_result = first.result(timeout=15)
+
+    assert first_result["status"] == "succeeded"
+    assert observed and observed[0][0] == model2_db["niche_a"]
+    assert second == {"claimed": False, "processed": False, "reason": "no_due_job"}

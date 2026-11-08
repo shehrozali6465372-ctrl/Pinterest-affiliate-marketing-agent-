@@ -5,7 +5,7 @@ This module only stores sources and enqueues jobs. It never calls Pinterest.
 from __future__ import annotations
 
 import hmac
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.database import connection
+from app.model2_domain import AccountId
 
 router = APIRouter(prefix="/affiliate-scheduler", tags=["affiliate-scheduler"])
 DEFAULT_POSTING_TIMES = (time(9, 0), time(12, 0), time(15, 0), time(18, 0), time(21, 0))
@@ -69,6 +70,7 @@ class AffiliateSourceInput(BaseModel):
 
 class CreateScheduleInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
+    niche_id: int | None = Field(default=None, gt=0, strict=True)
     timezone: str = Field(min_length=1, max_length=100)
     starts_on: date
     days: int = Field(default=30, ge=1, le=30)
@@ -94,6 +96,49 @@ class CreateScheduleInput(BaseModel):
         return value
 
 
+def _validate_model2_schedule_context(conn, *, account_id: str, niche_id: int, timezone_name: str) -> None:
+    """Validate exact account+niche state using metadata only; never read token bytes."""
+    try:
+        AccountId(value=account_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Model 2 schedules require a canonical pinterest:<user_id> account_id.") from None
+
+    profile = conn.execute(
+        "SELECT status, timezone FROM model2_account_profiles WHERE account_id = %s FOR UPDATE",
+        (account_id,),
+    ).fetchone()
+    if not profile or profile["status"] != "active":
+        raise HTTPException(status_code=409, detail="An active Model 2 account profile is required.")
+    if profile["timezone"] != timezone_name:
+        raise HTTPException(status_code=409, detail="Schedule timezone must match the account profile timezone.")
+
+    niche = conn.execute(
+        "SELECT status FROM model2_niches WHERE id = %s FOR SHARE",
+        (niche_id,),
+    ).fetchone()
+    if not niche or niche["status"] != "active":
+        raise HTTPException(status_code=409, detail="The selected niche does not exist or is archived.")
+
+    assignment = conn.execute(
+        """
+        SELECT status FROM model2_account_niches
+        WHERE account_id = %s AND niche_id = %s
+        FOR SHARE
+        """,
+        (account_id, niche_id),
+    ).fetchone()
+    if not assignment or assignment["status"] != "active":
+        raise HTTPException(status_code=409, detail="The exact account-to-niche assignment is missing or inactive.")
+
+    credential = conn.execute(
+        "SELECT status FROM pinterest_credentials WHERE account_id = %s",
+        (account_id,),
+    ).fetchone()
+    if not credential or credential["status"] != "connected":
+        raise HTTPException(status_code=409, detail="Connected Pinterest credential metadata is required; no token was read or refreshed.")
+    return profile["timezone"]
+
+
 @router.post("/schedules", status_code=201, dependencies=[Depends(require_scheduler_key)])
 def create_draft_schedule(payload: CreateScheduleInput) -> dict[str, object]:
     """Store up to ten URLs as a draft; no jobs are queued and nothing is published."""
@@ -102,14 +147,19 @@ def create_draft_schedule(payload: CreateScheduleInput) -> dict[str, object]:
     ends_on = payload.starts_on + timedelta(days=payload.days - 1)
     try:
         with connection() as conn:
+            if payload.niche_id is not None:
+                _validate_model2_schedule_context(
+                    conn, account_id=payload.account_id, niche_id=payload.niche_id,
+                    timezone_name=payload.timezone,
+                )
             schedule = conn.execute(
                 """
                 INSERT INTO affiliate_publishing_schedules
-                    (account_id, timezone, starts_on, ends_on, daily_pin_limit, board_name, board_description, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'draft')
-                RETURNING id, account_id, timezone, starts_on, ends_on, daily_pin_limit, board_name, status
+                    (account_id, niche_id, timezone, starts_on, ends_on, daily_pin_limit, board_name, board_description, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft')
+                RETURNING id, account_id, niche_id, timezone, starts_on, ends_on, daily_pin_limit, board_name, status
                 """,
-                (payload.account_id, payload.timezone, payload.starts_on, ends_on,
+                (payload.account_id, payload.niche_id, payload.timezone, payload.starts_on, ends_on,
                  payload.daily_pin_limit, payload.board_name, payload.board_description),
             ).fetchone()
             for source in payload.sources:
@@ -125,7 +175,8 @@ def create_draft_schedule(payload: CreateScheduleInput) -> dict[str, object]:
             "schedule_id": schedule["id"], "status": "draft",
             "starts_on": schedule["starts_on"].isoformat(),
             "ends_on": schedule["ends_on"].isoformat(),
-            "timezone": schedule["timezone"], "daily_pin_limit": schedule["daily_pin_limit"],
+            "timezone": schedule["timezone"], "niche_id": schedule["niche_id"],
+            "daily_pin_limit": schedule["daily_pin_limit"],
             "source_count": len(payload.sources), "jobs_created": 0,
             "publishing_started": False,
         }
@@ -140,14 +191,65 @@ def activate_schedule(schedule_id: int) -> dict[str, object]:
     """Explicitly enqueue a draft schedule. This does not execute jobs or contact Pinterest."""
     try:
         with connection() as conn:
+            hint = conn.execute(
+                "SELECT account_id, niche_id FROM affiliate_publishing_schedules WHERE id = %s",
+                (schedule_id,),
+            ).fetchone()
+            if not hint:
+                raise HTTPException(status_code=404, detail="Schedule not found.")
+
+            # Global Model 2 lock order: account profile -> niche -> assignment -> schedule -> jobs.
+            profile_timezone = None
+            if hint["niche_id"] is not None:
+                schedule_timezone = conn.execute(
+                    "SELECT timezone FROM affiliate_publishing_schedules WHERE id = %s",
+                    (schedule_id,),
+                ).fetchone()["timezone"]
+                profile_timezone = _validate_model2_schedule_context(
+                    conn, account_id=hint["account_id"], niche_id=hint["niche_id"],
+                    timezone_name=schedule_timezone,
+                )
+
             schedule = conn.execute(
                 "SELECT * FROM affiliate_publishing_schedules WHERE id = %s FOR UPDATE",
                 (schedule_id,),
             ).fetchone()
             if not schedule:
                 raise HTTPException(status_code=404, detail="Schedule not found.")
+            if schedule["account_id"] != hint["account_id"] or schedule["niche_id"] != hint["niche_id"]:
+                raise HTTPException(status_code=409, detail="Draft schedule context changed during activation; retry after review.")
             if schedule["status"] != "draft":
                 raise HTTPException(status_code=409, detail="Only a draft schedule can be activated.")
+            if profile_timezone is not None and schedule["timezone"] != profile_timezone:
+                raise HTTPException(status_code=409, detail="Schedule timezone must match the account profile timezone.")
+
+            if schedule["niche_id"] is not None:
+                outstanding = conn.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM affiliate_pin_jobs j
+                        JOIN affiliate_publishing_schedules old_s ON old_s.id = j.schedule_id
+                        WHERE old_s.account_id = %s AND old_s.id <> %s
+                          AND j.status IN ('queued', 'processing')
+                    ) AS has_outstanding
+                    """,
+                    (schedule["account_id"], schedule_id),
+                ).fetchone()["has_outstanding"]
+                if outstanding:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="A previous schedule still has queued or processing jobs; pause/cancel queued jobs and wait for in-flight work to become terminal.",
+                    )
+                active = conn.execute(
+                    """
+                    SELECT id FROM affiliate_publishing_schedules
+                    WHERE account_id = %s AND status = 'active' AND id <> %s
+                    """,
+                    (schedule["account_id"], schedule_id),
+                ).fetchone()
+                if active:
+                    raise HTTPException(status_code=409, detail="This Pinterest account already has an active schedule.")
+
             sources = conn.execute(
                 "SELECT id FROM affiliate_product_sources WHERE schedule_id = %s AND enabled = TRUE ORDER BY id",
                 (schedule_id,),
@@ -178,7 +280,7 @@ def activate_schedule(schedule_id: int) -> dict[str, object]:
                 (schedule_id,),
             )
         return {
-            "schedule_id": schedule_id, "status": "active",
+            "schedule_id": schedule_id, "status": "active", "niche_id": schedule["niche_id"],
             "jobs_created": jobs_created, "daily_pin_limit": schedule["daily_pin_limit"],
             "starts_on": schedule["starts_on"].isoformat(),
             "ends_on": schedule["ends_on"].isoformat(),
@@ -195,17 +297,29 @@ def activate_schedule(schedule_id: int) -> dict[str, object]:
 def pause_schedule(schedule_id: int) -> dict[str, object]:
     try:
         with connection() as conn:
-            row = conn.execute(
-                """
-                UPDATE affiliate_publishing_schedules
-                SET status = 'paused', updated_at = now()
-                WHERE id = %s AND status = 'active'
-                RETURNING id
-                """,
+            hint = conn.execute(
+                "SELECT account_id, niche_id FROM affiliate_publishing_schedules WHERE id = %s",
                 (schedule_id,),
             ).fetchone()
-            if not row:
+            if not hint:
                 raise HTTPException(status_code=409, detail="Schedule not found or not active.")
+            if hint["niche_id"] is not None:
+                profile = conn.execute(
+                    "SELECT account_id FROM model2_account_profiles WHERE account_id = %s FOR UPDATE",
+                    (hint["account_id"],),
+                ).fetchone()
+                if not profile:
+                    raise HTTPException(status_code=409, detail="Model 2 account profile is unavailable.")
+            schedule = conn.execute(
+                "SELECT id, status FROM affiliate_publishing_schedules WHERE id = %s FOR UPDATE",
+                (schedule_id,),
+            ).fetchone()
+            if not schedule or schedule["status"] != "active":
+                raise HTTPException(status_code=409, detail="Schedule not found or not active.")
+            conn.execute(
+                "UPDATE affiliate_publishing_schedules SET status = 'paused', updated_at = now() WHERE id = %s",
+                (schedule_id,),
+            )
             conn.execute(
                 "UPDATE affiliate_pin_jobs SET status = 'cancelled' WHERE schedule_id = %s AND status = 'queued'",
                 (schedule_id,),
@@ -215,6 +329,15 @@ def pause_schedule(schedule_id: int) -> dict[str, object]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Could not pause the schedule.") from exc
+
+
+def _account_local_day_bounds(timezone_name: str, *, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Return DST-aware UTC bounds for the current account-local calendar day."""
+    zone = ZoneInfo(timezone_name)
+    local_now = now.astimezone(zone) if now is not None else datetime.now(zone)
+    local_start = datetime.combine(local_now.date(), time.min, tzinfo=zone)
+    local_end = datetime.combine(local_now.date() + timedelta(days=1), time.min, tzinfo=zone)
+    return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
 
 
 @router.post("/run-due", dependencies=[Depends(require_scheduler_key)])
@@ -245,22 +368,108 @@ def run_one_due_job() -> dict[str, object]:
                   )
                 """
             )
+
+            # Candidate discovery is deliberately non-locking. For Model 2,
+            # the account profile row is then locked before schedule/job rows,
+            # serializing quota evaluation across every schedule for this account.
+            hint = conn.execute(
+                """
+                SELECT s.id AS schedule_id, s.account_id, s.niche_id, s.timezone
+                FROM affiliate_pin_jobs j
+                JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id
+                LEFT JOIN model2_account_profiles ap ON ap.account_id = s.account_id
+                LEFT JOIN model2_account_niches an
+                  ON an.account_id = s.account_id AND an.niche_id = s.niche_id
+                LEFT JOIN model2_niches n ON n.id = s.niche_id
+                LEFT JOIN pinterest_credentials pc ON pc.account_id = s.account_id
+                WHERE j.status = 'queued' AND j.run_at <= now() AND s.status = 'active'
+                  AND (
+                    (s.niche_id IS NULL AND (
+                        SELECT count(*) FROM affiliate_pin_jobs same_day
+                        WHERE same_day.schedule_id = s.id
+                          AND same_day.local_run_date = j.local_run_date
+                          AND same_day.status IN ('processing', 'succeeded')
+                    ) < s.daily_pin_limit)
+                    OR
+                    (s.niche_id IS NOT NULL
+                     AND ap.status = 'active' AND an.status = 'active'
+                     AND n.status = 'active' AND pc.status = 'connected'
+                     AND (
+                        SELECT count(*)
+                        FROM affiliate_pin_jobs day_jobs
+                        JOIN affiliate_publishing_schedules day_s ON day_s.id = day_jobs.schedule_id
+                        WHERE day_s.account_id = s.account_id
+                          AND day_jobs.status IN ('processing', 'succeeded')
+                          AND (
+                            CASE
+                              WHEN day_jobs.status = 'processing' THEN COALESCE(day_jobs.locked_at, day_jobs.run_at)
+                              ELSE COALESCE(day_jobs.finished_at, day_jobs.run_at)
+                            END AT TIME ZONE ap.timezone
+                          )::date = (now() AT TIME ZONE ap.timezone)::date
+                     ) < s.daily_pin_limit)
+                  )
+                ORDER BY j.run_at, j.id
+                LIMIT 1
+                """
+            ).fetchone()
+            if not hint:
+                return {"claimed": False, "processed": False, "reason": "no_due_job"}
+
+            profile_timezone = None
+            if hint["niche_id"] is not None:
+                profile_timezone = _validate_model2_schedule_context(
+                    conn, account_id=hint["account_id"], niche_id=hint["niche_id"],
+                    timezone_name=hint["timezone"],
+                )
+            schedule = conn.execute(
+                "SELECT id, account_id, niche_id, timezone, daily_pin_limit, status FROM affiliate_publishing_schedules WHERE id = %s FOR UPDATE",
+                (hint["schedule_id"],),
+            ).fetchone()
+            if not schedule or schedule["status"] != "active":
+                return {"claimed": False, "processed": False, "reason": "no_due_job"}
+            if profile_timezone is not None and schedule["timezone"] != profile_timezone:
+                raise HTTPException(status_code=409, detail="Schedule timezone no longer matches the account profile timezone.")
+
+            if schedule["niche_id"] is None:
+                day_start = day_end = None
+            else:
+                database_now = conn.execute("SELECT now() AS current_time").fetchone()["current_time"]
+                day_start, day_end = _account_local_day_bounds(schedule["timezone"], now=database_now)
+
             claimed = conn.execute(
                 """
                 WITH candidate AS (
                     SELECT j.id
                     FROM affiliate_pin_jobs j
                     JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id
-                    WHERE j.status = 'queued'
+                    WHERE j.schedule_id = %s
+                      AND j.status = 'queued'
                       AND j.run_at <= now()
                       AND s.status = 'active'
                       AND (
-                        SELECT count(*)
-                        FROM affiliate_pin_jobs day_jobs
-                        WHERE day_jobs.schedule_id = j.schedule_id
-                          AND day_jobs.local_run_date = j.local_run_date
-                          AND day_jobs.status IN ('processing', 'succeeded')
-                      ) < s.daily_pin_limit
+                        (s.niche_id IS NULL AND (
+                            SELECT count(*) FROM affiliate_pin_jobs same_day
+                            WHERE same_day.schedule_id = s.id
+                              AND same_day.local_run_date = j.local_run_date
+                              AND same_day.status IN ('processing', 'succeeded')
+                        ) < s.daily_pin_limit)
+                        OR
+                        (s.niche_id IS NOT NULL AND (
+                            SELECT count(*)
+                            FROM affiliate_pin_jobs day_jobs
+                            JOIN affiliate_publishing_schedules day_s ON day_s.id = day_jobs.schedule_id
+                            WHERE day_s.account_id = s.account_id
+                              AND day_jobs.status IN ('processing', 'succeeded')
+                              AND (CASE
+                                    WHEN day_jobs.status = 'processing' THEN COALESCE(day_jobs.locked_at, day_jobs.run_at)
+                                    ELSE COALESCE(day_jobs.finished_at, day_jobs.run_at)
+                                   END) >= %s
+                              AND (CASE
+                                    WHEN day_jobs.status = 'processing' THEN COALESCE(day_jobs.locked_at, day_jobs.run_at)
+                                    ELSE COALESCE(day_jobs.finished_at, day_jobs.run_at)
+                                   END) < %s
+                        ) < s.daily_pin_limit)
+                      )
                     ORDER BY j.run_at, j.id
                     FOR UPDATE OF j SKIP LOCKED
                     LIMIT 1
@@ -271,13 +480,14 @@ def run_one_due_job() -> dict[str, object]:
                 WHERE j.id = c.id
                 RETURNING j.id, j.schedule_id, j.idempotency_key,
                           j.attempt_count, j.source_id
-                """
+                """,
+                (schedule["id"], day_start, day_end),
             ).fetchone()
             if not claimed:
                 return {"claimed": False, "processed": False, "reason": "no_due_job"}
             details = conn.execute(
                 """
-                SELECT s.account_id, s.board_name, s.board_description,
+                SELECT s.account_id, s.niche_id, s.board_name, s.board_description,
                        p.product_name, p.product_details, p.affiliate_url
                 FROM affiliate_publishing_schedules s
                 JOIN affiliate_product_sources p ON p.schedule_id = s.id
@@ -301,6 +511,7 @@ def run_one_due_job() -> dict[str, object]:
             product_details=details["product_details"],
             affiliate_url=details["affiliate_url"],
             account_id=details["account_id"],
+            niche_id=details["niche_id"],
             board_name=details["board_name"],
             board_description=details["board_description"],
         )
@@ -373,7 +584,7 @@ def get_schedule_status(schedule_id: int) -> dict[str, object]:
         with connection() as conn:
             schedule = conn.execute(
                 """
-                SELECT id, account_id, timezone, starts_on, ends_on, daily_pin_limit,
+                SELECT id, account_id, niche_id, timezone, starts_on, ends_on, daily_pin_limit,
                        board_name, status, created_at, updated_at
                 FROM affiliate_publishing_schedules WHERE id = %s
                 """,
@@ -396,7 +607,7 @@ def get_schedule_status(schedule_id: int) -> dict[str, object]:
         job_counts = {row["status"]: row["total"] for row in counts}
         return {
             "schedule_id": schedule["id"], "account_id": schedule["account_id"],
-            "timezone": schedule["timezone"], "starts_on": schedule["starts_on"].isoformat(),
+            "timezone": schedule["timezone"], "niche_id": schedule["niche_id"], "starts_on": schedule["starts_on"].isoformat(),
             "ends_on": schedule["ends_on"].isoformat(), "daily_pin_limit": schedule["daily_pin_limit"],
             "board_name": schedule["board_name"], "status": schedule["status"],
             "source_count": sources, "job_counts": job_counts,

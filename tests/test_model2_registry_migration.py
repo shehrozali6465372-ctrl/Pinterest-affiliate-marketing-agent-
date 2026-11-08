@@ -116,3 +116,34 @@ def test_model2_postgres_fixture_cleanup_covers_concurrency_suffixes():
     assert "where pinterest_pin_id like %s" in source
     assert "and board_id like %s" in source
     assert "product_name like %s" in source
+
+
+MIGRATION_014 = (
+    Path(__file__).resolve().parents[1]
+    / "migrations"
+    / "014_model2_account_aware_scheduling.sql"
+)
+
+
+def test_model2_scheduler_migration_is_additive_and_preserves_legacy_schedules():
+    sql = MIGRATION_014.read_text(encoding="utf-8").lower()
+    assert "add column niche_id bigint" in sql
+    assert "foreign key (account_id, niche_id)" in sql
+    assert "references model2_account_niches (account_id, niche_id)" in sql
+    assert "niche_id is null" in sql
+    assert "affiliate_one_active_schedule_per_account_idx" not in sql
+    assert "update affiliate_publishing_schedules" not in sql
+    assert "delete from affiliate_publishing_schedules" not in sql
+    assert "update affiliate_pin_jobs" not in sql
+    assert "delete from affiliate_pin_jobs" not in sql
+
+
+def test_model2_activated_schedule_configuration_is_database_immutable():
+    sql = MIGRATION_014.read_text(encoding="utf-8").lower()
+    assert "create or replace function model2_guard_activated_schedule_immutability()" in sql
+    assert "before update on affiliate_publishing_schedules" in sql
+    assert "old.niche_id is not null or new.niche_id is not null" in sql
+    assert "invalid model 2 schedule state transition" in sql
+    assert "new.daily_pin_limit" in sql
+    assert "new.board_name" in sql
+    assert "activated schedule configuration is immutable" in sql

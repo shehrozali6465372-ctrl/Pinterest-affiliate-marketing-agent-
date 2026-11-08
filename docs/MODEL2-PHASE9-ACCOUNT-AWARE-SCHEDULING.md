@@ -1,6 +1,6 @@
 # Model 2 Phase 9 — Account-aware Scheduling Design
 
-**Status:** DESIGN DRAFT — implementation not started.
+**Status:** IMPLEMENTATION IN PROGRESS — owner approved the one-active-schedule-per-account design on 2026-11-09.
 **Date:** 2026-11-09
 **Architecture authority:** docs/MODEL2-FOUNDATION.md (FROZEN)
 **Prerequisites:** Phases 6, 7 and 8 closed.
@@ -43,16 +43,16 @@
 
 The current per-schedule count is insufficient if a paused/completed schedule is replaced by another schedule on the same account during the same account-local day.
 
-Required changes in a future implementation:
+Implementation contract (now being implemented):
 - Count processing/succeeded jobs across all schedules for the same account, not only the current schedule.
-- For quota day, use the actual claim/completion timestamp (locked_at for processing, finished_at for succeeded) converted to the account profile timezone. Fall back to run_at only for defensive handling of legacy rows with missing event timestamps.
-- Keep the active schedule's configured daily_pin_limit as the account's current cap. Prior successful/processing jobs from earlier schedules on the same account-local day count against it.
-- During activation, lock the account profile and schedule in a deterministic order; reject activation while any prior schedule for that account has a processing job. Paused schedule's queued jobs must already be cancelled. This prevents an old in-flight publish from overlapping a new schedule.
-- During job claim, serialize claim/quota evaluation per account using the account profile row lock (or a reviewed transaction-scoped advisory lock keyed by canonical account_id), then lock the selected schedule/job. Define one global lock order and test for deadlocks.
-- FOR UPDATE SKIP LOCKED remains for job distribution, but it is not by itself an account-level quota lock.
+- For quota day, use the actual claim/completion timestamp (`locked_at` for processing, `finished_at` for succeeded), with `run_at` fallback for missing event timestamps. Compare timestamps against DST-aware account-local day bounds from the locked account profile timezone.
+- Keep the active schedule's configured `daily_pin_limit` as the account's current cap. Prior successful/processing jobs from earlier schedules on the same account-local day count against it.
+- During activation, lock the account profile, niche, assignment, schedule and then jobs in a deterministic order; reject activation while another schedule has queued/processing jobs. Pausing cancels queued jobs; in-flight jobs must become terminal before replacement.
+- During job claim, lock the account profile before schedule/job rows. This serializes quota evaluation across workers for that account; different account profiles do not share the lock.
+- `FOR UPDATE SKIP LOCKED` remains for job distribution, but is not treated as the account-level quota lock.
 - A worker crash with an unknown Pinterest outcome remains uncertain; never auto-replay it. Operator reconciliation remains required.
-- Retry keeps the same job idempotency_key. No new job/key is generated for a retry.
-- If concurrent multi-niche schedules are required later, do not remove the one-active-schedule-per-account guard casually. Design a shared account quota/locking mechanism first and prove it with concurrent PostgreSQL tests.
+- Retry keeps the same job `idempotency_key`. No new job/key is generated for a retry.
+- The first release remains one active schedule per account; concurrent multi-niche schedules are explicitly deferred.
 
 ## 4. Migration and compatibility boundary (future only)
 
@@ -95,6 +95,25 @@ The safe first release intentionally supports only one active schedule per Pinte
 
 If simultaneous multi-niche schedules are a hard requirement, that is a material change to account quota semantics and needs a separate owner-approved design before implementation.
 
-## 7. Exit gate
+## 7. Owner decision — accepted 2026-11-09
 
-Phase 9 remains IN PROGRESS until the owner accepts the one-active-schedule-per-account baseline (or explicitly requests the concurrent multi-niche alternative), and the adversarial test plan is reviewed. Only then may implementation be proposed. No live scheduler execution, production migration, provider/OAuth action, real Pin/Board, PR, merge or deployment is authorized.
+The owner explicitly approved the recommended baseline: **one active schedule per Pinterest account, with one explicit niche per Model 2 schedule**. Multiple niche assignments remain supported, but concurrent active niche schedules on one account are deferred.
+
+## 8. Implementation checkpoint — 2026-11-09
+
+- Added migration 014 with nullable niche attribution, composite account+niche FK, canonical Model 2 account-ID constraint, quota indexes and activated-schedule configuration immutability trigger.
+- Extended `CreateScheduleInput` with optional strict positive `niche_id`. A Model 2 schedule requires an exact active account profile, assignment and niche; connected credential state is checked using `pinterest_credentials.status` only. No token/ciphertext is selected, decrypted or refreshed.
+- Enforced schedule timezone equality with the Model 2 account profile timezone at draft creation and activation.
+- Activation revalidates all Model 2 context, rejects replacement while a previous schedule has queued/processing jobs, and retains the existing one-active-schedule-per-account index. Pause cancels queued jobs and leaves in-flight work visible.
+- Worker passes the exact schedule niche into the existing `ProductWorkflowInput`; the existing workflow revalidates it and the existing publishing gateway remains the only publisher.
+- Account quota counts processing/succeeded jobs across all schedules for the same account using actual claim/completion timestamps, with `run_at` fallback. Account-local day boundaries are timezone-aware and DST-aware. Account profile row lock serializes Model 2 worker quota evaluation before schedule/job locking. Legacy NULL-niche schedules retain their existing per-schedule/local-date quota path.
+- Added PostgreSQL integration tests for exact account+niche binding, timezone mismatch, paused assignment, revoked credential metadata, processing-job replacement guard, cross-schedule quota by event timestamp, exact niche pass-through, activated configuration immutability and concurrent worker quota serialization. Added DST unit tests and retained Model 1 scheduler regression tests.
+- Added scheduler tests to the dedicated disposable PostgreSQL GitHub Actions workflow and static migration contract tests.
+- Local focused tests: **17 passed, 36 skipped, 1 non-blocking warning**. The skipped tests include PostgreSQL integration cases because `TEST_DATABASE_URL` is unset locally; no database was contacted. Full local repository suite: **283 passed, 54 skipped, 1 non-blocking warning**. PostgreSQL integration tests skipped because DB environment variables are unset; no DB was contacted. Python compilation and `git diff --check` pass at this checkpoint.
+- **Not yet verified:** migration 014 against PostgreSQL, the new DB integration tests, exact-head GitHub Actions, fixture cleanup and concurrent DB behavior. Phase 9 remains IN PROGRESS until CI proves these gates.
+
+No live scheduler activation or queue execution, production/shared DB migration, provider/OAuth action, real Pin/Board, PR, merge or deployment is authorized. No actual Pinterest publishing call is made by the tests; workflow calls are mocked.
+
+## 9. Exit gate
+
+Phase 9 remains IN PROGRESS until exact-head disposable PostgreSQL CI passes all new and existing scheduler/Model 2 tests, all numbered migrations are recorded, fixtures are fully cleaned, and concurrency/quota/immutability tests pass. Production migration, live scheduler activation, provider/OAuth action, real Pin/Board, PR, merge and deployment remain separate approvals.

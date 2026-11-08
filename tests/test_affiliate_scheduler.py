@@ -1,5 +1,6 @@
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,7 +42,7 @@ def test_create_draft_preserves_affiliate_url_and_does_not_enqueue(monkeypatch):
     calls = []
     starts_on = date.today() + timedelta(days=1)
     schedule_row = {
-        "id": 71, "account_id": "pinterest:123", "timezone": "America/New_York",
+        "id": 71, "account_id": "pinterest:123", "niche_id": None, "timezone": "America/New_York",
         "starts_on": starts_on, "ends_on": starts_on + timedelta(days=29),
         "daily_pin_limit": 5, "board_name": "Home Finds", "status": "draft",
     }
@@ -94,7 +95,7 @@ def test_activation_queues_150_slots_without_publishing(monkeypatch):
 
     calls = []
     schedule = {
-        "id": 9, "status": "draft", "timezone": "America/New_York",
+        "id": 9, "account_id": "pinterest:123", "niche_id": None, "status": "draft", "timezone": "America/New_York",
         "starts_on": date(2026, 11, 5), "ends_on": date(2026, 12, 4),
         "daily_pin_limit": 5,
     }
@@ -110,6 +111,8 @@ def test_activation_queues_150_slots_without_publishing(monkeypatch):
     class FakeConnection:
         def execute(self, query, params=None):
             calls.append((query, params))
+            if "SELECT account_id, niche_id FROM affiliate_publishing_schedules" in query:
+                return Result(one={"account_id": schedule["account_id"], "niche_id": None})
             if "SELECT * FROM affiliate_publishing_schedules" in query:
                 return Result(one=schedule)
             if "SELECT id FROM affiliate_product_sources" in query:
@@ -164,6 +167,7 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
     }
     details = {
         "account_id": "pinterest:123",
+        "niche_id": None,
         "board_name": "Home Finds",
         "board_description": "Kitchen organization",
         "product_name": "Organizer",
@@ -181,9 +185,13 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
 
     class FakeConnection:
         def execute(self, query, params=None):
+            if "SELECT s.id AS schedule_id" in query:
+                return Result({"schedule_id": 9, "account_id": "pinterest:123", "niche_id": None, "timezone": "UTC"})
+            if "SELECT id, account_id, niche_id, timezone, daily_pin_limit" in query:
+                return Result({"id": 9, "account_id": "pinterest:123", "niche_id": None, "timezone": "UTC", "daily_pin_limit": 5, "status": "active"})
             if "WITH candidate AS" in query:
                 return Result(claimed)
-            if "SELECT s.account_id, s.board_name" in query:
+            if "SELECT s.account_id, s.niche_id, s.board_name" in query:
                 return Result(details)
             return Result()
 
@@ -211,3 +219,28 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
     payload, key = workflow_calls[0]
     assert payload.product_name == "Organizer"
     assert key == claimed["idempotency_key"]
+
+
+def test_account_local_quota_day_bounds_follow_dst_transitions():
+    from app.affiliate_scheduler import _account_local_day_bounds
+
+    spring = datetime(2026, 3, 8, 12, tzinfo=ZoneInfo("America/New_York"))
+    spring_start, spring_end = _account_local_day_bounds("America/New_York", now=spring)
+    assert spring_end - spring_start == timedelta(hours=23)
+
+    autumn = datetime(2026, 11, 1, 12, tzinfo=ZoneInfo("America/New_York"))
+    autumn_start, autumn_end = _account_local_day_bounds("America/New_York", now=autumn)
+    assert autumn_end - autumn_start == timedelta(hours=25)
+
+
+def test_model2_schedule_input_requires_positive_integer_niche_id():
+    source = {
+        "product_name": "Organizer",
+        "product_details": "Kitchen drawer organizer",
+        "affiliate_url": "https://example.com/item",
+    }
+    with pytest.raises(ValueError):
+        CreateScheduleInput(
+            account_id="pinterest:123", niche_id=0, timezone="UTC",
+            starts_on=date(2099, 11, 5), sources=[source],
+        )

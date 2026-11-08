@@ -85,6 +85,7 @@ jobs:
           tests/test_deepseek_completion.py
           tests/test_api.py
           tests/test_model2_registry_migration.py
+          tests/test_affiliate_scheduler.py
           tests/test_model2_registry_postgres.py
 
       - name: Verify full migration ledger and fixture cleanup
@@ -114,6 +115,9 @@ jobs:
                   "publications": "SELECT count(*) AS n FROM pin_publications WHERE account_id LIKE 'pinterest:test-model2-%'",
                   "products": "SELECT count(*) AS n FROM products WHERE product_name LIKE 'Model2 test product %'",
                   "content_versions": "SELECT count(*) AS n FROM content_versions cv JOIN products p ON p.id = cv.product_id WHERE p.product_name LIKE 'Model2 test product %'",
+                  "schedules": "SELECT count(*) AS n FROM affiliate_publishing_schedules WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "scheduler_jobs": "SELECT count(*) AS n FROM affiliate_pin_jobs j JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id WHERE s.account_id LIKE 'pinterest:test-model2-%'",
+                  "scheduler_sources": "SELECT count(*) AS n FROM affiliate_product_sources p JOIN affiliate_publishing_schedules s ON s.id = p.schedule_id WHERE s.account_id LIKE 'pinterest:test-model2-%'",
               }
               leftovers = {name: conn.execute(query).fetchone()["n"] for name, query in checks.items()}
               assert all(count == 0 for count in leftovers.values()), f"test fixture data remains: {leftovers}"
