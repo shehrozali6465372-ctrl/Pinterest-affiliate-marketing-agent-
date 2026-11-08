@@ -22,7 +22,7 @@ CREATE INDEX affiliate_schedules_account_niche_idx
 
 CREATE INDEX affiliate_pin_jobs_account_quota_idx
     ON affiliate_pin_jobs (schedule_id, status, locked_at, finished_at)
-    WHERE status IN ('processing', 'succeeded');
+    WHERE status IN ('processing', 'succeeded', 'uncertain');
 
 CREATE OR REPLACE FUNCTION model2_guard_activated_schedule_immutability()
 RETURNS trigger

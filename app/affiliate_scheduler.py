@@ -28,7 +28,7 @@ def _complete_schedule_if_terminal(conn, schedule_id: int) -> None:
         WHERE s.id = %s AND s.status = 'active'
           AND NOT EXISTS (
             SELECT 1 FROM affiliate_pin_jobs j
-            WHERE j.schedule_id = s.id AND j.status IN ('queued', 'processing')
+            WHERE j.schedule_id = s.id AND j.status IN ('queued', 'processing', 'uncertain')
           )
         """,
         (schedule_id,),
@@ -230,7 +230,7 @@ def activate_schedule(schedule_id: int) -> dict[str, object]:
                         SELECT 1 FROM affiliate_pin_jobs j
                         JOIN affiliate_publishing_schedules old_s ON old_s.id = j.schedule_id
                         WHERE old_s.account_id = %s AND old_s.id <> %s
-                          AND j.status IN ('queued', 'processing')
+                          AND j.status IN ('queued', 'processing', 'uncertain')
                     ) AS has_outstanding
                     """,
                     (schedule["account_id"], schedule_id),
@@ -238,7 +238,7 @@ def activate_schedule(schedule_id: int) -> dict[str, object]:
                 if outstanding:
                     raise HTTPException(
                         status_code=409,
-                        detail="A previous schedule still has queued or processing jobs; pause/cancel queued jobs and wait for in-flight work to become terminal.",
+                        detail="A previous schedule has queued, processing, or uncertain jobs. Wait for in-flight work and reconcile uncertain publication outcomes before replacing it.",
                     )
                 active = conn.execute(
                     """
@@ -364,7 +364,7 @@ def run_one_due_job() -> dict[str, object]:
                 WHERE s.status = 'active'
                   AND NOT EXISTS (
                     SELECT 1 FROM affiliate_pin_jobs j
-                    WHERE j.schedule_id = s.id AND j.status IN ('queued', 'processing')
+                    WHERE j.schedule_id = s.id AND j.status IN ('queued', 'processing', 'uncertain')
                   )
                 """
             )
@@ -392,7 +392,7 @@ def run_one_due_job() -> dict[str, object]:
                     FROM affiliate_pin_jobs day_jobs
                     JOIN affiliate_publishing_schedules day_s ON day_s.id = day_jobs.schedule_id
                     WHERE day_s.account_id = s.account_id
-                      AND day_jobs.status IN ('processing', 'succeeded')
+                      AND day_jobs.status IN ('processing', 'succeeded', 'uncertain')
                       AND (
                         CASE
                           WHEN day_jobs.status = 'processing' THEN COALESCE(day_jobs.locked_at, day_jobs.run_at)
@@ -477,7 +477,7 @@ def run_one_due_job() -> dict[str, object]:
                             FROM affiliate_pin_jobs day_jobs
                             JOIN affiliate_publishing_schedules day_s ON day_s.id = day_jobs.schedule_id
                             WHERE day_s.account_id = s.account_id
-                              AND day_jobs.status IN ('processing', 'succeeded')
+                              AND day_jobs.status IN ('processing', 'succeeded', 'uncertain')
                               AND (CASE
                                     WHEN day_jobs.status = 'processing' THEN COALESCE(day_jobs.locked_at, day_jobs.run_at)
                                     ELSE COALESCE(day_jobs.finished_at, day_jobs.run_at)

@@ -131,6 +131,7 @@ def test_model2_scheduler_migration_is_additive_and_preserves_legacy_schedules()
     assert "foreign key (account_id, niche_id)" in sql
     assert "references model2_account_niches (account_id, niche_id)" in sql
     assert "niche_id is null" in sql
+    assert "status in ('processing', 'succeeded', 'uncertain')" in sql
     assert "affiliate_one_active_schedule_per_account_idx" not in sql
     assert "update affiliate_publishing_schedules" not in sql
     assert "delete from affiliate_publishing_schedules" not in sql

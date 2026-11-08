@@ -1803,3 +1803,56 @@ def test_model2_workers_for_different_accounts_claim_independently(model2_db, mo
         (model2_db["account_a"], model2_db["niche_a"]),
         (model2_db["account_b"], model2_db["niche_b"]),
     }
+
+
+
+def test_model2_uncertain_job_consumes_daily_quota_and_blocks_schedule_replacement(model2_db, monkeypatch):
+    from fastapi import HTTPException
+    from app import database, workflow
+    from app.affiliate_scheduler import (
+        activate_schedule,
+        create_draft_schedule,
+        run_one_due_job,
+    )
+
+    old_id, _ = _create_and_activate_model2_schedule(
+        model2_db["account_a"], model2_db["niche_a"], daily_limit=1
+    )
+    with database.connection() as conn:
+        first = conn.execute(
+            "SELECT id, source_id, local_run_date FROM affiliate_pin_jobs WHERE schedule_id = %s ORDER BY id LIMIT 1",
+            (old_id,),
+        ).fetchone()
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE id = %s",
+            (first["id"],),
+        )
+        conn.execute(
+            """
+            INSERT INTO affiliate_pin_jobs
+                (schedule_id, source_id, run_at, local_run_date, daily_slot, idempotency_key)
+            VALUES (%s, %s, now() - interval '30 seconds', %s, 2, %s)
+            """,
+            (old_id, first["source_id"], first["local_run_date"], f"phase9-uncertain-quota-{model2_db['suffix']}"),
+        )
+
+    calls = []
+    def ambiguous(payload, *, idempotency_key):
+        calls.append(idempotency_key)
+        raise HTTPException(status_code=409, detail="publish outcome uncertain")
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", ambiguous)
+
+    result = run_one_due_job()
+    assert result["status"] == "uncertain"
+    # Uncertain is a terminal scheduler state, but it may represent a real Pin.
+    # It must consume today's account quota and cannot be replayed by another job.
+    assert run_one_due_job() == {"claimed": False, "processed": False, "reason": "no_due_job"}
+    assert len(calls) == 1
+
+    # Even on a later local day, unresolved uncertainty blocks replacing the
+    # old schedule until an operator reconciles the publication outcome.
+    new_draft = create_draft_schedule(_model2_schedule_payload(model2_db["account_a"], model2_db["niche_a"]))
+    with pytest.raises(HTTPException) as blocked:
+        activate_schedule(new_draft["schedule_id"])
+    assert blocked.value.status_code == 409
+    assert "uncertain" in blocked.value.detail.casefold()

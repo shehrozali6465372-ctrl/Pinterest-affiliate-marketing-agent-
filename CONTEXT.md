@@ -699,3 +699,15 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - CI recorded all 15 numbered migrations, verified Model 2 and synthetic Model 1 fixtures cleaned, and completed container shutdown. The run included concurrent same-account quota serialization, independent different-account claims, retry idempotency-key preservation and uncertain-outcome quarantine tests.
 - Final local full suite: **283 passed, 56 skipped, 1 non-blocking warning**. Local DB tests were skipped because DB environment variables are unset; PostgreSQL evidence is the CI run above.
 - No production/shared DB migration, live scheduler execution, provider/OAuth action, real Pin/Board, PR, merge or deployment occurred or is authorized. These require separate approval.
+
+
+### Model 2 Phase 10 — Release Readiness PRE-RELEASE / BLOCKED (2026-11-09)
+
+- Started Phase 10 after Phase 9 closure. Review document: `docs/MODEL2-PHASE10-RELEASE-READINESS.md`.
+- Security review identified a quota safety gap: scheduler `uncertain` outcomes may represent an already-created Pin. Hardening now counts `uncertain` in Model 2 account quota, blocks replacement while any unresolved uncertain job exists, and prevents automatic completion of schedules with uncertain jobs. Legacy Model 1 quota semantics remain unchanged. Regression test added. Exact-head CI pending.
+- Uncertain job reconciliation is not implemented in this phase; fail-closed behavior can leave an account blocked. A documented/tested operator reconciliation path is a release blocker. Do not edit production job statuses or assume an uncertain Pin was not created.
+- Existing `.github/workflows/affiliate-scheduler-worker.yml` runs hourly and invokes deployed `/affiliate-scheduler/run-due`; it is a real publication side-effect trigger, not a dry-run. It was not run or changed. Model 2 activation and worker execution require separate explicit owner approval.
+- Migration 014 was applied only in disposable PostgreSQL CI. Production-like sanitized snapshot migration rehearsal, backup/restore rehearsal and schema rollback are not verified. Proposed safe rollback retains the additive schema; dropping migration 014 is not approved.
+- Shared API key remains service authentication, not human identity or multi-tenant isolation. Worker timing is best-effort hourly, at most one job per invocation.
+- R1 fail-closed hardening implemented in `app/affiliate_scheduler.py` and migration 014: Model 2 counts `uncertain` as quota-consuming; uncertain jobs block schedule replacement and automatic completion. Added PostgreSQL integration test and static migration-index assertion. Local full suite after this change: **283 passed, 57 skipped, 1 non-blocking warning**; DB integration skips are due unset local DB environment variables. Exact-head CI pending.
+- Phase 10 remains PRE-RELEASE / BLOCKED pending exact-head CI for R1, tested uncertainty reconciliation/runbook, production-like migration/restore rehearsal, security review and separate owner approvals. No production DB migration, live scheduler action, provider/OAuth action, real Pin/Board, PR, merge or deployment occurred or is authorized.
