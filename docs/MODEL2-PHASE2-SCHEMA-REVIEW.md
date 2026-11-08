@@ -225,3 +225,13 @@ These are review findings, not verified runtime failures: no PostgreSQL instance
 - If migration 013 fails during its transaction, stop and inspect the error; do not manually mark it applied or drop pre-existing Model 1 objects. Correct the migration in a reviewed forward-fix commit and retry on a fresh clone first.
 - If 013 has committed and a later defect is found, prefer a new numbered forward-fix migration with an explicit repair test. Restore the backup only when no post-backup application writes need preservation and owner approves the restore; otherwise forward-fix to avoid discarding live data. Do not run ad-hoc destructive SQL or delete historical attribution/learning rows.
 - Production or any persistent shared database remains out of scope. The only current authorization is temporary GitHub Actions testing and pushing to `feat/model2-open-source-reuse`; production migration requires separate explicit owner approval.
+
+
+## 17. Final isolated PostgreSQL gate — 2026-11-08
+
+- Workflow run `42498159463` on commit `7c83183ba30fad5d4a85687237b6d58c1f46257b` completed successfully on GitHub Actions with PostgreSQL 16.15.
+- Test result: **15 passed, 0 failed, 0 skipped** (6 static + 9 PostgreSQL integration tests). Both concurrency isolation cases passed.
+- Post-test verification passed: `schema_migrations` contains all **14/14 numbered migration files**; synthetic Model 2 credentials, profiles, niches, mappings, learning snapshots, sources, attributions and synthetic Model 1 analytics/publications/products/content rows all have zero leftovers after fixture teardown.
+- The test target preflight passed with `DATABASE_URL` empty and `TEST_DATABASE_URL` restricted to loopback PostgreSQL database `model2_test`. The PostgreSQL service was ephemeral and stopped at job completion. No Neon/production DB or Pinterest credentials/provider endpoints were involved.
+- Forward-fix/recovery plan is documented in section 16. SQL parse, PL/pgSQL parse, local static tests, YAML parse and diff checks were also previously recorded.
+- **Phase 2 technical exit gates are now satisfied** for the draft schema: migration runner applied the full numbered sequence on a fresh disposable PostgreSQL 16 database; all focused tests and concurrency cases passed; the CI ledger and cleanup gate passed; recovery plan is documented. **Phase 2 is not formally closed yet:** owner acceptance of the final schema contract is still required before Phase 3. No persistent database or production migration is authorized.
