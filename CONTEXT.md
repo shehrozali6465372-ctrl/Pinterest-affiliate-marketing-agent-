@@ -663,3 +663,26 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Uses to_regclass compatibility check so a pre-migration database retains existing Model 1 dashboard behavior. SQL is read-only and does not invoke publisher, scheduler, generator, OAuth or token decryption.
 - Focused dashboard tests: 7 passed. Full local suite: 279 passed, 49 skipped, 1 non-blocking warning. Local PostgreSQL tests skipped because DB env vars are unset.
 - Phase 8 exact-head GitHub Actions disposable PostgreSQL gate pending; do not close before it passes. No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
+
+
+### Model 2 Phase 8 — Read-only Dashboard CLOSED (2026-11-09)
+
+- Phase 8 formally closed. Evidence: docs/MODEL2-PHASE8-READONLY-DASHBOARD.md section 7.
+- Feature branch commit fa8805027578689277103a891cfebffd4c0781a3. GitHub Actions run 42532785414 succeeded: 194 passed, 0 failed, 0 skipped. Link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42532785414
+- All 14 migrations recorded; fixture cleanup verified; disposable PostgreSQL container stopped.
+- Existing signed dashboard session reused. Model 2 read-only API/UI displays profiles, mappings, statuses, successful attributed publication counts and persisted learning evidence; no token/affiliate URL/session secret returned.
+- Pre-013 compatibility verified through to_regclass check; Model 1 dashboard remains available when Model 2 schema absent. No write/provider/scheduler/generation/OAuth side effects.
+- Local full suite: 279 passed, 49 skipped, 1 non-blocking warning.
+- No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
+- Next: Phase 9 — account-aware scheduling design only. Do not modify/activate live scheduler until design is separately reviewed and approved.
+
+
+### Model 2 Phase 9 — Account-aware Scheduling Design DRAFT (2026-11-09)
+
+- Phase 8 formally closed. CI run 42532785414, commit fa8805027578689277103a891cfebffd4c0781a3: 194 passed, 0 failed, 0 skipped; all 14 migrations and cleanup verified.
+- Phase 9 current design: docs/MODEL2-PHASE9-ACCOUNT-AWARE-SCHEDULING.md.
+- Existing scheduler inventory: app/affiliate_scheduler.py; migration 009; one active schedule per account; one job per schedule/local date/slot; persistent idempotency key; draft activation only enqueues; worker uses FOR UPDATE SKIP LOCKED and quarantines stale processing as uncertain.
+- Current scheduler does not pass niche_id to ProductWorkflowInput and enforces daily quota only per schedule/local_run_date. Schedule timezone is independently selected; account_id validation is only nonblank.
+- Recommended safe first Model 2 design: explicit niche_id per schedule, keep one active schedule per account, keep legacy NULL-niche schedules unchanged, use account profile timezone, account-wide quota across prior schedules, block schedule replacement while prior in-flight jobs remain, pass exact niche_id through existing workflow/gateway, no Board creation.
+- Phase 9 is DESIGN DRAFT only. No scheduler code, migration, queue execution or live scheduling has been changed. Owner decision pending: accept one active schedule per account (one active niche at a time) or request concurrent multi-niche schedules with a separately designed shared quota/locking model.
+- No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.

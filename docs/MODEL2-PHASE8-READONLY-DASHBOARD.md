@@ -1,6 +1,6 @@
 # Model 2 Phase 8 — Read-only Dashboard
 
-**Status:** IN PROGRESS — read-only extension implemented; local dashboard regression tests pass; disposable PostgreSQL CI gate pending.
+**Status:** CLOSED / VERIFIED — 2026-11-09.
 **Started:** 2026-11-09
 **Architecture authority:** docs/MODEL2-FOUNDATION.md (FROZEN)
 **Prerequisites:** Phases 6 and 7 closed.
@@ -76,3 +76,35 @@ Implemented in the isolated Model 2 feature worktree:
 - Exact-head disposable PostgreSQL CI remains pending. Phase 8 is not closed until it passes.
 
 No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment occurred.
+
+
+## 7. Final CI evidence and Phase 8 closure — 2026-11-09
+
+**Phase 8 — CLOSED / VERIFIED.**
+
+Authoritative GitHub Actions run:
+- Run: 42532785414
+- Commit: fa8805027578689277103a891cfebffd4c0781a3
+- Branch: feat/model2-open-source-reuse
+- Result: **194 passed, 0 failed, 0 skipped** in the selected CI test step; one non-blocking Starlette/httpx TestClient deprecation warning.
+- Disposable PostgreSQL 16 service used by GitHub Actions only.
+- All 14 numbered migrations recorded.
+- Independent cleanup verified zero Model 2 fixture rows and zero synthetic Model 1 test rows.
+- Ephemeral PostgreSQL container stopped successfully.
+
+Exit review:
+- Existing authenticated dashboard session reused; no new auth/frontend stack.
+- Protected Model 2 dashboard endpoint and UI panel are read-only.
+- Profiles without mappings and paused/archived state are visible. Account/niche aggregates are isolated and avoid join fan-out.
+- Only persisted snapshots and explicit immutable attributions are displayed; missing metrics remain visibly Unknown.
+- to_regclass compatibility check preserves Model 1 dashboard when migration 013 is absent.
+- No token material, affiliate URLs, cookies, API keys or session signatures are returned.
+- No publishing, scheduling, generation, OAuth, credential decryption or projection is triggered by dashboard reads.
+
+Local full suite: 279 passed, 49 skipped, 1 non-blocking warning. PostgreSQL integration tests skipped locally because DB environment variables were unset; CI ran the disposable PostgreSQL suite without skips.
+
+No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment occurred.
+
+**Phase 8 exit gates satisfied. Phase 8 is formally closed.**
+
+Next: Phase 9 — Account-aware Scheduling Design. This is a design/review phase only; no live scheduler, queue, schedule activation or Pinterest publishing change is authorized by this phase.
