@@ -205,3 +205,23 @@ These are review findings, not verified runtime failures: no PostgreSQL instance
   2. The concurrency test used dictionary-style row access on direct `psycopg.connect()` connections, whose default row factory returns tuples. The second writer therefore failed before signaling readiness. Corrected both PID and blocker-count reads to positional tuple access.
 - Latest local verification after these corrections: **6 static tests passed, 9 PostgreSQL integration tests skipped** (local PostgreSQL remains unavailable); Python compilation and `git diff --check` passed. Corrected database cases are not yet verified on a PostgreSQL server.
 - Next: push only the corrected test and evidence notes to the same Model 2 feature branch, then inspect the third workflow run. Phase 2 remains **IN PROGRESS / NOT CLOSED**.
+
+
+## 15. Third GitHub PostgreSQL run — concurrency regression passes — 2026-11-08
+
+- Third workflow run `42497944796` on commit `eceecc2be3bbc6d93700eb590d27de332a5c2d04` completed successfully: **15 passed, 0 failed, 0 skipped** on a healthy GitHub-hosted PostgreSQL 16.15 service.
+- This includes all 6 static migration tests and all 9 PostgreSQL integration cases, including the two-connection race tests under READ COMMITTED and REPEATABLE READ. The test fixture calls the repository's actual `database.run_migrations()` against the fresh disposable service; all test cases completed.
+- The first CI run exposed a deferred-count setup issue; the second exposed a mistaken expectation that a second non-primary niche assignment should be rejected and tuple-vs-dict row access in the concurrency probe. Both were corrected without changing migration SQL. Third run is the first full green database run.
+- Added one final workflow gate after the green run: compare `schema_migrations` against every numbered migration file and query for leftover test account/niche/learning/analytics/publication/product/content rows. This makes migration-ledger completeness and fixture cleanup explicit rather than inferred only from pytest completion. YAML and embedded Python parse/compile locally; this new post-test gate awaits its own GitHub run.
+- Current Phase 2 status remains **IN PROGRESS / NOT CLOSED** until the new ledger/cleanup workflow gate passes, forward-fix recovery plan is documented, and owner explicitly accepts the schema contract. No migration was applied to any non-disposable database.
+
+
+## 16. Forward-fix and recovery plan — 2026-11-08
+
+- Migration 013 is additive: it creates Model 2 registry/attribution/learning tables, supporting indexes, functions and triggers. It does not backfill legacy publication rows or mutate credential, scheduler, publication or raw analytics data. No down-migration is supplied; do not invent a destructive rollback.
+- The repository migration runner uses one pooled PostgreSQL connection and one transaction for the migration invocation; it records each migration version only after that migration SQL succeeds. A SQL error before transaction completion should roll back the invocation's uncommitted DDL and ledger writes. This behavior follows from the current runner's transaction boundary; verify again if runner behavior changes.
+- Disposable CI recovery: the service database is ephemeral and destroyed with the job. On any failure, preserve the logs and fix the migration/test forward in the feature branch; rerun from a fresh PostgreSQL 16 service.
+- Before any future non-disposable application (not currently authorized): take and verify a restorable database snapshot/backup; rehearse the exact migration sequence on a restored isolated clone; verify all prior migration ledger entries and the 013 schema objects; record the target commit, DB identity, backup identifier and operator approval; then apply through the repository migration runner in a separately approved maintenance window.
+- If migration 013 fails during its transaction, stop and inspect the error; do not manually mark it applied or drop pre-existing Model 1 objects. Correct the migration in a reviewed forward-fix commit and retry on a fresh clone first.
+- If 013 has committed and a later defect is found, prefer a new numbered forward-fix migration with an explicit repair test. Restore the backup only when no post-backup application writes need preservation and owner approves the restore; otherwise forward-fix to avoid discarding live data. Do not run ad-hoc destructive SQL or delete historical attribution/learning rows.
+- Production or any persistent shared database remains out of scope. The only current authorization is temporary GitHub Actions testing and pushing to `feat/model2-open-source-reuse`; production migration requires separate explicit owner approval.

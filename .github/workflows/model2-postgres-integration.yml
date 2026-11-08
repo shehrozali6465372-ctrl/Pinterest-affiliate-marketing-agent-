@@ -76,3 +76,38 @@ jobs:
           python -m pytest -q
           tests/test_model2_registry_migration.py
           tests/test_model2_registry_postgres.py
+
+      - name: Verify full migration ledger and fixture cleanup
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import psycopg
+          from psycopg.rows import dict_row
+
+          expected = sorted(p.name for p in Path("migrations").glob("[0-9]*.sql"))
+          with psycopg.connect(os.environ["TEST_DATABASE_URL"], row_factory=dict_row) as conn:
+              applied = [row["version"] for row in conn.execute(
+                  "SELECT version FROM schema_migrations ORDER BY version"
+              )]
+              assert applied == expected, f"migration ledger mismatch: applied={applied}, expected={expected}"
+
+              checks = {
+                  "credentials": "SELECT count(*) AS n FROM pinterest_credentials WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "profiles": "SELECT count(*) AS n FROM model2_account_profiles WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "niches": "SELECT count(*) AS n FROM model2_niches WHERE slug LIKE 'test-niche-%' OR slug LIKE 'second-primary-%'",
+                  "mappings": "SELECT count(*) AS n FROM model2_account_niches WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "learning": "SELECT count(*) AS n FROM model2_learning_snapshots WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "sources": "SELECT count(*) AS n FROM model2_learning_snapshot_sources",
+                  "attributions": "SELECT count(*) AS n FROM model2_publication_niche_attributions",
+                  "analytics": "SELECT count(*) AS n FROM pin_analytics_snapshots WHERE pinterest_pin_id LIKE 'model2-test-pin-%'",
+                  "publications": "SELECT count(*) AS n FROM pin_publications WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "products": "SELECT count(*) AS n FROM products WHERE product_name LIKE 'Model2 test product %'",
+                  "content_versions": "SELECT count(*) AS n FROM content_versions cv JOIN products p ON p.id = cv.product_id WHERE p.product_name LIKE 'Model2 test product %'",
+              }
+              leftovers = {name: conn.execute(query).fetchone()["n"] for name, query in checks.items()}
+              assert all(count == 0 for count in leftovers.values()), f"test fixture data remains: {leftovers}"
+
+          print(f"Verified all {len(expected)} numbered migrations are recorded.")
+          print("Verified all Model 2 fixture rows and synthetic Model 1 test rows were cleaned.")
+          PY
