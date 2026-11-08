@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ import pytest
 
 from app import database
 from app.model2_domain import AccountNicheAssignmentInput, AccountProfileInput, NicheInput
+from app.model2_learning import create_learning_snapshot, list_learning_snapshots
 from app.model2_repository import (
     Model2AccountNotConnectedError,
     Model2ConflictError,
@@ -1088,3 +1090,326 @@ def test_model2_publication_reservation_requires_connected_credential(model2_db)
         niche_id=model2_db["niche_a"],
     )
     assert result == {"blocked": True, "niche_account_not_connected": True}
+
+
+def _model2_pin_with_raw_analytics(
+    model2_db,
+    *,
+    label,
+    account_id,
+    niche_id,
+    period_start,
+    period_end,
+    metrics,
+):
+    suffix = model2_db["suffix"]
+    product = database.create_product(
+        product_name=f"Model2 test product {suffix} {label}",
+        product_details="Disposable analytics projection fixture.",
+        image_url="https://example.invalid/model2-learning-fixture.png",
+        affiliate_url="https://example.invalid/model2-learning",
+        idempotency_key=f"model2-learning-{suffix}-{label}",
+    )
+    content = database.create_content_version(
+        product_id=product["id"],
+        provider="test-stub",
+        model_id="model2-learning-test",
+        prompt_version="model2-learning-test",
+        pin_idea="fixture only",
+        title="fixture only",
+        description="fixture only",
+        alt_text="fixture only",
+    )
+    board_id = f"test-board-{suffix}-{label}"
+    reservation_kwargs = {
+        "product_id": product["id"],
+        "content_version_id": content["id"],
+        "board_id": board_id,
+        "account_id": account_id,
+    }
+    if niche_id is not None:
+        reservation_kwargs["niche_id"] = niche_id
+    reserved = database.begin_publish_attempt(**reservation_kwargs)
+    assert reserved["blocked"] is False
+
+    pin_id = f"model2-test-pin-{suffix}-{label}"
+    database.finish_publish_attempt(
+        reserved["id"],
+        status="succeeded",
+        pinterest_pin_id=pin_id,
+        http_status=201,
+    )
+    with database.connection() as conn:
+        raw = conn.execute(
+            """
+            INSERT INTO pin_analytics_snapshots
+                (publication_id, pinterest_pin_id, period_start, period_end, metrics)
+            VALUES (%s, %s, %s, %s, %s::jsonb)
+            RETURNING id
+            """,
+            (
+                reserved["id"], pin_id, period_start, period_end,
+                __import__("json").dumps(metrics),
+            ),
+        ).fetchone()
+    return {
+        "publication_id": reserved["id"],
+        "analytics_snapshot_id": raw["id"],
+        "pin_id": pin_id,
+        "product_id": product["id"],
+        "content_version_id": content["id"],
+    }
+
+
+def test_model2_learning_projection_is_account_niche_period_scoped_and_immutable(model2_db):
+    period_start = date(2026, 10, 1)
+    period_end = date(2026, 10, 30)
+    first_metrics = {
+        "impression": 100,
+        "save": 10,
+        "pin_click": None,
+        "outbound_click": 4,
+    }
+    second_metrics = {
+        "impression": 50,
+        "save": 5,
+        "pin_click": 2,
+        "outbound_click": 1,
+    }
+    first = _model2_pin_with_raw_analytics(
+        model2_db,
+        label="projection-a1",
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=period_start,
+        period_end=period_end,
+        metrics=first_metrics,
+    )
+    second = _model2_pin_with_raw_analytics(
+        model2_db,
+        label="projection-a2",
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=period_start,
+        period_end=period_end,
+        metrics=second_metrics,
+    )
+    # Same account, different niche must not leak into this projection.
+    _model2_pin_with_raw_analytics(
+        model2_db,
+        label="projection-b",
+        account_id=model2_db["account_b"],
+        niche_id=model2_db["niche_b"],
+        period_start=period_start,
+        period_end=period_end,
+        metrics={"impression": 1000, "save": 100, "pin_click": 50, "outbound_click": 25},
+    )
+    # Same account+niche but a different raw observation period is excluded.
+    _model2_pin_with_raw_analytics(
+        model2_db,
+        label="projection-other-period",
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=date(2026, 10, 2),
+        period_end=period_end,
+        metrics={"impression": 900, "save": 90, "pin_click": 40, "outbound_click": 20},
+    )
+    # Real raw analytics without explicit niche attribution are excluded.
+    _model2_pin_with_raw_analytics(
+        model2_db,
+        label="projection-unattributed",
+        account_id=model2_db["account_a"],
+        niche_id=None,
+        period_start=period_start,
+        period_end=period_end,
+        metrics={"impression": 800, "save": 80, "pin_click": 30, "outbound_click": 15},
+    )
+
+    snapshot = create_learning_snapshot(
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    assert snapshot["created"] is True
+    assert snapshot["sample_size"] == 2
+    assert snapshot["source_snapshot_count"] == 2
+    assert snapshot["learning_status"] == "descriptive_only"
+    assert snapshot["metrics"] == {
+        "impression": 150,
+        "save": 15,
+        "pin_click": None,
+        "outbound_click": 5,
+    }
+
+    with database.connection() as conn:
+        sources = conn.execute(
+            """
+            SELECT analytics_snapshot_id, publication_id, source_metrics
+            FROM model2_learning_snapshot_sources
+            WHERE learning_snapshot_id = %s
+            ORDER BY analytics_snapshot_id
+            """,
+            (snapshot["snapshot_id"],),
+        ).fetchall()
+    assert {row["analytics_snapshot_id"] for row in sources} == {
+        first["analytics_snapshot_id"],
+        second["analytics_snapshot_id"],
+    }
+    captured = {row["publication_id"]: row["source_metrics"] for row in sources}
+    assert captured[first["publication_id"]] == first_metrics
+    assert captured[second["publication_id"]] == second_metrics
+
+    # Model 1 refreshes raw analytics in place; Model 2 source lineage stays immutable.
+    with database.connection() as conn:
+        conn.execute(
+            """
+            UPDATE pin_analytics_snapshots
+            SET metrics = '{"impression":999,"save":999,"pin_click":999,"outbound_click":999}'::jsonb
+            WHERE id = %s
+            """,
+            (first["analytics_snapshot_id"],),
+        )
+        raw_after_refresh = conn.execute(
+            "SELECT metrics FROM pin_analytics_snapshots WHERE id = %s",
+            (first["analytics_snapshot_id"],),
+        ).fetchone()["metrics"]
+        source_after_refresh = conn.execute(
+            """
+            SELECT source_metrics FROM model2_learning_snapshot_sources
+            WHERE learning_snapshot_id = %s AND analytics_snapshot_id = %s
+            """,
+            (snapshot["snapshot_id"], first["analytics_snapshot_id"]),
+        ).fetchone()["source_metrics"]
+    assert raw_after_refresh["impression"] == 999
+    assert source_after_refresh == first_metrics
+
+    # Same exact period is idempotent and returns the first immutable evidence.
+    repeated = create_learning_snapshot(
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=period_start,
+        period_end=period_end,
+    )
+    assert repeated["created"] is False
+    assert repeated["snapshot_id"] == snapshot["snapshot_id"]
+    assert repeated["metrics"] == snapshot["metrics"]
+    assert repeated["source_snapshot_count"] == 2
+
+    listed_a = list_learning_snapshots(
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    listed_b = list_learning_snapshots(
+        account_id=model2_db["account_b"],
+        niche_id=model2_db["niche_b"],
+    )
+    assert [row["snapshot_id"] for row in listed_a] == [snapshot["snapshot_id"]]
+    assert listed_b == []
+
+
+def test_model2_learning_projection_without_attributed_raw_rows_is_not_persisted(model2_db):
+    result = create_learning_snapshot(
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=date(2026, 9, 1),
+        period_end=date(2026, 9, 30),
+    )
+
+    assert result["snapshot_id"] is None
+    assert result["learning_status"] == "insufficient_data"
+    assert result["sample_size"] == 0
+    assert result["source_snapshot_count"] == 0
+    assert all(value is None for value in result["metrics"].values())
+
+    with database.connection() as conn:
+        count = conn.execute(
+            """
+            SELECT count(*) AS n FROM model2_learning_snapshots
+            WHERE account_id = %s AND niche_id = %s
+              AND period_start = DATE '2026-09-01'
+              AND period_end = DATE '2026-09-30'
+            """,
+            (model2_db["account_a"], model2_db["niche_a"]),
+        ).fetchone()["n"]
+    assert count == 0
+
+
+def test_model2_learning_projection_requires_exact_existing_assignment(model2_db):
+    with pytest.raises(Model2NotFoundError):
+        create_learning_snapshot(
+            account_id=model2_db["account_a"],
+            niche_id=model2_db["niche_b"],
+            period_start=date(2026, 10, 1),
+            period_end=date(2026, 10, 30),
+        )
+
+
+def test_model2_learning_projection_preserves_historical_attribution_after_pause_and_archive(model2_db):
+    period_start = date(2026, 10, 1)
+    period_end = date(2026, 10, 30)
+    _model2_pin_with_raw_analytics(
+        model2_db,
+        label="projection-historical-paused",
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=period_start,
+        period_end=period_end,
+        metrics={"impression": 12, "save": 2, "pin_click": 1, "outbound_click": 1},
+    )
+    with database.connection() as conn:
+        conn.execute(
+            """
+            UPDATE model2_account_niches SET status = 'paused'
+            WHERE account_id = %s AND niche_id = %s
+            """,
+            (model2_db["account_a"], model2_db["niche_a"]),
+        )
+        conn.execute(
+            "UPDATE model2_niches SET status = 'archived' WHERE id = %s",
+            (model2_db["niche_a"],),
+        )
+
+    snapshot = create_learning_snapshot(
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    assert snapshot["created"] is True
+    assert snapshot["sample_size"] == 1
+    assert snapshot["metrics"]["impression"] == 12
+
+
+def test_model2_learning_projection_excludes_pending_publication_even_if_raw_row_exists(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "projection-pending")
+    board_id = f"test-board-{model2_db['suffix']}-projection-pending"
+    reserved = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    with database.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO pin_analytics_snapshots
+                (publication_id, pinterest_pin_id, period_start, period_end, metrics)
+            VALUES (%s, %s, DATE '2026-10-01', DATE '2026-10-30',
+                    '{"impression":50,"save":5,"pin_click":1,"outbound_click":2}'::jsonb)
+            """,
+            (reserved["id"], f"model2-test-pin-{model2_db['suffix']}-pending"),
+        )
+
+    result = create_learning_snapshot(
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=date(2026, 10, 1),
+        period_end=date(2026, 10, 30),
+    )
+
+    assert result["snapshot_id"] is None
+    assert result["learning_status"] == "insufficient_data"

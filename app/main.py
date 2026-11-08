@@ -81,6 +81,9 @@ app.include_router(trend_visuals_router)
 from app.model2_registry import router as model2_registry_router
 app.include_router(model2_registry_router)
 
+from app.model2_learning import router as model2_learning_router
+app.include_router(model2_learning_router)
+
 
 # Backwards-compatible name for publication-changing routes; one auth implementation.
 require_configured_api_key = require_api_key

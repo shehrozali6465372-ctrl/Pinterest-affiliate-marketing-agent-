@@ -616,3 +616,27 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Local full suite: 256 passed, 43 skipped, 1 warning. CI executed the disposable PostgreSQL integration suite with no skips.
 - No real Pin/Board, Pinterest API write, OAuth refresh, production DB/migration, PR, merge or deployment occurred.
 - Next: Phase 7 — Niche Analytics Projection. Reuse Model 1 raw analytics and immutable Model 2 publication attribution, preserve exact source lineage, missing metrics remain unknown (not zero), read-only descriptive aggregates only.
+
+
+### Model 2 Phase 7 — Niche Analytics Projection IN PROGRESS (2026-11-09)
+
+- Phase 6 is formally closed. Phase 7 design and implementation checkpoint: docs/MODEL2-PHASE7-NICHE-ANALYTICS.md.
+- Reuses existing pin_analytics_snapshots, pin_publications, immutable model2_publication_niche_attributions, model2_learning_snapshots and model2_learning_snapshot_sources. No new migration, raw analytics table, dependency, ML framework or provider integration.
+- Added app/model2_learning.py with exact account+niche+period projection, four-metric completeness-aware aggregation, immutable source lineage, idempotent same-period behavior, and protected POST/GET endpoints registered in app.main.
+- Only confirmed succeeded publications with matching Pinterest Pin ID and exact niche attribution are included. Current paused/archived mapping state does not erase historical evidence.
+- Source analytics/publication rows are locked FOR SHARE through transaction; trigger captures exact raw JSONB values. Missing metrics remain NULL, not zero. No eligible raw rows returns insufficient_data without storing an empty snapshot.
+- Added unit/API tests and PostgreSQL tests for attribution/account/period isolation, source capture, Model 1 raw refresh immutability, idempotency, pending publication exclusion and historical paused/archived evidence.
+- Local focused projection/API tests: 18 passed, 28 PostgreSQL tests skipped. Full local suite: 274 passed, 48 skipped, 1 warning. Local DB variables are unset; no database was contacted.
+- CI workflow includes all new projection tests. Phase 7 remains open until exact-head GitHub Actions PostgreSQL integration and fixture cleanup pass.
+- No production DB/migration, provider/OAuth action, Pinterest write, Pin/Board, PR, merge or deployment.
+
+
+### Model 2 Phase 7 — Niche Analytics Projection IN PROGRESS (2026-11-09)
+
+- Phase 6 is formally closed and pushed to feat/model2-open-source-reuse at commit 96a2338. Phase 6 CI evidence: run 42531360160, commit f8700286cd286a4601bc3d5afcf40500584fafef, 162 passed, 0 failed, 0 skipped; all 14 migrations recorded and fixture cleanup verified.
+- Phase 7 implementation is documented in docs/MODEL2-PHASE7-NICHE-ANALYTICS.md.
+- Added app/model2_learning.py with protected projection/read APIs, exact account+niche+period filtering, successful publication and matching Pinterest Pin ID checks, immutable source lineage, idempotency and descriptive metric aggregation.
+- Missing/null metric values remain unknown (not zero); any incomplete source makes that metric aggregate NULL. Unsupported keys, booleans, non-numeric, negative and non-finite values are rejected.
+- Raw analytics/publication rows are locked FOR SHARE during source selection; migration 013 source trigger captures exact raw metrics into immutable lineage.
+- Local full suite: 274 passed, 48 skipped, 1 non-blocking warning. PostgreSQL tests skipped because local database env vars are unset; no database was contacted.
+- GitHub Actions Phase 7 disposable PostgreSQL gate and cleanup verification remain pending. Do not close Phase 7 until exact feature-branch head CI passes. No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
