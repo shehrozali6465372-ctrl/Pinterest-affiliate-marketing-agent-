@@ -555,3 +555,27 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Full repository run after implementation: **218 passed, 34 skipped, 1 warning**. Database integration gates intentionally skipped; no DATABASE_URL, TEST_DATABASE_URL or PB10_TEST_DATABASE_URL was set. No DB was contacted.
 - The 7 new PostgreSQL repository scenarios still require the dedicated disposable PostgreSQL 16 GitHub Actions run. Phase 4 is NOT closed until that CI evidence and cleanup gate pass.
 - No production DB, migration, provider/OAuth action, Pin/Board, commit, push, PR, merge or deployment has occurred for Phase 4 at this checkpoint.
+
+
+### Model 2 Phase 4 — Repository Layer CLOSED (2026-11-09)
+
+- Phase 4 is formally closed; final evidence and review are in \`docs/MODEL2-PHASE4-REPOSITORY-LAYER.md\` section 8.
+- Commit \`20109276ad9ce5f3c6b9844b74aa57c23d37e660\` was pushed only to \`feat/model2-open-source-reuse\`.
+- Authoritative GitHub Actions run **42526560689** succeeded: **67 passed, 0 failed, 0 skipped** on disposable PostgreSQL 16.15. Run link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42526560689
+- All 14 numbered migrations were recorded; post-test cleanup verified zero fixture rows across Model 2 registry/learning tables and synthetic Model 1 publication/analytics/product/content tables. The ephemeral PostgreSQL service was stopped.
+- Phase 4 reused the existing Psycopg pool/transaction boundary. Credential-state validation is metadata-only (\`SELECT account_id ... status='connected' FOR SHARE\`); no token/ciphertext read, decryption or OAuth refresh. Assignment writes lock the account profile row; CI proved concurrent primary selection leaves exactly one active primary. Profile pause and niche archive pause mappings without deleting history. Listing is scoped by exact account ID.
+- Local full repository suite after Phase 4 implementation: **218 passed, 34 skipped, 1 warning**. CI provides the actual PostgreSQL integration coverage.
+- No Neon/production DB, migration, OAuth/provider action, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
+- **Next: Phase 5 — Protected Registry API.** Reuse existing fail-closed service API-key authentication and router registration; do not invent human actor IDs or multi-tenant ownership. Test auth failure, account scoping, state conflicts, and absence of provider writes.
+
+### Model 2 Phase 5 — Protected Registry API IN PROGRESS (2026-11-09)
+
+- Phase 4 is formally closed; PostgreSQL CI evidence is GitHub Actions run 42526560689 (67 passed, 0 failed, 0 skipped; 14 migrations recorded; zero test fixtures left).
+- Phase 5 design and current implementation are documented in docs/MODEL2-PHASE5-PROTECTED-API.md.
+- Added shared fail-closed service-key dependency app/auth.py; app.main.require_api_key imports/re-exports it and require_configured_api_key remains a compatibility alias. Existing Model 1 API tests pass after this auth consolidation.
+- Added app/model2_registry.py, a protected /model2 router using the Phase 3 domain contracts and Phase 4 repositories only. Endpoints cover account profiles, niches and account–niche assignments; no delete, provider, OAuth or publishing endpoint.
+- Response models are explicit allowlists with extra="forbid". Request validation enforces path/body identity equality and explicit lifecycle fields on PUT to prevent accidental reactivation/default resets.
+- Added tests/test_model2_registry_api.py for authentication, canonical IDs, path/body mismatch, state/error mapping, response safety, exact account scoping and no publisher invocation.
+- Focused API/domain/repository run: 64 passed, 1 warning. Existing Model 1 API regression suite: 40 passed, 1 warning. Full repository suite: 237 passed, 34 skipped, 1 warning. Database tests skipped locally because DB env vars are unset.
+- Dedicated GitHub Actions workflow has been expanded to run Model 2 API tests and existing Model 1 API regressions alongside the disposable PostgreSQL tests. CI for the new Phase 5 changes is pending.
+- Phase 5 is NOT closed until feature-branch CI passes on the exact API commit and verifies no provider/production side effects.

@@ -76,6 +76,8 @@ jobs:
           python -m pytest -q
           tests/test_model2_domain.py
           tests/test_model2_repository.py
+          tests/test_model2_registry_api.py
+          tests/test_api.py
           tests/test_model2_registry_migration.py
           tests/test_model2_registry_postgres.py
 

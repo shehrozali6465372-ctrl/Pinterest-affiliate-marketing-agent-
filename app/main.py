@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
+from app.auth import require_api_key
 from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
 from app.publishing_gateway import publish_pin
 
@@ -77,23 +78,12 @@ app.include_router(trends_router)
 from app.trend_visuals import router as trend_visuals_router
 app.include_router(trend_visuals_router)
 
-
-def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    """Fail closed: operational endpoints require a configured and valid API key."""
-    if not settings.app_api_key:
-        raise HTTPException(status_code=503, detail="API authentication is not configured.")
-    if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+from app.model2_registry import router as model2_registry_router
+app.include_router(model2_registry_router)
 
 
-def require_configured_api_key(
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> None:
-    """Fail closed for publication-changing and operator endpoints if APP_API_KEY is missing."""
-    if not settings.app_api_key:
-        raise HTTPException(status_code=503, detail="API authentication is not configured.")
-    if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+# Backwards-compatible name for publication-changing routes; one auth implementation.
+require_configured_api_key = require_api_key
 
 
 class ProductInput(BaseModel):

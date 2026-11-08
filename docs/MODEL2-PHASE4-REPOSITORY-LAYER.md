@@ -98,3 +98,36 @@ Phase 4 remains IN PROGRESS until:
 4. Security review confirms all reads/writes are account-scoped, token metadata lookup is non-decrypting, and primary assignment concurrency is proven.
 
 Next after Phase 4: Phase 5 — Protected Registry API. No API routes are added in Phase 4.
+
+
+## 8. Final PostgreSQL evidence and Phase 4 closure — 2026-11-09
+
+**Phase 4 — CLOSED / VERIFIED.**
+
+Authoritative GitHub Actions run:
+- Run: [42526560689](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42526560689)
+- Commit: \`20109276ad9ce5f3c6b9844b74aa57c23d37e660\`
+- Branch: \`feat/model2-open-source-reuse\`
+- Result: **67 passed, 0 failed, 0 skipped**.
+- PostgreSQL service: disposable PostgreSQL 16.15 on GitHub-hosted runner.
+- The test step passed, followed by the separate migration-ledger and cleanup step.
+- All 14 numbered migration files were recorded in \`schema_migrations\`.
+- Cleanup verified zero remaining synthetic credentials, Model 2 profiles/niches/mappings/learning data/attributions/sources, and synthetic Model 1 analytics/publication/product/content-version rows.
+- The ephemeral PostgreSQL service container was stopped and removed after the job.
+
+The 67 tests include the Phase 3 domain suite, Phase 4 repository unit suite, static migration tests, and all 16 PostgreSQL registry integration cases. The seven added repository integration scenarios all passed, including the two-connection concurrent primary-selection test.
+
+### Final review
+
+- Repository code reuses the existing Psycopg pool and transaction context; no second pool, ORM or migration was introduced.
+- Credential existence/state is checked by metadata-only \`SELECT account_id ... status='connected' FOR SHARE\`. No ciphertext/token fields are selected; no encryption key is required; no OAuth refresh path is reachable.
+- Active assignment writes lock the exact account profile row before checking account, niche and credential state. Primary changes are atomic; concurrent primary selection is covered by the PostgreSQL integration test.
+- Profile pause and niche archival pause active mappings without deleting rows or historical evidence.
+- Account assignment listing is scoped by exact canonical account ID.
+- All repository SQL uses bound parameters. No caller-supplied ID is treated as a human identity or proof of multi-tenant ownership.
+- Full local repository regression run remains **218 passed, 34 skipped, 1 warning**; database skips were intentionally gated locally. CI supplied the authoritative PostgreSQL coverage.
+- No production/Neon database, production migration, provider/OAuth action, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
+
+**Phase 4 exit gates are satisfied. Phase 4 is formally closed.**
+
+**Next: Phase 5 — Protected Registry API.** The next phase must reuse existing fail-closed API-key authentication and router registration. Every registry write must be explicit and protected; account ID remains an identifier, not a human actor. API tests must cover missing/invalid authentication, account-scoped reads, cross-account denial at the repository boundary, state conflicts, and prove no Pinterest/provider writes occur.
