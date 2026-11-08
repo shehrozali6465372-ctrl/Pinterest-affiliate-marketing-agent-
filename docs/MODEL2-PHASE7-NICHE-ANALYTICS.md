@@ -1,6 +1,6 @@
 # Model 2 Phase 7 — Niche Analytics Projection
 
-**Status:** IN PROGRESS — implementation added; local unit/API suite passes; disposable PostgreSQL CI gate pending.
+**Status:** CLOSED / VERIFIED — 2026-11-09.
 **Started:** 2026-11-09
 **Architecture authority:** docs/MODEL2-FOUNDATION.md (FROZEN)
 **Prerequisite:** Phase 6 closed; see docs/MODEL2-PHASE6-NICHE-CONTEXT.md.
@@ -105,3 +105,34 @@ Implemented in the isolated Model 2 feature worktree:
 - Disposable PostgreSQL execution for the new Phase 7 integration cases remains pending in GitHub Actions. Phase 7 remains IN PROGRESS until exact-head CI and fixture cleanup pass.
 
 No production DB, migration, provider call, OAuth action, real Pin/Board, PR, merge or deployment has occurred.
+
+
+## 8. Final CI evidence and Phase 7 closure — 2026-11-09
+
+**Phase 7 — CLOSED / VERIFIED.**
+
+Authoritative GitHub Actions run:
+- Run: 42532367227
+- Commit: f918c6bfe4cf55113216f9bdc71f2f614397649f
+- Branch: feat/model2-open-source-reuse
+- Result: **186 passed, 0 failed, 0 skipped** in the selected CI test step; one non-blocking Starlette/httpx TestClient deprecation warning.
+- Disposable PostgreSQL 16 service used by GitHub Actions only.
+- All 14 numbered migrations recorded.
+- Independent post-test cleanup verified zero Model 2 fixture rows and zero synthetic Model 1 test rows.
+- Ephemeral PostgreSQL service container stopped successfully.
+
+Exit review:
+- Exact account+niche+period projection; only successful, exact Pin-ID-matched publications with immutable niche attribution are included.
+- Raw analytics and publication rows are locked FOR SHARE while the source rows are selected. Exact raw metrics are copied into immutable Model 2 source lineage.
+- Metric sums are complete-only; missing/null remains unknown, never zero. Unsupported keys, booleans, non-numeric, negative and non-finite values are rejected.
+- sample_size counts distinct publications; source_snapshot_count counts raw analytics rows.
+- Same-period projection is idempotent; empty periods return insufficient_data without persisting an empty aggregate. Historical attribution remains queryable after assignment pause/niche archive.
+- Protected read/write API tests and PostgreSQL integration tests passed. No provider/publisher call is part of projection.
+
+Local full suite: 274 passed, 48 skipped, 1 non-blocking warning. Local DB integration was skipped because DB env vars were unset; the disposable CI PostgreSQL gate ran without skips.
+
+No production DB/migration, Pinterest API write, OAuth action, real Pin/Board, PR, merge or deployment occurred.
+
+**Phase 7 exit gates satisfied. Phase 7 is formally closed.**
+
+Next: Phase 8 — Read-only Dashboard. Extend the existing authenticated dashboard only; expose non-secret account profiles, account–niche mappings and evidence-backed aggregates. Do not create a new frontend, auth system or data pipeline.

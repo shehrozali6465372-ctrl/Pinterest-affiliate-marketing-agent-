@@ -80,6 +80,8 @@ jobs:
           tests/test_model2_niche_context.py
           tests/test_model2_learning.py
           tests/test_model2_learning_api.py
+          tests/test_model2_dashboard.py
+          tests/test_dashboard.py
           tests/test_deepseek_completion.py
           tests/test_api.py
           tests/test_model2_registry_migration.py

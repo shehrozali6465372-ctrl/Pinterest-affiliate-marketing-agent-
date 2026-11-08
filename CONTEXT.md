@@ -640,3 +640,26 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Raw analytics/publication rows are locked FOR SHARE during source selection; migration 013 source trigger captures exact raw metrics into immutable lineage.
 - Local full suite: 274 passed, 48 skipped, 1 non-blocking warning. PostgreSQL tests skipped because local database env vars are unset; no database was contacted.
 - GitHub Actions Phase 7 disposable PostgreSQL gate and cleanup verification remain pending. Do not close Phase 7 until exact feature-branch head CI passes. No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
+
+
+### Model 2 Phase 7 — Niche Analytics Projection CLOSED (2026-11-09)
+
+- Phase 7 formally closed. Evidence: docs/MODEL2-PHASE7-NICHE-ANALYTICS.md section 8.
+- Feature branch commit f918c6bfe4cf55113216f9bdc71f2f614397649f. GitHub Actions run 42532367227 succeeded: 186 passed, 0 failed, 0 skipped in selected test step. Link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42532367227
+- All 14 migrations recorded; fixture cleanup verified zero Model 2 and synthetic Model 1 rows; disposable PostgreSQL container stopped.
+- Projection includes only successful exact-account/exact-Pin publications with immutable niche attribution and exact period bounds; raw analytics/publication rows locked FOR SHARE; source metrics captured immutably.
+- Missing/null metric stays unknown, not zero. Distinct publication count and raw source-row count are separately tracked. Same-period is idempotent; empty period returns insufficient_data; historical paused/archived attribution remains readable.
+- Local full suite: 274 passed, 48 skipped, 1 non-blocking warning; local database tests skipped because no DB env vars.
+- No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
+- Next: Phase 8 — extend existing authenticated read-only dashboard with account profiles, niche assignments and evidence-backed aggregates. No new frontend/auth/pipeline.
+
+
+### Model 2 Phase 8 — Read-only Dashboard IN PROGRESS (2026-11-09)
+
+- Phase 7 formally closed. CI run 42532367227, commit f918c6bfe4cf55113216f9bdc71f2f614397649f: 186 passed, 0 failed, 0 skipped; all 14 migrations and cleanup verified.
+- Phase 8 design/implementation details: docs/MODEL2-PHASE8-READONLY-DASHBOARD.md.
+- Reused existing app/dashboard.py, session auth and embedded HTML; added authenticated GET /dashboard/api/model2 and a read-only account/niche/evidence panel. No new frontend or auth system.
+- Displays account profile, canonical ID, statuses/timezone, niche/region/primary mapping, successful attributed publication count, snapshot count and latest evidence period/metrics. NULL renders as Unknown. Paused/archived states and profiles without niche assignments remain visible.
+- Uses to_regclass compatibility check so a pre-migration database retains existing Model 1 dashboard behavior. SQL is read-only and does not invoke publisher, scheduler, generator, OAuth or token decryption.
+- Focused dashboard tests: 7 passed. Full local suite: 279 passed, 49 skipped, 1 non-blocking warning. Local PostgreSQL tests skipped because DB env vars are unset.
+- Phase 8 exact-head GitHub Actions disposable PostgreSQL gate pending; do not close before it passes. No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.

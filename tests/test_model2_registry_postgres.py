@@ -1413,3 +1413,87 @@ def test_model2_learning_projection_excludes_pending_publication_even_if_raw_row
 
     assert result["snapshot_id"] is None
     assert result["learning_status"] == "insufficient_data"
+
+
+def test_model2_dashboard_lists_profiles_niches_and_evidence_without_secrets(model2_db, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.config import settings
+    from app.main import app
+
+    period_start = date(2026, 10, 1)
+    period_end = date(2026, 10, 30)
+    first = _model2_pin_with_raw_analytics(
+        model2_db,
+        label="dashboard-attributed",
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=period_start,
+        period_end=period_end,
+        metrics={"impression": 200, "save": None, "pin_click": 8, "outbound_click": 3},
+    )
+    projection = create_learning_snapshot(
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+        period_start=period_start,
+        period_end=period_end,
+    )
+    assert projection["snapshot_id"] is not None
+
+    extra_slug = f"test-niche-extra-{model2_db['suffix']}"
+    with database.connection() as conn:
+        conn.execute(
+            "INSERT INTO model2_niches (slug, display_name, default_region) VALUES (%s, %s, 'GB+IE')",
+            (extra_slug, "Extra Test Niche"),
+        )
+        extra_id = conn.execute(
+            "SELECT id FROM model2_niches WHERE slug = %s",
+            (extra_slug,),
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO model2_account_niches (account_id, niche_id) VALUES (%s, %s)",
+            (model2_db["account_a"], extra_id),
+        )
+        conn.execute(
+            "INSERT INTO model2_account_profiles (account_id, display_name, status) VALUES (%s, 'No niche profile', 'paused')",
+            (model2_db["account_c"],),
+        )
+        conn.execute(
+            "UPDATE model2_account_niches SET status = 'paused' WHERE account_id = %s AND niche_id = %s",
+            (model2_db["account_a"], model2_db["niche_a"]),
+        )
+        conn.execute(
+            "UPDATE model2_niches SET status = 'archived' WHERE id = %s",
+            (model2_db["niche_a"],),
+        )
+
+    monkeypatch.setattr(settings, "app_api_key", "model2-dashboard-postgres-test-key")
+    client = TestClient(app, base_url="https://testserver")
+    login = client.post(
+        "/dashboard/session",
+        json={"api_key": "model2-dashboard-postgres-test-key"},
+    )
+    assert login.status_code == 200
+
+    response = client.get("/dashboard/api/model2")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_available"] is True
+    rows_a = [row for row in payload["accounts"] if row["account_id"] == model2_db["account_a"]]
+    rows_c = [row for row in payload["accounts"] if row["account_id"] == model2_db["account_c"]]
+    assert len(rows_a) == 2
+    assert len(rows_c) == 1
+    assert rows_c[0]["niche_id"] is None
+    archived = next(row for row in rows_a if row["niche_id"] == model2_db["niche_a"])
+    assert archived["account_status"] == "active"
+    assert archived["assignment_status"] == "paused"
+    assert archived["niche_status"] == "archived"
+    assert archived["is_primary"] is True
+    assert archived["attributed_publication_count"] == 1
+    assert archived["snapshot_count"] == 1
+    assert archived["latest_period_end"] == period_end.isoformat()
+    assert archived["latest_metrics"]["impression"] == 200
+    assert archived["latest_metrics"]["save"] is None
+    assert first["publication_id"] > 0
+    assert "access_token" not in response.text
+    assert "test-ciphertext-a" not in response.text
+    assert "affiliate_url" not in response.text

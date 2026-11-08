@@ -182,6 +182,117 @@ def dashboard_overview(request: Request) -> JSONResponse:
         raise HTTPException(status_code=503, detail="Dashboard data is temporarily unavailable.") from None
 
 
+@router.get("/dashboard/api/model2")
+def dashboard_model2_overview(request: Request) -> JSONResponse:
+    """Expose only non-secret Model 2 account/niche metadata and persisted evidence."""
+    _require_session(request)
+    try:
+        with connection() as conn:
+            tables = conn.execute(
+                """
+                SELECT
+                    to_regclass('public.model2_account_profiles') IS NOT NULL AS profiles,
+                    to_regclass('public.model2_account_niches') IS NOT NULL AS assignments,
+                    to_regclass('public.model2_niches') IS NOT NULL AS niches,
+                    to_regclass('public.model2_publication_niche_attributions') IS NOT NULL AS attributions,
+                    to_regclass('public.model2_learning_snapshots') IS NOT NULL AS learning
+                """
+            ).fetchone()
+            if not all(tables.values()):
+                return JSONResponse(
+                    {"schema_available": False, "accounts": []},
+                    headers={"Cache-Control": "no-store"},
+                )
+
+            rows = conn.execute(
+                """
+                SELECT
+                    profile.account_id,
+                    profile.display_name AS account_display_name,
+                    profile.status AS account_status,
+                    profile.timezone,
+                    assignment.niche_id,
+                    niche.slug AS niche_slug,
+                    niche.display_name AS niche_display_name,
+                    niche.default_region,
+                    niche.status AS niche_status,
+                    assignment.status AS assignment_status,
+                    assignment.is_primary,
+                    COALESCE(attributed.publication_count, 0) AS attributed_publication_count,
+                    COALESCE(learning_data.snapshot_count, 0) AS snapshot_count,
+                    learning_data.latest_period_end,
+                    learning_data.latest_metrics
+                FROM model2_account_profiles AS profile
+                LEFT JOIN model2_account_niches AS assignment
+                  ON assignment.account_id = profile.account_id
+                LEFT JOIN model2_niches AS niche
+                  ON niche.id = assignment.niche_id
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*) AS publication_count
+                    FROM model2_publication_niche_attributions AS attribution
+                    JOIN pin_publications AS publication
+                      ON publication.id = attribution.publication_id
+                     AND publication.account_id = attribution.account_id
+                    WHERE attribution.account_id = profile.account_id
+                      AND attribution.niche_id = assignment.niche_id
+                      AND publication.status = 'succeeded'
+                ) AS attributed ON assignment.niche_id IS NOT NULL
+                LEFT JOIN LATERAL (
+                    SELECT
+                        COUNT(*) AS snapshot_count,
+                        MAX(snapshot.period_end) AS latest_period_end,
+                        (
+                            SELECT latest.metrics
+                            FROM model2_learning_snapshots AS latest
+                            WHERE latest.account_id = profile.account_id
+                              AND latest.niche_id = assignment.niche_id
+                            ORDER BY latest.period_end DESC, latest.id DESC
+                            LIMIT 1
+                        ) AS latest_metrics
+                    FROM model2_learning_snapshots AS snapshot
+                    WHERE snapshot.account_id = profile.account_id
+                      AND snapshot.niche_id = assignment.niche_id
+                ) AS learning_data ON assignment.niche_id IS NOT NULL
+                ORDER BY profile.account_id, assignment.is_primary DESC NULLS LAST,
+                         niche.slug NULLS LAST, assignment.niche_id
+                """
+            ).fetchall()
+
+        accounts = []
+        for row in rows:
+            accounts.append({
+                "account_id": row["account_id"],
+                "account_display_name": row["account_display_name"],
+                "account_status": row["account_status"],
+                "timezone": row["timezone"],
+                "niche_id": row["niche_id"],
+                "niche_slug": row["niche_slug"],
+                "niche_display_name": row["niche_display_name"],
+                "default_region": row["default_region"],
+                "niche_status": row["niche_status"],
+                "assignment_status": row["assignment_status"],
+                "is_primary": row["is_primary"],
+                "attributed_publication_count": row["attributed_publication_count"],
+                "snapshot_count": row["snapshot_count"],
+                "latest_period_end": (
+                    row["latest_period_end"].isoformat()
+                    if row["latest_period_end"] is not None else None
+                ),
+                "latest_metrics": row["latest_metrics"],
+            })
+        return JSONResponse(
+            {"schema_available": True, "accounts": accounts},
+            headers={"Cache-Control": "no-store"},
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Model 2 dashboard data is temporarily unavailable.",
+        ) from None
+
+
 DASHBOARD_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -222,6 +333,11 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 </div></div>
 <div class="cols"><section><div class="section"><h2>Upcoming queue</h2><span class="muted">Next 8 jobs</span></div><div class="panel table-wrap"><table><thead><tr><th>Product</th><th>Scheduled</th><th>Status</th></tr></thead><tbody id="upcoming"></tbody></table></div></section>
 <section><div class="section"><h2>Recent activity</h2><span class="muted">Latest 10 jobs</span></div><div class="panel table-wrap"><table><thead><tr><th>Product</th><th>Finished / scheduled</th><th>Status</th></tr></thead><tbody id="recent"></tbody></table></div></section></div>
+<div class="section"><h2>Model 2 · Accounts & niche intelligence</h2><span class="muted">Read-only registry and evidence</span></div>
+<div class="panel table-wrap">
+<div id="model2Unavailable" class="empty hidden"></div>
+<table id="model2Table"><thead><tr><th>Account / status</th><th>Niche / region</th><th>Assignment</th><th>Attributed Pins</th><th>Snapshots</th><th>Latest period / metrics</th></tr></thead><tbody id="model2Rows"></tbody></table>
+</div>
 <div class="foot">Auto-refreshes every 30 seconds. This dashboard is read-only: it cannot publish Pins, create Boards, activate schedules, or change products. Affiliate URLs, OAuth tokens, and API keys are never displayed.</div>
 <div id="dataError" class="error"></div></div></main>
 <script>
@@ -235,7 +351,8 @@ async function load(){try{const r=await fetch("/dashboard/api/overview",{credent
 $("scheduleStatus").className="pill "+(s?.status||"");$("scheduleStatus").textContent=s?.status||"No schedule";$("scheduleId").textContent=s?"#"+s.id:"—";$("board").textContent=s?.board_name||"—";$("window").textContent=s?s.starts_on+" → "+s.ends_on:"—";$("zone").textContent=s?s.timezone+" · "+s.daily_pin_limit+"/day":"—";$("account").textContent=s?.account_id||"—";
 const pc=d.publication_counts||{};$("pubs").textContent=Object.entries(pc).map(([k,v])=>k+": "+v).join(" · ")||"No publication records";rows("upcoming",d.upcoming_jobs||[],s?.timezone,false);rows("recent",d.recent_jobs||[],s?.timezone,true);$("updated").textContent="Updated "+when(d.generated_at,"UTC");$("dataError").textContent="";
 }catch(e){$("dataError").textContent=e.message;}}
-function showApp(){ $("login").classList.add("hidden");$("app").classList.remove("hidden");load();if(timer)clearInterval(timer);timer=setInterval(load,30000);}
+async function loadModel2(){try{const r=await fetch("/dashboard/api/model2",{credentials:"same-origin",cache:"no-store"});if(r.status===401){showLogin();return;}if(!r.ok)throw new Error("Model 2 dashboard request failed ("+r.status+").");const d=await r.json();const body=$("model2Rows");body.innerHTML="";$("model2Unavailable").classList.add("hidden");$("model2Table").classList.remove("hidden");if(!d.schema_available){$("model2Table").classList.add("hidden");$("model2Unavailable").textContent="Model 2 registry schema is not installed in this environment.";$("model2Unavailable").classList.remove("hidden");return;}if(!d.accounts.length){body.innerHTML='<tr><td colspan="6" class="empty">No Model 2 account profiles configured</td></tr>';return;}for(const a of d.accounts){const tr=document.createElement("tr");const niche=a.niche_display_name?(a.niche_display_name+" ("+a.niche_slug+") · "+a.default_region):"No niche assigned";const state=[a.account_status,a.niche_status,a.assignment_status].filter(Boolean).join(" / ");const metrics=a.latest_metrics||{};const metricLabels=[["impression","Impressions"],["save","Saves"],["pin_click","Pin clicks"],["outbound_click","Outbound clicks"]];const metricText=metricLabels.map(([k,label])=>label+": "+(metrics[k]===null||metrics[k]===undefined?"Unknown":esc(metrics[k]))).join(" · ");const latest=a.latest_period_end?esc(a.latest_period_end)+" — "+metricText:"No learning snapshot";tr.innerHTML='<td>'+esc(a.account_display_name||a.account_id)+'<div class="muted">'+esc(a.account_id)+'</div><div>'+pill(a.account_status)+'</div></td><td>'+esc(niche)+'</td><td>'+esc(state||"—")+(a.is_primary?' · Primary':"")+'</td><td>'+esc(a.attributed_publication_count)+'</td><td>'+esc(a.snapshot_count)+'</td><td>'+latest+'</td>';body.appendChild(tr);}}catch(e){$("model2Unavailable").textContent=e.message;$("model2Unavailable").classList.remove("hidden");}}
+function showApp(){ $("login").classList.add("hidden");$("app").classList.remove("hidden");load();loadModel2();if(timer)clearInterval(timer);timer=setInterval(()=>{load();loadModel2();},30000);}
 function showLogin(){if(timer)clearInterval(timer);$("app").classList.add("hidden");$("login").classList.remove("hidden");}
 $("loginForm").addEventListener("submit",async e=>{e.preventDefault();$("loginError").textContent="";try{const r=await fetch("/dashboard/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:$("apiKey").value})});$("apiKey").value="";if(!r.ok)throw new Error("Sign-in failed. Check the key and try again.");showApp();}catch(err){$("loginError").textContent=err.message;}});
 $("refresh").addEventListener("click",load);$("logout").addEventListener("click",async()=>{await fetch("/dashboard/session",{method:"DELETE"});showLogin();});
