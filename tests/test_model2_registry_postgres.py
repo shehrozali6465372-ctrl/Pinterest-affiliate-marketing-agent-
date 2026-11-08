@@ -147,7 +147,7 @@ def test_model2_registry_enforces_account_niche_membership(model2_db):
                     conn.execute(
                         """
                         INSERT INTO model2_account_niches (account_id, niche_id, is_primary)
-                        VALUES (%s, %s, TRUE)
+                        VALUES (%s, %s, FALSE)
                         """,
                         (model2_db["account_a"], model2_db["niche_b"]),
                     )
@@ -484,7 +484,7 @@ def test_model2_learning_source_concurrent_inserts_are_serialized(
                 (account_id, niche_id, period_start, period_end, metrics,
                  sample_size, source_snapshot_count)
             VALUES (%s, %s, DATE '2026-04-01', DATE '2026-04-07',
-                    '{"impression": 1}'::jsonb, 1, 1)
+                    '{"impression": 1}'::jsonb, 0, 0)
             RETURNING id
             """,
             (model2_db["account_a"], model2_db["niche_a"]),
@@ -509,6 +509,14 @@ def test_model2_learning_source_concurrent_inserts_are_serialized(
                         """,
                         (learning_id, analytics_id, publication_id,
                          model2_db["account_a"], model2_db["niche_a"]),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE model2_learning_snapshots
+                        SET sample_size = 1, source_snapshot_count = 1
+                        WHERE id = %s
+                        """,
+                        (learning_id,),
                     )
                     first_inserted.set()
                     if not release_first.wait(timeout=10):
