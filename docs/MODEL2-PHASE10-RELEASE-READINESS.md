@@ -1,6 +1,6 @@
 # Model 2 Phase 10 — Release Readiness
 
-**Status:** PRE-RELEASE REVIEW — NOT APPROVED FOR PRODUCTION RELEASE. R1 hardening is implemented locally; exact-head CI is pending.
+**Status:** PRE-RELEASE REVIEW — NOT APPROVED FOR PRODUCTION RELEASE. R1 hardening is verified on exact feature-branch head; remaining release gates are open.
 
 **Review date:** 2026-11-09  
 **Feature branch:** `feat/model2-open-source-reuse`  
@@ -42,7 +42,8 @@ Hardening in this review:
 - A schedule with an uncertain job is not automatically marked completed.
 - Existing legacy Model 1 quota behavior is not changed.
 - Regression coverage verifies the uncertain result is never re-run, consumes the daily quota, and blocks replacement.
-- Local full suite after this hardening: **283 passed, 57 skipped, 1 non-blocking warning**. PostgreSQL integration tests remain skipped locally because DB environment variables are unset; no DB was contacted. Exact-head disposable PostgreSQL CI is the next gate.
+- Local full suite after this hardening: **283 passed, 57 skipped, 1 non-blocking warning**. PostgreSQL integration tests remain skipped locally because DB environment variables are unset; no DB was contacted.
+- Exact-head implementation commit `5f818fa5adb5e3c45b1bd8f52d17926ae2ca2d8e`, GitHub Actions run `42536949741`: **213 passed, 0 failed, 1 warning** on disposable PostgreSQL 16.15. All 15 numbered migrations were recorded, Model 2 and synthetic Model 1 fixtures were cleaned, and the PostgreSQL container was stopped.
 
 **Remaining operational limitation:** there is no scheduler-job reconciliation endpoint in this phase. An uncertain job therefore remains fail-closed until an operator follows a separately approved, evidence-based reconciliation procedure. Do not directly edit production job status or infer that a Pin does not exist. A documented and tested reconciliation/runbook path is required before enabling unattended Model 2 scheduling.
 
@@ -114,7 +115,7 @@ Current CI emits a Starlette/httpx TestClient deprecation warning and GitHub Act
 
 ## 6. Exit criteria before any release approval
 
-- [ ] Exact-head CI passes after R1 hardening; migration ledger and fixture cleanup verified.
+- [x] Exact-head CI passes after R1 hardening; migration ledger and fixture cleanup verified (run `42536949741`).
 - [ ] Operator reconciliation procedure for uncertain scheduler jobs is documented and tested without a real Pin write.
 - [ ] Production-like sanitized migration rehearsal and restore/rollback rehearsal pass.
 - [ ] Owner reviews the scheduled worker's production side effects and explicitly approves activation window/controls.
