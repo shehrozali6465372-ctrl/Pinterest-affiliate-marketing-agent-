@@ -116,7 +116,7 @@ def test_save_account_profile_uses_metadata_only_check_and_returns_profile(monke
         "status": "active",
         "timezone": "Asia/Karachi",
     }
-    conn = FakeConnection([None, {"account_id": "pinterest:123456789"}, profile_row])
+    conn = FakeConnection([None, {"account_id": "pinterest:123456789", "pinterest_user_id": "123456789"}, profile_row])
     patch_connection(monkeypatch, conn)
 
     result = model2_repository.save_account_profile(
