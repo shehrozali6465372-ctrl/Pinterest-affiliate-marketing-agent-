@@ -284,6 +284,59 @@ def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
     }
 
 
+
+def reencrypt_pinterest_credential(account_id: str) -> dict[str, Any]:
+    """Re-encrypt one stored credential under the active key; never calls Pinterest.
+
+    This is an operator-invoked maintenance primitive, not an HTTP endpoint.
+    Keep all old key IDs configured until every stored row has been migrated
+    and independently verified.
+    """
+    active_id, _ = _keyring()
+    with connection() as conn:
+        row = conn.execute(
+            """SELECT account_id, pinterest_user_id, access_token_ciphertext,
+                      refresh_token_ciphertext
+               FROM pinterest_credentials WHERE account_id = %s FOR UPDATE""",
+            (account_id,),
+        ).fetchone()
+        if not row:
+            raise LookupError("Pinterest account credential is not available")
+        stored_account_id = str(row["account_id"])
+        user_id = str(row["pinterest_user_id"])
+        _validate_account_identity(stored_account_id, user_id)
+        access = _decrypt(bytes(row["access_token_ciphertext"]), f"{stored_account_id}:access".encode())
+        refresh_blob = row["refresh_token_ciphertext"]
+        refresh = (
+            _decrypt(bytes(refresh_blob), f"{stored_account_id}:refresh".encode())
+            if refresh_blob is not None
+            else None
+        )
+        new_access = _encrypt(access, f"{stored_account_id}:access".encode())
+        new_refresh = (
+            _encrypt(refresh, f"{stored_account_id}:refresh".encode())
+            if refresh is not None
+            else None
+        )
+        conn.execute(
+            """UPDATE pinterest_credentials
+               SET access_token_ciphertext = %s,
+                   refresh_token_ciphertext = CASE
+                       WHEN %s IS NULL THEN refresh_token_ciphertext
+                       ELSE %s
+                   END,
+                   updated_at = now()
+               WHERE account_id = %s""",
+            (new_access, new_refresh, new_refresh, stored_account_id),
+        )
+    return {
+        "account_id": stored_account_id,
+        "re_encrypted": True,
+        "active_key_id": active_id,
+        "refresh_token_re_encrypted": refresh is not None,
+        "pinterest_api_called": False,
+    }
+
 def revoke_pinterest_credential(account_id: str) -> None:
     """Disable a credential only after validating its stored canonical Pinterest identity."""
     with connection() as conn:
