@@ -242,8 +242,14 @@ def publish_product_end_to_end(
             )
         except ImageGenerationError as exc:
             _release_generation_lease_safely(idempotency_key, lease_token)
-            logger.error("workflow stage=image_generation outcome=failed detail=%s", str(exc)[:180])
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            logger.error(
+                "workflow stage=image_generation outcome=failed exception_type=%s",
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Image generation failed; retry with the same Idempotency-Key after checking provider configuration.",
+            ) from None
         except Exception as exc:
             _release_generation_lease_safely(idempotency_key, lease_token)
             logger.error("workflow stage=image_checkpoint outcome=failed exception_type=%s", type(exc).__name__)
