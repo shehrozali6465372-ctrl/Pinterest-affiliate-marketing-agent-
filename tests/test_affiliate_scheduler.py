@@ -246,3 +246,76 @@ def test_model2_schedule_input_requires_positive_integer_niche_id():
             account_id="pinterest:123", niche_id=0, timezone="UTC",
             starts_on=date(2099, 11, 5), sources=[source],
         )
+
+
+def test_scheduler_reconciliation_inspection_api_is_authenticated_and_read_only(monkeypatch):
+    from app import database
+
+    monkeypatch.setattr(settings, "app_api_key", "scheduler-test-key")
+    calls = []
+    monkeypatch.setattr(
+        database, "get_scheduler_job_reconciliation",
+        lambda job_id, *, account_id: calls.append((job_id, account_id)) or {
+            "job_id": job_id, "account_id": account_id,
+            "linkage_status": "no_publication_candidate", "read_only": True,
+        },
+    )
+    client = TestClient(app)
+    response = client.get(
+        "/affiliate-scheduler/jobs/123/reconciliation?account_id=pinterest:123",
+        headers={"X-API-Key": "scheduler-test-key"},
+    )
+    assert response.status_code == 200
+    assert response.json()["read_only"] is True
+    assert calls == [(123, "pinterest:123")]
+
+
+def test_scheduler_reconciliation_post_api_forwards_explicit_absence_confirmation(monkeypatch):
+    from app import database
+
+    monkeypatch.setattr(settings, "app_api_key", "scheduler-test-key")
+    calls = []
+    monkeypatch.setattr(
+        database, "reconcile_scheduler_job",
+        lambda job_id, **kwargs: calls.append((job_id, kwargs)) or {
+            "job_id": job_id, "status": "failed", "reconciled": True,
+        },
+    )
+    client = TestClient(app)
+    response = client.post(
+        "/affiliate-scheduler/jobs/123/reconcile",
+        headers={"X-API-Key": "scheduler-test-key"},
+        json={
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "operator_evidence": "Operator verified the exact account and Board.",
+            "confirm_pin_absent": True,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert calls == [(
+        123,
+        {
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "pinterest_pin_id": None,
+            "operator_evidence": "Operator verified the exact account and Board.",
+            "confirm_pin_absent": True,
+        },
+    )]
+
+
+def test_scheduler_reconciliation_post_api_rejects_missing_absence_confirmation(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "scheduler-test-key")
+    client = TestClient(app)
+    response = client.post(
+        "/affiliate-scheduler/jobs/123/reconcile",
+        headers={"X-API-Key": "scheduler-test-key"},
+        json={
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "operator_evidence": "Operator evidence has sufficient length.",
+        },
+    )
+    assert response.status_code == 409
