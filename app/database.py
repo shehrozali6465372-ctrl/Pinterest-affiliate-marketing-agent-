@@ -747,6 +747,267 @@ def reconcile_unknown_publication(
         return dict(saved)
 
 
+
+def get_scheduler_job_reconciliation(job_id: int, *, account_id: str) -> dict | None:
+    """Read-only, account-scoped reconciliation view; never contacts Pinterest."""
+    with connection() as conn:
+        job = conn.execute(
+            """
+            SELECT j.id AS job_id, j.status AS job_status, j.product_id,
+                   j.pinterest_pin_id AS job_pin_id, j.idempotency_key,
+                   s.id AS schedule_id, s.account_id, s.niche_id, s.status AS schedule_status
+            FROM affiliate_pin_jobs j
+            JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id
+            WHERE j.id = %s AND s.account_id = %s
+            """,
+            (job_id, account_id),
+        ).fetchone()
+        if not job:
+            return None
+        candidates = conn.execute(
+            """
+            SELECT pub.id AS publication_id, pub.status AS publication_status,
+                   pub.account_id AS publication_account_id, pub.board_id,
+                   pub.product_id, pub.content_version_id, pub.pinterest_pin_id,
+                   a.niche_id AS attributed_niche_id
+            FROM products p
+            JOIN pin_publications pub ON pub.product_id = p.id
+            JOIN content_versions cv
+              ON cv.id = pub.content_version_id AND cv.product_id = p.id
+            LEFT JOIN model2_publication_niche_attributions a
+              ON a.publication_id = pub.id
+            WHERE p.idempotency_key = %s
+            ORDER BY pub.id
+            """,
+            (job["idempotency_key"],),
+        ).fetchall()
+        candidate = dict(candidates[0]) if len(candidates) == 1 else None
+        return {
+            "job_id": job["job_id"], "job_status": job["job_status"],
+            "schedule_id": job["schedule_id"], "account_id": job["account_id"],
+            "niche_id": job["niche_id"], "schedule_status": job["schedule_status"],
+            "product_id": job["product_id"], "job_pin_id": job["job_pin_id"],
+            "publication_candidate_count": len(candidates),
+            "publication": candidate,
+            "read_only": True,
+        }
+
+
+def reconcile_scheduler_job(
+    job_id: int, *, account_id: str, outcome: str,
+    pinterest_pin_id: str | None, operator_evidence: str,
+    confirm_pin_absent: bool = False,
+) -> dict:
+    """Atomically reconcile one uncertain scheduler job without provider calls."""
+    evidence = operator_evidence.strip()
+    if not account_id or not account_id.strip():
+        raise ValueError("account_id is required")
+    if not evidence or len(evidence) < 12 or len(evidence) > 2000:
+        raise ValueError("operator_evidence must be between 12 and 2000 characters")
+    if outcome not in {"succeeded", "failed"}:
+        raise ValueError("outcome must be 'succeeded' or 'failed'")
+    if outcome == "succeeded":
+        if not pinterest_pin_id or not pinterest_pin_id.strip():
+            raise ValueError("verified Pinterest Pin ID is required for succeeded reconciliation")
+        if confirm_pin_absent:
+            raise ValueError("confirm_pin_absent must be false for succeeded reconciliation")
+        pin_id = pinterest_pin_id.strip()
+    else:
+        if pinterest_pin_id:
+            raise ValueError("Pin ID must be omitted when confirming no Pin exists")
+        if confirm_pin_absent is not True:
+            raise ValueError("explicit confirm_pin_absent=true is required for failed reconciliation")
+        pin_id = None
+
+    with connection() as conn:
+        # Read the immutable routing hint first, then follow the scheduler's
+        # profile -> niche -> assignment -> schedule -> job lock order.
+        hint = conn.execute(
+            """
+            SELECT s.id AS schedule_id, s.account_id, s.niche_id
+            FROM affiliate_pin_jobs j
+            JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id
+            WHERE j.id = %s
+            """,
+            (job_id,),
+        ).fetchone()
+        if not hint:
+            raise LookupError("scheduler job was not found")
+        if hint["account_id"] != account_id:
+            raise PermissionError("scheduler job does not belong to the requested account")
+
+        if hint["niche_id"] is not None:
+            profile = conn.execute(
+                "SELECT account_id FROM model2_account_profiles WHERE account_id = %s FOR UPDATE",
+                (account_id,),
+            ).fetchone()
+            niche = conn.execute(
+                "SELECT id FROM model2_niches WHERE id = %s FOR SHARE",
+                (hint["niche_id"],),
+            ).fetchone()
+            assignment = conn.execute(
+                """
+                SELECT account_id, niche_id FROM model2_account_niches
+                WHERE account_id = %s AND niche_id = %s FOR SHARE
+                """,
+                (account_id, hint["niche_id"]),
+            ).fetchone()
+            if not profile or not niche or not assignment:
+                raise ValueError("Model 2 account/niche linkage is missing; job remains uncertain")
+
+        schedule = conn.execute(
+            """
+            SELECT id, account_id, niche_id, status
+            FROM affiliate_publishing_schedules
+            WHERE id = %s FOR UPDATE
+            """,
+            (hint["schedule_id"],),
+        ).fetchone()
+        if not schedule or schedule["account_id"] != account_id or schedule["niche_id"] != hint["niche_id"]:
+            raise ValueError("schedule linkage changed; job remains uncertain")
+
+        job = conn.execute(
+            """
+            SELECT id, schedule_id, status, idempotency_key, product_id, pinterest_pin_id
+            FROM affiliate_pin_jobs WHERE id = %s FOR UPDATE
+            """,
+            (job_id,),
+        ).fetchone()
+        if not job:
+            raise LookupError("scheduler job was not found")
+        if job["status"] != "uncertain":
+            raise ValueError("only uncertain scheduler jobs may be reconciled")
+
+        candidates = conn.execute(
+            """
+            SELECT pub.id AS publication_id, pub.product_id, pub.content_version_id,
+                   pub.board_id, pub.account_id, pub.status AS publication_status,
+                   pub.pinterest_pin_id, a.niche_id AS attributed_niche_id
+            FROM products p
+            JOIN pin_publications pub ON pub.product_id = p.id
+            JOIN content_versions cv
+              ON cv.id = pub.content_version_id AND cv.product_id = p.id
+            LEFT JOIN model2_publication_niche_attributions a
+              ON a.publication_id = pub.id
+            WHERE p.idempotency_key = %s
+            ORDER BY pub.id
+            """,
+            (job["idempotency_key"],),
+        ).fetchall()
+        if len(candidates) > 1:
+            raise ValueError("multiple publication candidates exist; manual investigation is required")
+        publication = dict(candidates[0]) if candidates else None
+        if publication:
+            if publication["account_id"] != account_id:
+                raise ValueError("publication account does not match scheduler account")
+            if job["product_id"] is not None and job["product_id"] != publication["product_id"]:
+                raise ValueError("publication product does not match scheduler job")
+            if schedule["niche_id"] is not None:
+                if publication["attributed_niche_id"] != schedule["niche_id"]:
+                    raise ValueError("publication niche attribution is missing or mismatched")
+            elif publication["attributed_niche_id"] is not None:
+                raise ValueError("legacy scheduler job cannot reconcile a Model 2-attributed publication")
+
+            publication = conn.execute(
+                "SELECT * FROM pin_publications WHERE id = %s FOR UPDATE",
+                (publication["publication_id"],),
+            ).fetchone()
+            if publication is None:
+                raise ValueError("publication candidate disappeared; job remains uncertain")
+            if publication["account_id"] != account_id:
+                raise ValueError("publication account linkage is ambiguous")
+
+            if publication["status"] == "succeeded":
+                if outcome != "succeeded" or publication["pinterest_pin_id"] != pin_id:
+                    raise ValueError("publication ledger already confirms a different successful outcome")
+            elif publication["status"] in {"pending", "unknown"}:
+                if publication["status"] == "pending":
+                    stale = conn.execute(
+                        "SELECT updated_at <= now() - interval '10 minutes' AS stale FROM pin_publications WHERE id = %s",
+                        (publication["id"],),
+                    ).fetchone()
+                    if not stale or not stale["stale"]:
+                        raise ValueError("pending publication must be at least 10 minutes old before reconciliation")
+            elif publication["status"] == "failed":
+                if outcome != "failed":
+                    raise ValueError("failed publication cannot be promoted to succeeded")
+            else:
+                raise ValueError("unsupported publication ledger state")
+
+        if outcome == "succeeded" and publication is None:
+            raise ValueError("no publication ledger row exists; success cannot be proven")
+
+        audit = conn.execute(
+            """
+            INSERT INTO affiliate_job_reconciliation_audit
+                (job_id, schedule_id, account_id, publication_id, outcome,
+                 pinterest_pin_id, operator_evidence)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, reconciled_at
+            """,
+            (job_id, schedule["id"], account_id,
+             publication["id"] if publication else None, outcome, pin_id, evidence),
+        ).fetchone()
+
+        if publication and publication["status"] != "succeeded":
+            next_error = None if outcome == "succeeded" else "operator_verified_pin_absent"
+            updated_publication = conn.execute(
+                """
+                UPDATE pin_publications
+                SET status = %s, pinterest_pin_id = %s, error_code = %s,
+                    response_metadata = COALESCE(response_metadata, '{}'::jsonb)
+                        || jsonb_build_object('scheduler_reconciliation', jsonb_build_object(
+                            'audit_id', %s, 'outcome', %s)),
+                    updated_at = now()
+                WHERE id = %s
+                RETURNING id
+                """,
+                (outcome, pin_id, next_error, audit["id"], outcome, publication["id"]),
+            ).fetchone()
+            if not updated_publication:
+                raise RuntimeError("publication ledger update failed")
+
+        updated_job = conn.execute(
+            """
+            UPDATE affiliate_pin_jobs
+            SET status = %s, pinterest_pin_id = %s,
+                product_id = COALESCE(product_id, %s),
+                finished_at = now(), locked_at = NULL,
+                safe_error_code = %s
+            WHERE id = %s AND status = 'uncertain'
+            RETURNING id, status, product_id, pinterest_pin_id
+            """,
+            (outcome, pin_id,
+             publication["product_id"] if publication else job["product_id"],
+             None if outcome == "succeeded" else "operator_verified_pin_absent",
+             job_id),
+        ).fetchone()
+        if not updated_job:
+            raise ValueError("scheduler job state changed during reconciliation")
+
+        conn.execute(
+            """
+            UPDATE affiliate_publishing_schedules s
+            SET status = 'completed', updated_at = now()
+            WHERE s.id = %s AND s.status = 'active'
+              AND NOT EXISTS (
+                SELECT 1 FROM affiliate_pin_jobs j
+                WHERE j.schedule_id = s.id
+                  AND j.status IN ('queued', 'processing', 'uncertain')
+              )
+            """,
+            (schedule["id"],),
+        )
+        return {
+            "job_id": updated_job["id"], "status": updated_job["status"],
+            "product_id": updated_job["product_id"],
+            "pinterest_pin_id": updated_job["pinterest_pin_id"],
+            "publication_id": publication["id"] if publication else None,
+            "audit_id": audit["id"], "account_id": account_id,
+            "reconciled": True, "read_only": False,
+        }
+
+
 def close_pool() -> None:
     """Close the connection pool during application shutdown."""
     global _pool
