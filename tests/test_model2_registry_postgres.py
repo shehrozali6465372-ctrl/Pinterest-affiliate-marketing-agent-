@@ -2093,3 +2093,188 @@ def test_scheduler_reconciliation_is_single_use_and_does_not_requeue(model2_db):
     assert audit_count == 1
     assert job_status == "failed"
 
+
+
+def test_scheduler_reconciliation_rejects_success_without_publication_ledger(model2_db):
+    with database.connection() as conn:
+        job_id, _ = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
+            suffix=f"no-ledger-success-{model2_db['suffix']}", publication_status=None,
+        )
+    with pytest.raises(ValueError, match="no publication ledger"):
+        database.reconcile_scheduler_job(
+            job_id, account_id=model2_db["account_a"], outcome="succeeded",
+            pinterest_pin_id="synthetic-pin-unproven",
+            operator_evidence="Synthetic evidence cannot replace missing ledger linkage.",
+        )
+    with database.connection() as conn:
+        assert conn.execute(
+            "SELECT status FROM affiliate_pin_jobs WHERE id = %s", (job_id,)
+        ).fetchone()["status"] == "uncertain"
+
+
+def test_scheduler_reconciliation_rejects_multiple_publication_candidates(model2_db):
+    with database.connection() as conn:
+        job_id, publication_id = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
+            suffix=f"multi-{model2_db['suffix']}", attribution_niche_id=model2_db["niche_a"],
+        )
+        base = conn.execute(
+            "SELECT product_id FROM pin_publications WHERE id = %s", (publication_id,)
+        ).fetchone()
+        content_id = conn.execute(
+            """
+            INSERT INTO content_versions
+                (product_id, version_number, provider, model_id, prompt_version,
+                 pin_idea, title, description, alt_text)
+            VALUES (%s, 2, 'test', 'test', 'test', 'test', 'test', 'test', 'test')
+            RETURNING id
+            """,
+            (base["product_id"],),
+        ).fetchone()["id"]
+        conn.execute(
+            """
+            INSERT INTO pin_publications
+                (product_id, content_version_id, board_id, account_id, status)
+            VALUES (%s, %s, %s, %s, 'unknown')
+            """,
+            (base["product_id"], content_id, f"second-board-{model2_db['suffix']}", model2_db["account_a"]),
+        )
+    with pytest.raises(ValueError, match="multiple publication candidates"):
+        database.reconcile_scheduler_job(
+            job_id, account_id=model2_db["account_a"], outcome="succeeded",
+            pinterest_pin_id="synthetic-pin-ambiguous",
+            operator_evidence="Synthetic evidence for ambiguous publication linkage.",
+        )
+
+
+def test_scheduler_reconciliation_rejects_wrong_model2_niche_attribution(model2_db):
+    with database.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO model2_account_niches (account_id, niche_id, is_primary)
+            VALUES (%s, %s, FALSE)
+            """,
+            (model2_db["account_a"], model2_db["niche_b"]),
+        )
+        job_id, _ = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
+            suffix=f"wrong-niche-{model2_db['suffix']}",
+            attribution_niche_id=model2_db["niche_b"],
+        )
+    with pytest.raises(ValueError, match="mismatched"):
+        database.reconcile_scheduler_job(
+            job_id, account_id=model2_db["account_a"], outcome="succeeded",
+            pinterest_pin_id="synthetic-pin-wrong-niche",
+            operator_evidence="Synthetic evidence for mismatched niche attribution.",
+        )
+
+
+def test_scheduler_reconciliation_accepts_stale_pending_publication(model2_db):
+    with database.connection() as conn:
+        job_id, publication_id = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
+            suffix=f"stale-pending-{model2_db['suffix']}",
+            publication_status="pending", pending_age_minutes=15,
+            attribution_niche_id=model2_db["niche_a"],
+        )
+    result = database.reconcile_scheduler_job(
+        job_id, account_id=model2_db["account_a"], outcome="succeeded",
+        pinterest_pin_id="synthetic-pin-stale-pending",
+        operator_evidence="Synthetic evidence for a pending record older than ten minutes.",
+    )
+    assert result["status"] == "succeeded"
+    with database.connection() as conn:
+        assert conn.execute(
+            "SELECT status FROM pin_publications WHERE id = %s", (publication_id,)
+        ).fetchone()["status"] == "succeeded"
+
+
+def test_scheduler_reconciliation_supports_legacy_model1_job_without_niche_attribution(model2_db):
+    with database.connection() as conn:
+        job_id, publication_id = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=None,
+            suffix=f"legacy-{model2_db['suffix']}",
+            attribution_niche_id=None,
+        )
+    result = database.reconcile_scheduler_job(
+        job_id, account_id=model2_db["account_a"], outcome="succeeded",
+        pinterest_pin_id="synthetic-pin-legacy",
+        operator_evidence="Synthetic evidence for legacy Model 1 publication linkage.",
+    )
+    assert result["status"] == "succeeded"
+    assert result["publication_id"] == publication_id
+
+
+def test_scheduler_reconciliation_rolls_back_ledger_and_audit_if_job_update_fails(model2_db):
+    with database.connection() as conn:
+        job_id, publication_id = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
+            suffix=f"rollback-{model2_db['suffix']}",
+            attribution_niche_id=model2_db["niche_a"],
+        )
+        conn.execute(
+            """
+            CREATE OR REPLACE FUNCTION test_abort_scheduler_job_reconcile()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                RAISE EXCEPTION 'synthetic scheduler update failure';
+            END;
+            $$
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER test_abort_scheduler_job_reconcile
+            BEFORE UPDATE ON affiliate_pin_jobs
+            FOR EACH ROW EXECUTE FUNCTION test_abort_scheduler_job_reconcile()
+            """
+        )
+    try:
+        with pytest.raises(RaiseException, match="synthetic scheduler update failure"):
+            database.reconcile_scheduler_job(
+                job_id, account_id=model2_db["account_a"], outcome="succeeded",
+                pinterest_pin_id="synthetic-pin-rollback",
+                operator_evidence="Synthetic evidence used to verify atomic rollback.",
+            )
+    finally:
+        with database.connection() as conn:
+            conn.execute("DROP TRIGGER IF EXISTS test_abort_scheduler_job_reconcile ON affiliate_pin_jobs")
+            conn.execute("DROP FUNCTION IF EXISTS test_abort_scheduler_job_reconcile()")
+    with database.connection() as conn:
+        publication_status = conn.execute(
+            "SELECT status FROM pin_publications WHERE id = %s", (publication_id,)
+        ).fetchone()["status"]
+        job_status = conn.execute(
+            "SELECT status FROM affiliate_pin_jobs WHERE id = %s", (job_id,)
+        ).fetchone()["status"]
+        audit_count = conn.execute(
+            "SELECT count(*) AS n FROM affiliate_job_reconciliation_audit WHERE job_id = %s",
+            (job_id,),
+        ).fetchone()["n"]
+    assert publication_status == "unknown"
+    assert job_status == "uncertain"
+    assert audit_count == 0
+
+
+def test_scheduler_reconciliation_audit_is_immutable(model2_db):
+    with database.connection() as conn:
+        job_id, _ = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
+            suffix=f"audit-immutable-{model2_db['suffix']}", publication_status=None,
+        )
+    database.reconcile_scheduler_job(
+        job_id, account_id=model2_db["account_a"], outcome="failed",
+        pinterest_pin_id=None,
+        operator_evidence="Operator confirmed the synthetic Pin is absent.",
+        confirm_pin_absent=True,
+    )
+    with database.connection() as conn:
+        with conn.transaction():
+            with pytest.raises(RaiseException, match="append-only"):
+                with conn.transaction():
+                    conn.execute(
+                        "UPDATE affiliate_job_reconciliation_audit SET outcome = 'succeeded' WHERE job_id = %s",
+                        (job_id,),
+                    )
+
