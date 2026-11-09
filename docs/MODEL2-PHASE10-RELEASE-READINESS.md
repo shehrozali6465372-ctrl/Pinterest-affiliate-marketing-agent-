@@ -141,3 +141,10 @@ Current CI emits a Starlette/httpx TestClient deprecation warning and GitHub Act
 - Reconciliation audit immutability now covers row-level UPDATE/DELETE and statement-level TRUNCATE through database triggers. CI fixture teardown uses scoped DELETE rather than bypassing the trigger with TRUNCATE; a PostgreSQL regression test verifies TRUNCATE is rejected and the audit row remains.
 - Authentication remains shared service-key authentication. It does not identify a human operator or provide per-person authorization/non-repudiation. The audit's free-text evidence is operator-supplied and must not contain credentials or sensitive personal data. A future per-operator identity model requires a real authenticated principal, not a caller-controlled identity header.
 - Database owners/superusers can disable/drop triggers or otherwise alter the audit table; append-only triggers protect against ordinary application SQL, not privileged DBA tampering.
+
+
+### Synthetic populated legacy upgrade rehearsal — added 2026-11-09
+
+A new disposable-CI test applies migrations 001–013, inserts synthetic legacy Model 1 scheduler data, and then applies migrations 014–015 to verify preservation of legacy schedule/job state and update semantics. This is a synthetic compatibility test only; it is not evidence from a sanitized production snapshot and does not satisfy the production-like backup/restore rehearsal requirement.
+
+- [ ] New populated legacy upgrade rehearsal CI passes on exact feature-branch HEAD.
