@@ -978,7 +978,7 @@ def reconcile_scheduler_job(
                 SET status = %s, pinterest_pin_id = %s, error_code = %s,
                     response_metadata = COALESCE(response_metadata, '{}'::jsonb)
                         || jsonb_build_object('scheduler_reconciliation', jsonb_build_object(
-                            'audit_id', %s, 'outcome', %s)),
+                            'audit_id', %s::bigint, 'outcome', %s::text)),
                     updated_at = now()
                 WHERE id = %s
                 RETURNING id
