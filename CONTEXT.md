@@ -871,3 +871,19 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Exact-head CI PASS: run `42594679834`, commit `8738194e9715278f835da665b6a58348ccaa7086`; **266 passed, 0 failed, 1 warning**. All 16 migrations recorded, fixture cleanup passed, and PostgreSQL service teardown passed.
 - This is a read-only rotation-preflight primitive only. No batch re-encryption, production key rotation, production DB access, OAuth refresh, scheduler activation, Pin/Board creation, PR, merge or deployment occurred.
 - Updated `docs/MODEL2-PHASE10-RELEASE-READINESS.md` with the verified implementation and its limitations.
+
+
+
+### Current authoritative checkpoint — credential inventory, identity preflight and lock-order hardening (2026-11-09)
+
+This section supersedes older entries above that describe the keyring, credential inventory, account-identity guard, or backup/restore rehearsal as pending.
+
+- **Credential keyring:** versioned AES-256-GCM envelope with key IDs; legacy nonce-prefixed ciphertext remains readable when the original key is retained. Optional JSON keyring and active key ID are implemented. Operator-only one-row re-encryption primitive is implemented and synthetic-tested.
+- **Read-only key inventory:** `pinterest_credential_encryption_inventory()` counts ciphertext formats/key IDs across all credential statuses, including revoked rows; counts malformed envelopes and canonical identity mismatches. It never decrypts tokens, returns account IDs, or calls Pinterest. Synthetic test and CI passed.
+- **Canonical identity guard:** the metadata-only connected-credential helper now reads `account_id` and `pinterest_user_id`, verifies exact `pinterest:<pinterest_user_id>` binding, and fails closed on mismatch. Model 2 scheduler draft/activation/worker preflight uses this same guard. Tests cover mismatch and no-token-read behavior.
+- **Publication lock ordering:** publication reservation now locks Model 2 profile → niche → assignment → connected-credential metadata before publication advisory lock/row. This removes the inverse lock order identified between failed-publication retries and scheduler reconciliation. Attributed retries must provide their explicit niche ID; un-attributed legacy Model 1 retries remain supported.
+- **Exact code CI PASS:** run `42611158364`, commit `739b1ae70d3b7a3b01ac7644a34f14f235ab0ecc`: **269 passed, 0 failed, 1 warning**. All 16 migrations recorded; fixture cleanup and PostgreSQL teardown passed.
+- **Backup/restore CI PASS:** run `42594318912` verified custom-format `pg_dump` and `pg_restore` between two isolated PostgreSQL 16 databases, preserving synthetic legacy schedule/source/job rows, all 16 migration records and required triggers. This is not a production-like snapshot or Neon restore proof.
+- Updated `docs/MODEL2-SCHEDULER-RECONCILIATION-DESIGN.md` and `docs/MODEL2-PHASE10-RELEASE-READINESS.md` with the current lock order, CI evidence and limitations.
+- **Still NOT DONE:** production key rotation; batch re-encryption of every credential row; production credential-key inventory; sanitized production-like backup/restore; Neon backup/PITR and owner-operated rollback rehearsal; production access/log-retention review.
+- Branch is still feature-only. No production DB/secrets, live OAuth refresh, scheduler activation, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
