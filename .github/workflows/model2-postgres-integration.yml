@@ -87,6 +87,7 @@ jobs:
           tests/test_model2_registry_migration.py
           tests/test_affiliate_scheduler.py
           tests/test_model2_registry_postgres.py
+          tests/test_model2_legacy_upgrade.py
 
       - name: Verify full migration ledger and fixture cleanup
         run: |
