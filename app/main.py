@@ -591,8 +591,24 @@ def pinterest_account_operation(
     method, path, body = allowed[operation]
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
+    expected_user_id = str(credential.get("pinterest_user_id") or "")
+    if not expected_user_id or payload.account_id != f"pinterest:{expected_user_id}":
+        raise HTTPException(status_code=409, detail="Stored Pinterest credential identity does not match the requested account.")
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+            identity_response = client.get(f"{base}/user_account", headers=headers)
+            if not identity_response.is_success:
+                raise HTTPException(
+                    status_code=401 if identity_response.status_code in (401, 403) else 502,
+                    detail="Stored Pinterest account could not be verified; operation was not sent.",
+                )
+            identity_data = identity_response.json()
+            actual_user_id = identity_data.get("id") if isinstance(identity_data, dict) else None
+            if not isinstance(actual_user_id, (str, int)) or str(actual_user_id) != expected_user_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Pinterest token identity does not match the requested account; operation was not sent.",
+                )
             response = client.request(method, f"{base}{path}", headers=headers, json=body)
         result = response.json() if response.content else {}
     except httpx.HTTPError as exc:
