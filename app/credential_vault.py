@@ -26,43 +26,102 @@ def _validate_account_identity(account_id: str, pinterest_user_id: str) -> None:
         raise ValueError("Pinterest account_id must match pinterest_user_id")
 
 
-def _cipher() -> AESGCM:
-    encoded = settings.pinterest_token_encryption_key
-    if not encoded:
-        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY is not configured")
+_ENVELOPE_MAGIC = b"PVLT"
+_ENVELOPE_VERSION = 1
+_MAX_KEY_ID_BYTES = 64
+
+
+def _decode_key(encoded: object, label: str) -> AESGCM:
+    if not isinstance(encoded, str) or not encoded:
+        raise TokenEncryptionConfigurationError(f"{label} is missing")
     try:
         key = base64.b64decode(encoded, validate=True)
-    except Exception as exc:
-        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY must be base64-encoded 32-byte key") from exc
+    except Exception:
+        raise TokenEncryptionConfigurationError(f"{label} must be base64-encoded") from None
     if len(key) != 32:
-        raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes")
+        raise TokenEncryptionConfigurationError(f"{label} must decode to exactly 32 bytes")
     return AESGCM(key)
 
 
+def _keyring() -> tuple[str, dict[str, AESGCM]]:
+    import json
+    import re
+    raw_ring = settings.pinterest_token_encryption_keys
+    if raw_ring:
+        try:
+            values = json.loads(raw_ring)
+        except (TypeError, ValueError):
+            raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEYS must be a JSON object") from None
+        if not isinstance(values, dict) or not values:
+            raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_KEYS must be a non-empty JSON object")
+        keys: dict[str, AESGCM] = {}
+        for key_id, encoded in values.items():
+            if not isinstance(key_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", key_id):
+                raise TokenEncryptionConfigurationError("Encryption key IDs must be 1-64 safe ASCII characters")
+            keys[key_id] = _decode_key(encoded, f"Encryption key '{key_id}'")
+        active_id = settings.pinterest_token_encryption_active_key_id
+        if not active_id or active_id not in keys:
+            raise TokenEncryptionConfigurationError("PINTEREST_TOKEN_ENCRYPTION_ACTIVE_KEY_ID must identify a configured key")
+        return active_id, keys
+    return "legacy", {"legacy": _decode_key(settings.pinterest_token_encryption_key, "PINTEREST_TOKEN_ENCRYPTION_KEY")}
+
+
 def token_encryption_key_is_valid() -> bool:
-    """Validate the configured AES-256-GCM key format without reading or exposing secret material."""
     try:
-        _cipher()
+        _keyring()
     except TokenEncryptionConfigurationError:
         return False
     return True
 
 
-def _encrypt(cipher: AESGCM, value: str, aad: bytes) -> bytes:
+def _encrypt(value: str, aad: bytes) -> bytes:
+    active_id, keys = _keyring()
+    key_id = active_id.encode("ascii")
     nonce = os.urandom(12)
-    return nonce + cipher.encrypt(nonce, value.encode("utf-8"), aad)
+    encrypted = keys[active_id].encrypt(nonce, value.encode("utf-8"), aad)
+    return _ENVELOPE_MAGIC + bytes((_ENVELOPE_VERSION, len(key_id))) + key_id + nonce + encrypted
 
+
+def _decrypt(blob: bytes, aad: bytes) -> str:
+    if blob.startswith(_ENVELOPE_MAGIC):
+        if len(blob) < 6:
+            raise TokenEncryptionConfigurationError("Encrypted credential envelope is truncated")
+        version, key_id_length = blob[4], blob[5]
+        if version != _ENVELOPE_VERSION or not 1 <= key_id_length <= _MAX_KEY_ID_BYTES:
+            raise TokenEncryptionConfigurationError("Encrypted credential envelope version or key ID is unsupported")
+        end = 6 + key_id_length
+        if len(blob) < end + 28:
+            raise TokenEncryptionConfigurationError("Encrypted credential envelope is truncated")
+        try:
+            key_id = blob[6:end].decode("ascii")
+        except UnicodeDecodeError:
+            raise TokenEncryptionConfigurationError("Encrypted credential envelope key ID is invalid") from None
+        _, keys = _keyring()
+        cipher = keys.get(key_id)
+        if cipher is None:
+            raise TokenEncryptionConfigurationError("Encrypted credential key ID is not present in the configured keyring")
+        return cipher.decrypt(blob[end:end + 12], blob[end + 12:], aad).decode("utf-8")
+    legacy = settings.pinterest_token_encryption_key
+    if legacy:
+        cipher = _decode_key(legacy, "PINTEREST_TOKEN_ENCRYPTION_KEY")
+    else:
+        _, keys = _keyring()
+        cipher = keys.get("legacy")
+        if cipher is None:
+            raise TokenEncryptionConfigurationError("Legacy Pinterest credentials require the original encryption key")
+    if len(blob) < 28:
+        raise TokenEncryptionConfigurationError("Legacy encrypted credential is truncated")
+    return cipher.decrypt(blob[:12], blob[12:], aad).decode("utf-8")
 
 def store_pinterest_credential(payload: dict[str, Any]) -> dict[str, Any]:
     """Encrypt token material before it reaches PostgreSQL; never return token fields."""
     account_id = str(payload["account_id"])
     user_id = str(payload["pinterest_user_id"])
     _validate_account_identity(account_id, user_id)
-    cipher = _cipher()
     access = str(payload["access_token"])
     refresh = str(payload.get("refresh_token") or "")
-    access_blob = _encrypt(cipher, access, f"{account_id}:access".encode())
-    refresh_blob = _encrypt(cipher, refresh, f"{account_id}:refresh".encode()) if refresh else None
+    access_blob = _encrypt(access, f"{account_id}:access".encode())
+    refresh_blob = _encrypt(refresh, f"{account_id}:refresh".encode()) if refresh else None
     with connection() as conn:
         row = conn.execute(
             """
@@ -95,7 +154,6 @@ def store_pinterest_credential(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _read_access_credential(account_id: str) -> dict[str, Any]:
-    cipher = _cipher()
     with connection() as conn:
         row = conn.execute(
             """SELECT account_id, pinterest_user_id, username, access_token_ciphertext,
@@ -107,7 +165,7 @@ def _read_access_credential(account_id: str) -> dict[str, Any]:
         raise LookupError("Pinterest account is not connected")
     _validate_account_identity(str(row["account_id"]), str(row["pinterest_user_id"]))
     blob = bytes(row["access_token_ciphertext"])
-    token = cipher.decrypt(blob[:12], blob[12:], f"{account_id}:access".encode()).decode("utf-8")
+    token = _decrypt(blob, f"{account_id}:access".encode())
     return {"account_id": row["account_id"], "pinterest_user_id": row["pinterest_user_id"], "username": row["username"], "access_token": token, "token_type": row["token_type"], "scope": row["scope"], "expires_at": row["expires_at"]}
 
 
@@ -204,7 +262,6 @@ def get_pinterest_credential(account_id: str) -> dict[str, Any]:
 
 def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
     """Decrypt the refresh token only for a trusted server-side token refresh."""
-    cipher = _cipher()
     with connection() as conn:
         row = conn.execute(
             """SELECT account_id, pinterest_user_id, username, refresh_token_ciphertext,
@@ -216,7 +273,7 @@ def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
         raise LookupError("Pinterest refresh credential is not available")
     _validate_account_identity(str(row["account_id"]), str(row["pinterest_user_id"]))
     blob = bytes(row["refresh_token_ciphertext"])
-    refresh_token = cipher.decrypt(blob[:12], blob[12:], f"{account_id}:refresh".encode()).decode("utf-8")
+    refresh_token = _decrypt(blob, f"{account_id}:refresh".encode())
     return {
         "account_id": row["account_id"],
         "pinterest_user_id": row["pinterest_user_id"],
