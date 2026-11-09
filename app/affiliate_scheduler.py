@@ -4,16 +4,15 @@ This module only stores sources and enqueues jobs. It never calls Pinterest.
 """
 from __future__ import annotations
 
-import hmac
 from datetime import date, datetime, time, timedelta, timezone
 from urllib.parse import urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-from app.config import settings
+from app.auth import require_api_key
 from app.database import connection
 from app.model2_domain import AccountId
 
@@ -35,13 +34,6 @@ def _complete_schedule_if_terminal(conn, schedule_id: int) -> None:
     )
 
 
-
-
-def require_scheduler_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    if not settings.app_api_key:
-        raise HTTPException(status_code=503, detail="API authentication is not configured.")
-    if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
 
 class AffiliateSourceInput(BaseModel):
@@ -139,7 +131,7 @@ def _validate_model2_schedule_context(conn, *, account_id: str, niche_id: int, t
     return profile["timezone"]
 
 
-@router.post("/schedules", status_code=201, dependencies=[Depends(require_scheduler_key)])
+@router.post("/schedules", status_code=201, dependencies=[Depends(require_api_key)])
 def create_draft_schedule(payload: CreateScheduleInput) -> dict[str, object]:
     """Store up to ten URLs as a draft; no jobs are queued and nothing is published."""
     if payload.starts_on < datetime.now(ZoneInfo(payload.timezone)).date():
