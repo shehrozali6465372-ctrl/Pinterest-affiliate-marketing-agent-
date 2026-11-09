@@ -15,6 +15,12 @@ class TokenEncryptionConfigurationError(RuntimeError):
     """Raised only when the token-encryption key is missing or invalid."""
 
 
+def _validate_account_identity(account_id: str, pinterest_user_id: str) -> None:
+    """Reject credential rows whose canonical account key disagrees with Pinterest identity."""
+    if not pinterest_user_id or account_id != f"pinterest:{pinterest_user_id}":
+        raise ValueError("Pinterest account_id must match pinterest_user_id")
+
+
 def _cipher() -> AESGCM:
     encoded = settings.pinterest_token_encryption_key
     if not encoded:
@@ -44,9 +50,10 @@ def _encrypt(cipher: AESGCM, value: str, aad: bytes) -> bytes:
 
 def store_pinterest_credential(payload: dict[str, Any]) -> dict[str, Any]:
     """Encrypt token material before it reaches PostgreSQL; never return token fields."""
-    cipher = _cipher()
     account_id = str(payload["account_id"])
     user_id = str(payload["pinterest_user_id"])
+    _validate_account_identity(account_id, user_id)
+    cipher = _cipher()
     access = str(payload["access_token"])
     refresh = str(payload.get("refresh_token") or "")
     access_blob = _encrypt(cipher, access, f"{account_id}:access".encode())
@@ -93,6 +100,7 @@ def _read_access_credential(account_id: str) -> dict[str, Any]:
         ).fetchone()
     if not row or row["status"] != "connected":
         raise LookupError("Pinterest account is not connected")
+    _validate_account_identity(str(row["account_id"]), str(row["pinterest_user_id"]))
     blob = bytes(row["access_token_ciphertext"])
     token = cipher.decrypt(blob[:12], blob[12:], f"{account_id}:access".encode()).decode("utf-8")
     return {"account_id": row["account_id"], "pinterest_user_id": row["pinterest_user_id"], "username": row["username"], "access_token": token, "token_type": row["token_type"], "scope": row["scope"], "expires_at": row["expires_at"]}
@@ -201,6 +209,7 @@ def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
         ).fetchone()
     if not row or row["status"] != "connected" or not row["refresh_token_ciphertext"]:
         raise LookupError("Pinterest refresh credential is not available")
+    _validate_account_identity(str(row["account_id"]), str(row["pinterest_user_id"]))
     blob = bytes(row["refresh_token_ciphertext"])
     refresh_token = cipher.decrypt(blob[:12], blob[12:], f"{account_id}:refresh".encode()).decode("utf-8")
     return {
