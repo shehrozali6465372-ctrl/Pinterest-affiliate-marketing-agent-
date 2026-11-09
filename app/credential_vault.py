@@ -286,6 +286,67 @@ def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
 
 
 
+
+def _ciphertext_key_id(blob: bytes | memoryview | None) -> str:
+    """Return an envelope key ID without decrypting or exposing token material."""
+    import re
+
+    if blob is None:
+        return "absent"
+    raw = bytes(blob)
+    if raw.startswith(_ENVELOPE_MAGIC):
+        if len(raw) < 6:
+            return "invalid"
+        version, key_id_length = raw[4], raw[5]
+        if version != _ENVELOPE_VERSION or not 1 <= key_id_length <= _MAX_KEY_ID_BYTES:
+            return "invalid"
+        end = 6 + key_id_length
+        if len(raw) < end + 28:
+            return "invalid"
+        try:
+            key_id = raw[6:end].decode("ascii")
+        except UnicodeDecodeError:
+            return "invalid"
+        return key_id if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", key_id) else "invalid"
+    return "legacy" if len(raw) >= 28 else "invalid"
+
+
+def pinterest_credential_encryption_inventory() -> dict[str, Any]:
+    """Return aggregate ciphertext key-ID counts across all credential statuses.
+
+    This is read-only metadata inspection. It includes revoked rows and never
+    decrypts, returns, or logs token material or account identifiers.
+    """
+    with connection() as conn:
+        rows = conn.execute(
+            """SELECT account_id, pinterest_user_id, status,
+                      access_token_ciphertext, refresh_token_ciphertext
+               FROM pinterest_credentials ORDER BY account_id"""
+        ).fetchall()
+
+    access_counts: dict[str, int] = {}
+    refresh_counts: dict[str, int] = {}
+    invalid_identity_rows = 0
+    for row in rows:
+        try:
+            _validate_account_identity(str(row["account_id"]), str(row["pinterest_user_id"]))
+        except (KeyError, TypeError, ValueError):
+            invalid_identity_rows += 1
+        access_id = _ciphertext_key_id(row.get("access_token_ciphertext"))
+        refresh_id = _ciphertext_key_id(row.get("refresh_token_ciphertext"))
+        access_counts[access_id] = access_counts.get(access_id, 0) + 1
+        refresh_counts[refresh_id] = refresh_counts.get(refresh_id, 0) + 1
+
+    return {
+        "credential_rows": len(rows),
+        "invalid_identity_rows": invalid_identity_rows,
+        "access_token_key_ids": dict(sorted(access_counts.items())),
+        "refresh_token_key_ids": dict(sorted(refresh_counts.items())),
+        "includes_revoked_rows": True,
+        "tokens_decrypted": False,
+    }
+
+
 def reencrypt_pinterest_credential(account_id: str) -> dict[str, Any]:
     """Re-encrypt one stored credential under the active key; never calls Pinterest.
 
