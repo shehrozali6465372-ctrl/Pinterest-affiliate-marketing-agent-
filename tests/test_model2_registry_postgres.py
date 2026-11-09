@@ -88,11 +88,12 @@ def model2_db(monkeypatch):
         }
     finally:
         with database.connection() as conn:
-            # Audit is append-only in application transactions. TRUNCATE is used
-            # only against this dedicated disposable CI database during teardown.
-            conn.execute("TRUNCATE TABLE affiliate_job_reconciliation_audit")
-            # TEST_DATABASE_URL must point to a dedicated disposable database.
-            # TRUNCATE bypasses immutable-row triggers only for test teardown.
+            # Remove only this test fixture's audit rows; the audit table
+            # rejects UPDATE, DELETE and TRUNCATE even in disposable CI.
+            conn.execute(
+                "DELETE FROM affiliate_job_reconciliation_audit WHERE account_id LIKE %s",
+                ("pinterest:test-model2-%",),
+            )
             conn.execute(
                 "TRUNCATE TABLE model2_learning_snapshot_sources, model2_publication_niche_attributions"
             )
@@ -2281,6 +2282,27 @@ def test_scheduler_reconciliation_audit_is_immutable(model2_db):
                         "UPDATE affiliate_job_reconciliation_audit SET outcome = 'succeeded' WHERE job_id = %s",
                         (job_id,),
                     )
+
+def test_scheduler_reconciliation_audit_rejects_truncate(model2_db):
+    with database.connection() as conn:
+        job_id, _ = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
+            suffix=f"audit-truncate-{model2_db['suffix']}", publication_status=None,
+        )
+    database.reconcile_scheduler_job(
+        job_id, account_id=model2_db["account_a"], outcome="failed",
+        pinterest_pin_id=None,
+        operator_evidence="Operator confirmed the synthetic Pin is absent.",
+        confirm_pin_absent=True,
+    )
+    with database.connection() as conn:
+        with pytest.raises(RaiseException, match="append-only"):
+            with conn.transaction():
+                conn.execute("TRUNCATE TABLE affiliate_job_reconciliation_audit")
+        assert conn.execute(
+            "SELECT count(*) AS n FROM affiliate_job_reconciliation_audit WHERE job_id = %s",
+            (job_id,),
+        ).fetchone()["n"] == 1
 
 
 
