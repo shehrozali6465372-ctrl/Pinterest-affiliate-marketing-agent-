@@ -234,3 +234,11 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - Pinterest Learning Loop run `42611471024` called the Render production `/learning-loop/run` endpoint and reported `ok=false`, 17 Pins checked, 16 analytics snapshots saved, descriptive evaluation only, and `model_trained=false`. This confirms live analytics ingestion/snapshot writes, not Pin publishing.
 - The assistant did not dispatch these runs and did not change or disable workflows on `main`. The feature branch remains unmerged and undeployed.
 - **Release gate:** owner must explicitly decide whether the main-branch cron workflows should be disabled until go-live approval. Do not merge/deploy this feature branch or enable/dispatch any worker without separate approval. If the owner wants to confirm job 13's publication outcome, authorize a narrowly scoped read-only production ledger/log inspection; do not query production data without that approval.
+
+
+### Follow-up read-only Pinterest verification hardening (2026-11-09)
+
+- Added bounded GET-only Board enumeration and exact-name Board resolution; missing/duplicate names, invalid/repeated pagination cursors, provider errors and incomplete pagination fail closed. No Board creation.
+- Existing publication verification now uses a credential reader that refuses expired/unknown-expiry tokens instead of silently refreshing OAuth.
+- These are read-only verification safeguards. The feature branch's existing atomic scheduler reconciliation endpoint and runbook remain the authoritative recovery path. Exact-head tests and PostgreSQL CI must be rerun after this follow-up.
+- Latest-base local suite after this follow-up: **336 passed, 74 skipped, 1 non-blocking warning**. PostgreSQL backup/restore and populated legacy-upgrade modules require disposable PostgreSQL and were not run locally; exact-head CI is still required.

@@ -749,7 +749,7 @@ def verify_publication_on_pinterest(publication_id: int) -> dict[str, object]:
     if publication_id <= 0:
         raise HTTPException(status_code=422, detail="publication_id must be positive")
     from app.database import get_publication
-    from app.credential_vault import get_pinterest_credential
+    from app.credential_vault import get_pinterest_credential_read_only
     from app.pinterest import PinterestReadError, get_pin_read_only, list_board_pins_read_only
     try:
         publication = get_publication(publication_id)
@@ -759,7 +759,7 @@ def verify_publication_on_pinterest(publication_id: int) -> dict[str, object]:
             raise HTTPException(status_code=409, detail="Only a confirmed successful publication can be verified")
         if not publication.get("account_id") or not publication.get("board_id"):
             raise HTTPException(status_code=409, detail="Publication is missing account or board ownership metadata")
-        credential = get_pinterest_credential(publication["account_id"])
+        credential = get_pinterest_credential_read_only(publication["account_id"])
         token = credential["access_token"]
         board = list_board_pins_read_only(board_id=str(publication["board_id"]), access_token=token)
         pin = get_pin_read_only(pin_id=str(publication["pinterest_pin_id"]), access_token=token)

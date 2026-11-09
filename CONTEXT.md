@@ -922,3 +922,13 @@ This section supersedes older entries above that describe the keyring, credentia
 - The code-bearing scheduler lock-order correction was tested at commit `3562ef346ec03e6b31815aef4dfb1b9f3c2f0cfe` in run `42611981311` with the same **274 passed** result. The later commits through `97acb108300e69845f49ec9b9c7eaa30efb79979` only updated CONTEXT/readiness/design documentation; the exact-head CI run also passed.
 - Branch comparison: 152 commits ahead of `main`, 0 behind. No PR for this feature branch, merge, deployment, production migration, production DB access, or production secret changes were performed by the assistant.
 - The active default-branch scheduled workflows and the unresolved publication outcome of worker job 13 are recorded in the operational correction section above. Owner decision is required before changing or disabling production workflows; an authorized read-only production ledger/log inspection is required to establish whether job 13 created a new Pin.
+
+
+### Follow-up read-only Pinterest verification hardening (2026-11-09)
+
+- Added `list_boards_read_only` and `resolve_board_id_read_only` in `app/pinterest.py`: GET-only bounded pagination, malformed/repeated cursor rejection, complete-pagination requirement, and exactly-one case-insensitive exact board-name match. No Board creation.
+- Added `get_pinterest_credential_read_only` in `app/credential_vault.py` and changed the existing publication verification endpoint to use it. This path rejects expired/unknown-expiry credentials and must never invoke OAuth refresh.
+- Added unit coverage for board pagination/resolution, no-refresh credential handling and the connection-scoped legacy publication reconciliation helper. The feature branch's existing atomic scheduler-job reconciliation implementation remains authoritative; these helpers do not replace it.
+- Local test runtime `/tmp/pinterest-phase10-venv`; latest-base full suite and updated disposable PostgreSQL CI must be rerun after this integration. No production database, OAuth refresh, Pin/Board write, scheduler dispatch, or deployment.
+- Latest-base local verification after integrating the read-only helpers: **336 passed, 74 skipped, 1 non-blocking Starlette/httpx warning**. The two PostgreSQL backup/legacy-upgrade integration modules were excluded locally because no disposable `TEST_DATABASE_URL` can be provided on this runtime; the remaining DB-gated tests skipped normally. `APP_API_KEY` was set to a disposable local test value and no production credentials were used.
+- Fixed an existing manual-publish auth test fixture to configure a dummy credential-ingest key before asserting a missing header returns 401; production fail-closed auth behavior was not changed.

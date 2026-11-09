@@ -38,6 +38,72 @@ class PinterestReadError(RuntimeError):
     """A sanitized error from a read-only Pinterest verification request."""
 
 
+def list_boards_read_only(
+    *, access_token: str, page_size: int = 100, max_pages: int = 100,
+) -> dict[str, object]:
+    """Read the complete authenticated account board list using GET only."""
+    if not access_token or not access_token.strip():
+        raise ValueError("access_token is required")
+    if not 1 <= page_size <= 250 or not 1 <= max_pages <= 100:
+        raise ValueError("page_size or max_pages is outside the supported safety bound")
+    endpoint = f"{settings.pinterest_api_base_url.rstrip('/')}/boards"
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    items: list[dict[str, object]] = []
+    seen: set[str] = set()
+    bookmark: str | None = None
+    try:
+        with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+            for _ in range(max_pages):
+                params: dict[str, object] = {"page_size": page_size}
+                if bookmark is not None:
+                    params["bookmark"] = bookmark
+                response = client.get(endpoint, headers=headers, params=params)
+                if response.status_code >= 400:
+                    raise PinterestReadError(f"Pinterest board-list read failed with HTTP {response.status_code}")
+                try:
+                    body = response.json()
+                except ValueError as exc:
+                    raise PinterestReadError("Pinterest board-list read returned invalid JSON") from exc
+                if not isinstance(body, dict) or not isinstance(body.get("items"), list):
+                    raise PinterestReadError("Pinterest board-list response has an invalid items collection")
+                for item in body["items"]:
+                    if not isinstance(item, dict) or not isinstance(item.get("id"), (str, int)) or not str(item["id"]).strip():
+                        raise PinterestReadError("Pinterest board-list response contains an invalid board record")
+                    items.append(item)
+                next_bookmark = body.get("bookmark")
+                if next_bookmark in (None, ""):
+                    return {"items": items, "pages_read": len(seen) + 1, "pagination_complete": True}
+                if not isinstance(next_bookmark, str) or not next_bookmark.strip() or next_bookmark in seen:
+                    raise PinterestReadError("Pinterest board-list pagination bookmark is invalid or repeated")
+                seen.add(next_bookmark)
+                bookmark = next_bookmark
+        raise PinterestReadError("Pinterest board-list pagination safety limit reached; verification incomplete")
+    except httpx.RequestError as exc:
+        raise PinterestReadError("Pinterest board-list read failed due to a transport error") from exc
+
+
+def resolve_board_id_read_only(*, board_name: str, access_token: str) -> dict[str, object]:
+    """Resolve exactly one existing board by case-insensitive exact name; never create one."""
+    if not board_name or not board_name.strip():
+        raise ValueError("board_name is required")
+    listing = list_boards_read_only(access_token=access_token)
+    matches = [
+        item for item in listing["items"]
+        if isinstance(item.get("name"), str)
+        and item["name"].casefold() == board_name.strip().casefold()
+    ]
+    if not matches:
+        raise PinterestReadError("No exact-name Pinterest board was found on the connected account")
+    if len(matches) != 1:
+        raise PinterestReadError("Multiple exact-name Pinterest boards were found; board identity is ambiguous")
+    return {
+        "board_id": str(matches[0]["id"]),
+        "board_name": matches[0]["name"],
+        "pages_read": listing["pages_read"],
+        "pagination_complete": listing["pagination_complete"],
+    }
+
+
 def list_board_pins_read_only(
     *, board_id: str, access_token: str, page_size: int = 250, max_pages: int = 100,
 ) -> dict[str, object]:

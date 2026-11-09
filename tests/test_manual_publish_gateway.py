@@ -109,7 +109,8 @@ def test_manual_publish_gateway_uses_credential_ledger_and_mock_pinterest(gatewa
     assert gateway["http"].calls[-1][2]["json"]["link"] == PAYLOAD["destination_url"]
 
 
-def test_manual_publish_gateway_requires_service_auth():
+def test_manual_publish_gateway_requires_service_auth(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "test-ingest-key")
     response = client.post(
         "/integrations/pinterest/publish-manual", json=PAYLOAD,
         headers={"Idempotency-Key": "manual-pin-key-0002"},

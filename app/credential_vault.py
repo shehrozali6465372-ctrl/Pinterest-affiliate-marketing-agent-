@@ -261,6 +261,21 @@ def get_pinterest_credential(account_id: str) -> dict[str, Any]:
     return current
 
 
+def get_pinterest_credential_read_only(account_id: str) -> dict[str, Any]:
+    """Read/decrypt an unexpired access token without ever refreshing OAuth.
+
+    A missing or near-expiry timestamp fails closed. This is for verification
+    paths that must not issue the OAuth refresh POST as a hidden side effect.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    current = _read_access_credential(account_id)
+    expiry = _as_utc(current.get("expires_at"))
+    if expiry is None or expiry <= datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise RuntimeError("Pinterest access token is expired or expiry is unknown; read-only operation will not refresh it")
+    return current
+
+
 def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
     """Decrypt the refresh token only for a trusted server-side token refresh."""
     with connection() as conn:

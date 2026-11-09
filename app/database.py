@@ -692,16 +692,19 @@ def get_publication(publication_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-def reconcile_unknown_publication(
-    publication_id: int, *, outcome: str, pinterest_pin_id: str | None = None,
+def reconcile_unknown_publication_in_transaction(
+    conn,
+    publication_id: int,
+    *,
+    outcome: str,
+    pinterest_pin_id: str | None = None,
     operator_evidence: str,
 ) -> dict:
-    """Resolve an uncertain publish only after an operator verifies Pinterest state.
+    """Reconcile one publication using the caller's existing transaction.
 
-    `outcome='succeeded'` requires a Pin ID copied from the verified board listing.
-    `outcome='failed'` requires explicit operator confirmation that the Pin is absent.
-    This function never calls Pinterest and never makes an uncertain result retryable
-    without the caller supplying that verification evidence.
+    The caller owns transaction boundaries. This enables a scheduler job and its
+    publication ledger row to be changed atomically without opening a second
+    pooled connection. This helper never calls Pinterest or makes a publish call.
     """
     evidence = operator_evidence.strip()
     if not evidence or len(evidence) > 2000:
@@ -719,51 +722,79 @@ def reconcile_unknown_publication(
     else:
         raise ValueError("outcome must be 'succeeded' or 'failed'")
 
-    with connection() as conn:
-        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"publication-reconcile:{publication_id}",))
-        row = conn.execute(
-            "SELECT * FROM pin_publications WHERE id = %s FOR UPDATE",
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+        (f"publication-reconcile:{publication_id}",),
+    )
+    row = conn.execute(
+        "SELECT * FROM pin_publications WHERE id = %s FOR UPDATE",
+        (publication_id,),
+    ).fetchone()
+    if row is None:
+        raise LookupError("publication record was not found")
+    if row["status"] == "pending":
+        stale = conn.execute(
+            """SELECT updated_at <= now() - interval '10 minutes' AS stale
+               FROM pin_publications WHERE id = %s""",
             (publication_id,),
         ).fetchone()
-        if row is None:
-            raise LookupError("publication record was not found")
-        if row["status"] == "pending":
-            stale = conn.execute(
-                """SELECT updated_at <= now() - interval '10 minutes' AS stale
-                   FROM pin_publications WHERE id = %s""",
-                (publication_id,),
-            ).fetchone()
-            if not stale or not stale["stale"]:
-                raise ValueError("pending publication must be at least 10 minutes old before operator reconciliation")
-        elif row["status"] != "unknown":
-            raise ValueError("only unknown or stale pending publications may be reconciled")
-        if next_status == "succeeded":
-            saved = conn.execute(
-                """UPDATE pin_publications
-                   SET status = 'succeeded', pinterest_pin_id = %s,
-                       error_code = NULL,
-                       response_metadata = COALESCE(response_metadata, '{}'::jsonb)
-                           || jsonb_build_object('reconciliation', jsonb_build_object(
-                               'method', 'operator_board_verification', 'evidence', %s::text)),
-                       updated_at = now()
-                   WHERE id = %s RETURNING *""",
-                (pin_id, evidence, publication_id),
-            ).fetchone()
-        else:
-            saved = conn.execute(
-                """UPDATE pin_publications
-                   SET status = 'failed', pinterest_pin_id = NULL,
-                       error_code = 'operator_verified_pin_absent',
-                       response_metadata = COALESCE(response_metadata, '{}'::jsonb)
-                           || jsonb_build_object('reconciliation', jsonb_build_object(
-                               'method', 'operator_board_verification', 'evidence', %s::text)),
-                       updated_at = now()
-                   WHERE id = %s RETURNING *""",
-                (evidence, publication_id),
-            ).fetchone()
-        if saved is None:
-            raise RuntimeError("publication reconciliation did not persist")
-        return dict(saved)
+        if not stale or not stale["stale"]:
+            raise ValueError("pending publication must be at least 10 minutes old before operator reconciliation")
+    elif row["status"] != "unknown":
+        raise ValueError("only unknown or stale pending publications may be reconciled")
+    if next_status == "succeeded":
+        saved = conn.execute(
+            """UPDATE pin_publications
+               SET status = 'succeeded', pinterest_pin_id = %s,
+                   error_code = NULL,
+                   response_metadata = COALESCE(response_metadata, '{}'::jsonb)
+                       || jsonb_build_object('reconciliation', jsonb_build_object(
+                           'method', 'operator_board_verification', 'evidence', %s::text)),
+                   updated_at = now()
+               WHERE id = %s RETURNING *""",
+            (pin_id, evidence, publication_id),
+        ).fetchone()
+    else:
+        saved = conn.execute(
+            """UPDATE pin_publications
+               SET status = 'failed', pinterest_pin_id = NULL,
+                   error_code = 'operator_verified_pin_absent',
+                   response_metadata = COALESCE(response_metadata, '{}'::jsonb)
+                       || jsonb_build_object('reconciliation', jsonb_build_object(
+                           'method', 'operator_board_verification', 'evidence', %s::text)),
+                   updated_at = now()
+               WHERE id = %s RETURNING *""",
+            (evidence, publication_id),
+        ).fetchone()
+    if saved is None:
+        raise RuntimeError("publication reconciliation did not persist")
+    return dict(saved)
+
+
+def reconcile_unknown_publication(
+    publication_id: int, *, outcome: str, pinterest_pin_id: str | None = None,
+    operator_evidence: str,
+) -> dict:
+    """Resolve an uncertain publish using its own transaction; never calls Pinterest."""
+    # Validate caller input before acquiring a database connection. This keeps
+    # malformed requests deterministic even when DATABASE_URL is unavailable.
+    evidence = operator_evidence.strip()
+    if not evidence or len(evidence) > 2000:
+        raise ValueError("operator_evidence must be non-empty and at most 2000 characters")
+    if outcome == "succeeded" and (not pinterest_pin_id or not pinterest_pin_id.strip()):
+        raise ValueError("verified Pinterest Pin ID is required for succeeded reconciliation")
+    if outcome == "failed" and pinterest_pin_id:
+        raise ValueError("Pin ID must be omitted when confirming no Pin exists")
+    if outcome not in {"succeeded", "failed"}:
+        raise ValueError("outcome must be 'succeeded' or 'failed'")
+    with connection() as conn:
+        return reconcile_unknown_publication_in_transaction(
+            conn,
+            publication_id,
+            outcome=outcome,
+            pinterest_pin_id=pinterest_pin_id,
+            operator_evidence=operator_evidence,
+        )
 
 
 
