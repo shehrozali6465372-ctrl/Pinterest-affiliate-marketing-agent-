@@ -486,6 +486,56 @@ def test_end_to_end_publish_checks_pinterest_before_generating_image(monkeypatch
 
 
 
+def test_end_to_end_image_provider_error_is_redacted_from_response_and_logs(monkeypatch, caplog):
+    import logging
+    import app.workflow as workflow
+    from app.media_generation import ImageGenerationError
+
+    secret_marker = "provider-secret-token-marker"
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    _stub_generation_reservation(monkeypatch, workflow)
+    monkeypatch.setattr(
+        workflow,
+        "get_pinterest_credential",
+        lambda account_id: {"access_token": "test-token", "pinterest_user_id": "test-account"},
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_pinterest_request",
+        lambda method, path, token, **kwargs: (
+            200,
+            {"id": "test-account"} if path == "/user_account" else {
+                "items": [{"id": "board-test", "name": "Modern Living Hub | Kitchen & Home Organization"}]
+            },
+        ),
+    )
+
+    def fail_image(**kwargs):
+        raise ImageGenerationError(f"provider rejected request; {secret_marker}")
+
+    monkeypatch.setattr(workflow, "generate_pin_image", fail_image)
+    with caplog.at_level(logging.ERROR, logger="app.workflow"):
+        response = client.post(
+            "/workflow/publish-product",
+            json={
+                "product_name": "Test spice rack",
+                "product_details": "Three-tier kitchen organizer.",
+                "affiliate_url": "https://example.com/affiliate",
+                "account_id": "pinterest:test-account",
+            },
+            headers={
+                "X-API-Key": "private-test-api-key",
+                "Idempotency-Key": "image-error-redaction-123",
+            },
+        )
+
+    assert response.status_code == 503
+    assert secret_marker not in response.text
+    assert secret_marker not in caplog.text
+    assert "exception_type=ImageGenerationError" in caplog.text
+
+
 def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(monkeypatch):
     from fastapi import HTTPException
     import app.workflow as workflow
