@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import logging
 import uuid
@@ -13,6 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
+from app.auth import require_api_key
 from app.content_generation import (
     ContentGenerationError, GeneratedContent, NICHE_PROMPT_VERSION,
     NichePromptContext, PROMPT_VERSION, generate_pin_content,
@@ -34,10 +34,6 @@ from app.model2_repository import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflow", tags=["end-to-end"])
-
-def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    if not settings.app_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
 
 class ProductWorkflowInput(BaseModel):
@@ -121,7 +117,7 @@ def _ensure_board(token: str, name: str, description: str = "") -> str:
     raise HTTPException(status_code=422, detail="The requested Pinterest board does not exist on this connected account. Create it in Pinterest, then retry; this workflow does not create boards.")
 
 
-@router.post("/publish-product", dependencies=[Depends(_require_api_key)])
+@router.post("/publish-product", dependencies=[Depends(require_api_key)])
 def publish_product_end_to_end(
     payload: ProductWorkflowInput,
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
