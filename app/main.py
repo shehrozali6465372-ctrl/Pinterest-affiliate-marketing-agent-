@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
-from app.auth import require_api_key
+from app.auth import require_api_key, require_credential_ingest_key
 from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
 from app.publishing_gateway import publish_pin
 
@@ -132,17 +132,6 @@ class PinterestCredentialInput(BaseModel):
 class PublishRequest(BaseModel):
     product_id: int = Field(gt=0)
     content_version_id: int = Field(gt=0)
-
-
-def require_credential_ingest_key(
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
-) -> None:
-    """Require the separately scoped trusted-Hub service credential; fail closed on misconfiguration."""
-    expected = settings.pinterest_credential_ingest_key
-    if not expected:
-        raise HTTPException(status_code=503, detail="Credential-ingest authentication is not configured.")
-    if not x_credential_ingest_key or not hmac.compare_digest(x_credential_ingest_key, expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
 
 
 
