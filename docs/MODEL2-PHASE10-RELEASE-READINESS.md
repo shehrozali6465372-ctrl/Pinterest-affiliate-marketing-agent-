@@ -210,3 +210,15 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - Synthetic regression verifies revoked rows are included, malformed identity/envelope states are counted, and the decrypt function is never invoked.
 - Exact-head CI run `42594679834`, commit `8738194e9715278f835da665b6a58348ccaa7086`: **266 passed, 0 failed, 1 warning**. All 16 migrations, fixture cleanup and PostgreSQL teardown passed.
 - This makes a future operator-led rotation easier to reconcile, but does not perform batch re-encryption or prove production key coverage. Production key rotation remains NOT DONE; backup/restore against a sanitized production-like snapshot remains open.
+
+
+
+### Current verified security and recovery status — supersedes earlier pending notes (2026-11-09)
+
+- Versioned AES-256-GCM credential keyring, legacy ciphertext compatibility, per-account re-encryption primitive, canonical Pinterest identity checks, and read-only aggregate credential key inventory are implemented on the feature branch.
+- Connected-state preflight now verifies the stored `account_id` exactly matches `pinterest:<pinterest_user_id>`; Model 2 schedule creation/activation/worker preflight rejects a connected row with mismatched identity without reading or decrypting token bytes.
+- Publication reservation now follows account/profile → niche → assignment → credential metadata → publication advisory lock → publication row. An attributed retry requires the exact explicit niche context. This removes the previously identified inverse lock-order path against scheduler reconciliation.
+- Synthetic PostgreSQL CI exact-head run `42611158364`, commit `739b1ae70d3b7a3b01ac7644a34f14f235ab0ecc`: **269 passed, 0 failed, 1 warning**. All 16 migrations recorded; fixture cleanup and PostgreSQL teardown passed.
+- Synthetic custom-format PostgreSQL 16 backup/restore rehearsal separately passed in run `42594318912` (**265 passed** at that checkpoint). It verifies legacy rows/schema and triggers after restore into a second disposable database.
+- These are CI/synthetic results only. Production key rotation, complete production credential re-encryption, sanitized production-like snapshot restore, Neon PITR/backup configuration, owner-operated restore/rollback rehearsal and production access review remain **NOT DONE**.
+- The branch remains unmerged and undeployed. No production DB or secrets were accessed/changed; no live OAuth refresh, scheduler activation, real Pin/Board creation, PR or merge occurred.
