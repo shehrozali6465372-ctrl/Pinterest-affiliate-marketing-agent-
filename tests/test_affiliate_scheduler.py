@@ -211,6 +211,7 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
         }
 
     monkeypatch.setattr(affiliate_scheduler, "connection", fake_connection)
+    monkeypatch.setattr(affiliate_scheduler, "_finalize_claimed_job", lambda *args, **kwargs: True)
     monkeypatch.setattr(workflow, "publish_product_end_to_end", fake_workflow)
 
     result = affiliate_scheduler.run_one_due_job()
