@@ -134,3 +134,10 @@ Current CI emits a Starlette/httpx TestClient deprecation warning and GitHub Act
 - [ ] Owner explicitly approves production migration, deployment, and any scheduler activation as separate actions.
 
 **Phase 10 status remains PRE-RELEASE / BLOCKED.** Passing disposable CI is not production readiness, migration approval, deployment approval or authorization to publish Pins.
+
+
+### Phase 10 — Security review follow-up (2026-11-09)
+
+- Reconciliation audit immutability now covers row-level UPDATE/DELETE and statement-level TRUNCATE through database triggers. CI fixture teardown uses scoped DELETE rather than bypassing the trigger with TRUNCATE; a PostgreSQL regression test verifies TRUNCATE is rejected and the audit row remains.
+- Authentication remains shared service-key authentication. It does not identify a human operator or provide per-person authorization/non-repudiation. The audit's free-text evidence is operator-supplied and must not contain credentials or sensitive personal data. A future per-operator identity model requires a real authenticated principal, not a caller-controlled identity header.
+- Database owners/superusers can disable/drop triggers or otherwise alter the audit table; append-only triggers protect against ordinary application SQL, not privileged DBA tampering.
