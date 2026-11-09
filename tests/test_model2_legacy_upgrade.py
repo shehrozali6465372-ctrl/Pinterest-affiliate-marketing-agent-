@@ -58,7 +58,7 @@ def test_populated_legacy_model1_scheduler_survives_model2_migrations():
                 path for path in MIGRATIONS.glob("[0-9]*.sql")
                 if path.name[:3].isdigit() and int(path.name[:3]) <= 13
             )
-            assert len(legacy_migrations) == 13
+            assert len(legacy_migrations) == 14
             for migration in legacy_migrations:
                 conn.execute(migration.read_text(encoding="utf-8"))
                 conn.execute(
