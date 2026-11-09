@@ -101,8 +101,8 @@ def model2_db(monkeypatch):
                 (f"model2-test-pin-{suffix}%",),
             )
             conn.execute(
-                "DELETE FROM pin_publications WHERE account_id IN (%s, %s) AND board_id LIKE %s",
-                (account_a, account_b, f"test-board-{suffix}%"),
+                "DELETE FROM pin_publications WHERE account_id IN (%s, %s, %s)",
+                (account_a, account_b, account_c),
             )
             conn.execute(
                 "DELETE FROM content_versions WHERE product_id IN "
