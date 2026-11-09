@@ -143,3 +143,20 @@ def test_operator_reencryption_updates_one_row_without_pinterest_calls(monkeypat
     assert update_params[2][6:9] == b"new"
     assert credential_vault._decrypt(update_params[0], aad_access) == "old-access"
     assert credential_vault._decrypt(update_params[2], aad_refresh) == "old-refresh"
+
+def test_retained_legacy_keyring_entry_takes_precedence_over_changed_legacy_env(monkeypatch):
+    old_key = bytes([17]) * 32
+    nonce = bytes([18]) * 12
+    aad = b"account:access"
+    ciphertext = nonce + AESGCM(old_key).encrypt(nonce, b"legacy-token", aad)
+    monkeypatch.setattr(
+        settings,
+        "pinterest_token_encryption_key",
+        _encoded_key(19),
+    )
+    _use_keyring(
+        monkeypatch,
+        {"legacy": base64.b64encode(old_key).decode("ascii"), "active": _encoded_key(20)},
+        "active",
+    )
+    assert credential_vault._decrypt(ciphertext, aad) == "legacy-token"
