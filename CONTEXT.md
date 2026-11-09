@@ -848,3 +848,14 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - **Exact-head CI PASS:** run `42549027659`, commit `0b621fd7a133d8809123917b5365199c0893bd8d`. All steps passed: isolated disposable DB guard, static and PostgreSQL test suite, full migration-ledger/fixture cleanup checks, and PostgreSQL container teardown. This is synthetic CI evidence, not production DB evidence.
 - Rotation remains a controlled operational task, not complete: keep the original key in the `legacy` slot, configure the new key as active, re-encrypt every credential row (including revoked rows with ciphertext), verify all ciphertext key IDs and decryption, retain old keys for rollback, and only remove old keys after a tested backup/restore and rollback window. No key was generated, changed, rotated, or used against production.
 - No production DB, production secret, live OAuth refresh, Pinterest write, scheduler activation, real Pin/Board creation, deployment, PR or merge occurred.
+
+
+
+### Disposable PostgreSQL backup/restore rehearsal — implementation pushed, CI running (2026-11-09)
+
+- Added `tests/test_model2_backup_restore.py`: creates uniquely named source and restore databases only on the loopback GitHub Actions PostgreSQL 16 service; applies all 16 numbered migrations; inserts synthetic legacy schedule/source/job rows; creates a PostgreSQL custom-format `pg_dump`; restores with `pg_restore` into a separate empty database; verifies the complete migration ledger, preserved legacy rows, nullable Model 2 niche field, and required migration triggers; then drops both temporary databases.
+- Updated `.github/workflows/model2-postgres-integration.yml` to install PostgreSQL 16 client tools and include the backup/restore test in the explicit pytest suite.
+- Exact feature-branch commit: `dcf2926b09c50867bd60ee90f8f7ee175b022679`.
+- GitHub Actions run `42593948622` is **IN PROGRESS** at the time of this update. The backup/restore rehearsal is not yet a pass; do not treat this as production backup/restore evidence.
+- The preceding transient run `42593920392` was cancelled by the workflow concurrency rule when the workflow file was updated. It is not a test failure.
+- This rehearsal is synthetic and isolated. It does not access Neon, production credentials, real Pinterest, Render, or the scheduled worker. It does not authorize production migration, deployment, scheduler activation, PR/merge, or Pin/Board creation.
