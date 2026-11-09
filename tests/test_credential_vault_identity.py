@@ -15,6 +15,8 @@ def test_credential_identity_accepts_exact_canonical_account_id():
         ("123456", "123456"),
         ("pinterest:", ""),
         ("pinterest:123456:extra", "123456"),
+        ("pinterest: ", " "),
+        ("pinterest:a:b", "a:b"),
     ],
 )
 def test_credential_identity_rejects_mismatched_or_noncanonical_account_id(
