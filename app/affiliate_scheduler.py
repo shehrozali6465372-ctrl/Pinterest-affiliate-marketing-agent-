@@ -34,6 +34,154 @@ def _complete_schedule_if_terminal(conn, schedule_id: int) -> None:
     )
 
 
+def _lock_scheduler_job_context(conn, job_id: int):
+    """Lock account context before schedule/job rows; return a revalidated job snapshot."""
+    hint = conn.execute(
+        """
+        SELECT j.id AS job_id, j.schedule_id, s.account_id, s.niche_id
+        FROM affiliate_pin_jobs j
+        JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id
+        WHERE j.id = %s
+        """,
+        (job_id,),
+    ).fetchone()
+    if not hint:
+        return None
+
+    if hint["niche_id"] is not None:
+        profile = conn.execute(
+            "SELECT account_id FROM model2_account_profiles WHERE account_id = %s FOR UPDATE",
+            (hint["account_id"],),
+        ).fetchone()
+        niche = conn.execute(
+            "SELECT id FROM model2_niches WHERE id = %s FOR SHARE",
+            (hint["niche_id"],),
+        ).fetchone()
+        assignment = conn.execute(
+            """
+            SELECT account_id, niche_id FROM model2_account_niches
+            WHERE account_id = %s AND niche_id = %s FOR SHARE
+            """,
+            (hint["account_id"], hint["niche_id"]),
+        ).fetchone()
+        # Broken Model 2 linkage is not permission to fall back to a weaker lock order.
+        if not profile or not niche or not assignment:
+            return None
+
+    schedule = conn.execute(
+        """
+        SELECT id, account_id, niche_id, status
+        FROM affiliate_publishing_schedules
+        WHERE id = %s FOR UPDATE
+        """,
+        (hint["schedule_id"],),
+    ).fetchone()
+    if (
+        not schedule
+        or schedule["account_id"] != hint["account_id"]
+        or schedule["niche_id"] != hint["niche_id"]
+    ):
+        return None
+
+    job = conn.execute(
+        """
+        SELECT id, schedule_id, status, locked_at
+        FROM affiliate_pin_jobs
+        WHERE id = %s FOR UPDATE
+        """,
+        (job_id,),
+    ).fetchone()
+    if not job or job["schedule_id"] != schedule["id"]:
+        return None
+    return {"schedule": schedule, "job": job}
+
+
+def _quarantine_one_expired_claim() -> int | None:
+    """Mark one stale processing claim uncertain while following account→schedule→job locks."""
+    with connection() as conn:
+        hint = conn.execute(
+            """
+            SELECT j.id
+            FROM affiliate_pin_jobs j
+            WHERE j.status = 'processing'
+              AND j.locked_at < now() - interval '15 minutes'
+            ORDER BY j.locked_at, j.id
+            LIMIT 1
+            """
+        ).fetchone()
+        if not hint:
+            return None
+        locked = _lock_scheduler_job_context(conn, hint["id"])
+        if not locked:
+            return None
+        job = locked["job"]
+        if job["status"] != "processing" or job["locked_at"] is None:
+            return None
+        stale = conn.execute(
+            "SELECT %s < now() - interval '15 minutes' AS is_stale",
+            (job["locked_at"],),
+        ).fetchone()["is_stale"]
+        if not stale:
+            return None
+        updated = conn.execute(
+            """
+            UPDATE affiliate_pin_jobs
+            SET status = 'uncertain', finished_at = now(),
+                safe_error_code = 'worker_claim_expired'
+            WHERE id = %s AND status = 'processing'
+            RETURNING id
+            """,
+            (job["id"],),
+        ).fetchone()
+        return updated["id"] if updated else None
+
+
+def _finalize_claimed_job(
+    claimed: dict[str, object],
+    *,
+    status: str,
+    safe_error_code: str | None = None,
+    delay_minutes: int | None = None,
+    product_id: int | None = None,
+    pinterest_pin_id: str | None = None,
+) -> bool:
+    """Finalize a claimed job under the same account→schedule→job lock order as reconciliation."""
+    if status not in {"queued", "succeeded", "failed", "uncertain"}:
+        raise ValueError("unsupported scheduler job finalization state")
+    with connection() as conn:
+        locked = _lock_scheduler_job_context(conn, int(claimed["id"]))
+        if not locked or locked["job"]["status"] != "processing":
+            return False
+        if status == "queued":
+            if delay_minutes is None or delay_minutes < 0:
+                raise ValueError("retry delay is required")
+            updated = conn.execute(
+                """
+                UPDATE affiliate_pin_jobs
+                SET status = 'queued', locked_at = NULL,
+                    run_at = now() + (%s * interval '1 minute'),
+                    safe_error_code = %s
+                WHERE id = %s AND status = 'processing'
+                RETURNING id
+                """,
+                (delay_minutes, safe_error_code, int(claimed["id"])),
+            ).fetchone()
+        else:
+            updated = conn.execute(
+                """
+                UPDATE affiliate_pin_jobs
+                SET status = %s, finished_at = now(), product_id = %s,
+                    pinterest_pin_id = %s, safe_error_code = %s
+                WHERE id = %s AND status = 'processing'
+                RETURNING id
+                """,
+                (status, product_id, pinterest_pin_id, safe_error_code, int(claimed["id"])),
+            ).fetchone()
+            if updated:
+                _complete_schedule_if_terminal(conn, locked["schedule"]["id"])
+        return bool(updated)
+
+
 
 
 class AffiliateSourceInput(BaseModel):
@@ -337,28 +485,11 @@ def run_one_due_job() -> dict[str, object]:
     from app.workflow import ProductWorkflowInput, publish_product_end_to_end
 
     try:
+        # Recover stale claims in a separate transaction. Bulk job/schedule
+        # updates here would acquire child locks before the account-profile lock
+        # used by reconciliation and could deadlock with it.
+        _quarantine_one_expired_claim()
         with connection() as conn:
-            # A worker crash during a Pin create has an unknown remote outcome.
-            # Quarantine stale claims instead of risking a duplicate publication.
-            conn.execute(
-                """
-                UPDATE affiliate_pin_jobs
-                SET status = 'uncertain', finished_at = now(), safe_error_code = 'worker_claim_expired'
-                WHERE status = 'processing' AND locked_at < now() - interval '15 minutes'
-                """
-            )
-            conn.execute(
-                """
-                UPDATE affiliate_publishing_schedules s
-                SET status = 'completed', updated_at = now()
-                WHERE s.status = 'active'
-                  AND NOT EXISTS (
-                    SELECT 1 FROM affiliate_pin_jobs j
-                    WHERE j.schedule_id = s.id AND j.status IN ('queued', 'processing', 'uncertain')
-                  )
-                """
-            )
-
             # Lock a Model 2 account profile during candidate discovery. SKIP
             # LOCKED lets another worker choose a different account rather than
             # queue behind a busy account whose quota may already be exhausted.
@@ -533,47 +664,39 @@ def run_one_due_job() -> dict[str, object]:
             detail_lower = str(detail).casefold()
             uncertain = exc.status_code in (409, 502) or "uncertain" in detail_lower or "inspect" in detail_lower or "safely recorded" in detail_lower
             retryable = exc.status_code == 503 and not uncertain and claimed["attempt_count"] < 3
-            with connection() as conn:
-                if retryable:
-                    delay_minutes = 5 * (2 ** (claimed["attempt_count"] - 1))
-                    conn.execute(
-                        """
-                        UPDATE affiliate_pin_jobs
-                        SET status = 'queued', locked_at = NULL,
-                            run_at = now() + (%s * interval '1 minute'),
-                            safe_error_code = 'transient_workflow_failure'
-                        WHERE id = %s AND status = 'processing'
-                        """,
-                        (delay_minutes, claimed["id"]),
-                    )
-                else:
-                    conn.execute(
-                        """
-                        UPDATE affiliate_pin_jobs
-                        SET status = %s, finished_at = now(), safe_error_code = %s
-                        WHERE id = %s AND status = 'processing'
-                        """,
-                        ("uncertain" if uncertain else "failed",
-                         "publish_outcome_uncertain" if uncertain else f"workflow_http_{exc.status_code}",
-                         claimed["id"]),
-                    )
-                    _complete_schedule_if_terminal(conn, claimed["schedule_id"])
+            if retryable:
+                delay_minutes = 5 * (2 ** (claimed["attempt_count"] - 1))
+                finalized = _finalize_claimed_job(
+                    claimed, status="queued", delay_minutes=delay_minutes,
+                    safe_error_code="transient_workflow_failure",
+                )
+            else:
+                finalized = _finalize_claimed_job(
+                    claimed, status="uncertain" if uncertain else "failed",
+                    safe_error_code=(
+                        "publish_outcome_uncertain" if uncertain
+                        else f"workflow_http_{exc.status_code}"
+                    ),
+                )
+            if not finalized:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Scheduler job state could not be finalized safely. Inspect the publication ledger before retrying.",
+                )
             return {
                 "claimed": True, "processed": True, "job_id": claimed["id"],
                 "status": "retry_queued" if retryable else ("uncertain" if uncertain else "failed"),
                 "http_status": exc.status_code,
             }
-        with connection() as conn:
-            conn.execute(
-                """
-                UPDATE affiliate_pin_jobs
-                SET status = 'succeeded', finished_at = now(), product_id = %s, pinterest_pin_id = %s,
-                    safe_error_code = NULL
-                WHERE id = %s AND status = 'processing'
-                """,
-                (result.get("product_id"), result.get("pin_id"), claimed["id"]),
+        finalized = _finalize_claimed_job(
+            claimed, status="succeeded", product_id=result.get("product_id"),
+            pinterest_pin_id=result.get("pin_id"), safe_error_code=None,
+        )
+        if not finalized:
+            raise HTTPException(
+                status_code=503,
+                detail="Pinterest outcome could not be finalized safely in the scheduler ledger. Inspect the publication ledger before retrying.",
             )
-            _complete_schedule_if_terminal(conn, claimed["schedule_id"])
         return {
             "claimed": True, "processed": True, "job_id": claimed["id"],
             "status": "succeeded", "published": bool(result.get("published")),
