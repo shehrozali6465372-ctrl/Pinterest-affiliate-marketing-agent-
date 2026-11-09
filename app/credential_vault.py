@@ -429,11 +429,17 @@ def pinterest_account_is_connected_in_transaction(conn, account_id: str) -> bool
     """
     row = conn.execute(
         """
-        SELECT account_id
+        SELECT account_id, pinterest_user_id
         FROM pinterest_credentials
         WHERE account_id = %s AND status = 'connected'
         FOR SHARE
         """,
         (account_id,),
     ).fetchone()
-    return row is not None
+    if row is None:
+        return False
+    try:
+        _validate_account_identity(str(row["account_id"]), str(row["pinterest_user_id"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
