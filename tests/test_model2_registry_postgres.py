@@ -2282,6 +2282,17 @@ def test_scheduler_reconciliation_audit_is_immutable(model2_db):
                         "UPDATE affiliate_job_reconciliation_audit SET outcome = 'succeeded' WHERE job_id = %s",
                         (job_id,),
                     )
+        with pytest.raises(RaiseException, match="append-only"):
+            with conn.transaction():
+                conn.execute(
+                    "DELETE FROM affiliate_job_reconciliation_audit WHERE job_id = %s",
+                    (job_id,),
+                )
+        assert conn.execute(
+            "SELECT count(*) AS n FROM affiliate_job_reconciliation_audit WHERE job_id = %s",
+            (job_id,),
+        ).fetchone()["n"] == 1
+
 
 def test_scheduler_reconciliation_audit_rejects_truncate(model2_db):
     with database.connection() as conn:
