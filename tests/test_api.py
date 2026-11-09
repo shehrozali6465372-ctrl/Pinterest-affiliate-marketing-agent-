@@ -1048,6 +1048,73 @@ def test_readiness_rejects_present_but_invalid_encryption_key(monkeypatch):
     assert "present-but-not-valid-base64" not in str(body)
 
 
+def test_trusted_hub_routes_fail_closed_when_ingest_auth_is_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", None)
+    credential_payload = {
+        "account_id": "pinterest:test-account",
+        "pinterest_user_id": "test-user",
+        "access_token": "synthetic-test-token",
+    }
+    refresh_payload = {
+        "account_id": "pinterest:test-account",
+        "client_id": "synthetic-client-id",
+        "client_secret": "synthetic-client-secret",
+    }
+    operation_payload = {
+        "account_id": "pinterest:test-account",
+        "operation": "create_board",
+        "payload": {"name": "Synthetic test board"},
+    }
+
+    responses = [
+        client.post("/integrations/pinterest/credentials", json=credential_payload),
+        client.post("/integrations/pinterest/refresh", json=refresh_payload),
+        client.post("/integrations/pinterest/operation", json=operation_payload),
+    ]
+
+    assert [response.status_code for response in responses] == [503, 503, 503]
+    assert all(
+        response.json()["detail"] == "Credential-ingest authentication is not configured."
+        for response in responses
+    )
+
+
+def test_trusted_hub_routes_reject_invalid_ingest_key_before_side_effects(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "configured-ingest-test-key")
+    headers = {"X-Credential-Ingest-Key": "wrong-ingest-test-key"}
+    responses = [
+        client.post(
+            "/integrations/pinterest/credentials",
+            json={
+                "account_id": "pinterest:test-account",
+                "pinterest_user_id": "test-user",
+                "access_token": "synthetic-test-token",
+            },
+            headers=headers,
+        ),
+        client.post(
+            "/integrations/pinterest/refresh",
+            json={
+                "account_id": "pinterest:test-account",
+                "client_id": "synthetic-client-id",
+                "client_secret": "synthetic-client-secret",
+            },
+            headers=headers,
+        ),
+        client.post(
+            "/integrations/pinterest/operation",
+            json={
+                "account_id": "pinterest:test-account",
+                "operation": "create_board",
+                "payload": {"name": "Synthetic test board"},
+            },
+            headers=headers,
+        ),
+    ]
+
+    assert [response.status_code for response in responses] == [401, 401, 401]
+
+
 def test_analytics_integration_route_requires_service_credential(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "private-ingest-test")
     body = {"account_id": "pinterest:account-a"}
