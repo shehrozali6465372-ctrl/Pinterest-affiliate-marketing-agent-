@@ -1,6 +1,6 @@
 # Phase 10 — Scheduler Job Reconciliation Design
 
-**Status:** Design review checkpoint — implementation and PostgreSQL verification pending.
+**Status:** Implemented and verified on the isolated feature branch. Production migration, deployment and scheduler activation remain separately gated.
 **Scope:** Resolve an `affiliate_pin_jobs.status = 'uncertain'` job against the existing `pin_publications` ledger without sending Pinterest writes.
 
 ## 1. Existing contracts verified
@@ -79,3 +79,18 @@ CI must explicitly include the new reconciliation tests, verify all numbered mig
 ## 7. Release gate
 
 This design is not an implementation or a production approval. Phase 10 remains blocked until the transaction, API, audit migration, regression matrix, exact-head CI, migration/restore rehearsal and separate owner approvals are complete.
+
+
+## 8. Implementation and verification checkpoint
+
+- Added additive migration `015_affiliate_job_reconciliation_audit.sql`. The audit table has a unique job constraint, bounded evidence, outcome/Pin-ID consistency checks, and a database trigger rejecting UPDATE/DELETE.
+- Added `get_scheduler_job_reconciliation()` and `reconcile_scheduler_job()` in `app/database.py`. The write path locks Model 2 profile → niche → assignment → schedule → job, validates the exact scheduler idempotency key against product/content/publication lineage, checks account and immutable niche attribution, locks the publication row, and atomically writes the ledger/job/audit state.
+- Added authenticated routes:
+  - `GET /affiliate-scheduler/jobs/{job_id}/reconciliation?account_id=...` — read-only, no Pinterest/provider call.
+  - `POST /affiliate-scheduler/jobs/{job_id}/reconcile` — operator evidence required; failed outcome requires explicit `confirm_pin_absent=true`.
+- A missing ledger cannot be marked succeeded. Multiple candidates, account/product/niche mismatches, recent pending rows, stale-state races and conflicting ledger outcomes fail closed. A confirmed absence makes the job terminal failed; the old idempotency key is never requeued.
+- Added `docs/MODEL2-SCHEDULER-RECONCILIATION-RUNBOOK.md` with operator inspection and resolution procedures.
+- PostgreSQL regression coverage includes unknown success, stale/recent pending behavior, no-ledger absent/success, multiple candidates, account mismatch, missing/wrong niche attribution, legacy Model 1 linkage, repeat reconciliation, append-only audit and transaction rollback.
+- Exact-head GitHub Actions run `42538656224`, commit `12146a83fc13fab9301396100a00f8f48508a2c0`: **226 passed, 0 failed, 1 non-blocking warning**. All **16** numbered migrations were recorded; fixture cleanup verified zero synthetic Model 2/Model 1 rows; disposable PostgreSQL service stopped. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42538656224
+- No production database migration, live scheduler run, Pinterest Pin/Board creation, PR, merge or deployment was performed.
+- Phase 10 is still pre-release: sanitized production-like migration/backup/restore rehearsal and separate owner approval for production migration/deployment/scheduler activation remain outstanding.
