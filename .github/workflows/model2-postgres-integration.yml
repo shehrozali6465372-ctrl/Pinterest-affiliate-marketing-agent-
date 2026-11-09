@@ -55,13 +55,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Install PostgreSQL 16 client tools for backup/restore rehearsal
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client
-          pg_dump --version
-          pg_restore --version
-
       - name: Verify isolated disposable database target
         run: |
           python - <<'PY'
