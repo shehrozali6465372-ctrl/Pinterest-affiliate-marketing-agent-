@@ -755,3 +755,14 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - The next CI run passed Python dependency setup and the disposable PostgreSQL target guard, but failed during PostgreSQL fixture teardown: the append-only trigger correctly rejected test cleanup DELETEs, and retained audit foreign keys then prevented synthetic publication deletion.
 - Corrected only the PostgreSQL test fixture teardown: inside a transaction against the workflow-guarded disposable CI database, disable user triggers on the audit table, delete only rows for that fixture's three synthetic account IDs, and re-enable triggers before commit. A failure rolls back the cleanup and trigger state. Production application code and migration protections are unchanged.
 - CI run `42540384478` exposed the teardown failure. New exact-head CI run required for verification.
+
+
+### Latest exact-head verification — 2026-11-09
+
+- CI run `42540493098` completed **successfully** on commit `98e9ce9ccb3ca2c7549caaffe56ddc4e6998f2ca`.
+- PostgreSQL 16.15 integration workflow: **235 passed, 0 failed, 1 warning**.
+- All 16 numbered migrations were recorded in the disposable PostgreSQL test database.
+- CI verified all Model 2 fixtures and synthetic Model 1 fixture rows were cleaned. Disposable PostgreSQL container teardown completed; workflow conclusion was success.
+- This run includes the centralized scheduler authentication refactor, GET/POST missing/invalid API-key regression tests, append-only audit UPDATE/DELETE/TRUNCATE protections, and the transaction-scoped disposable-CI fixture teardown.
+- Warning observed: Starlette TestClient/httpx deprecation and GitHub Actions Node.js 20 deprecation notices; no test failures. These warnings are maintenance items, not test failures.
+- No production database migration, deployment, merge, PR, live scheduler activation, Pinterest Pin, or Board was performed.
