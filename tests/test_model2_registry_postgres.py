@@ -1095,9 +1095,34 @@ def test_model2_attributed_failed_publication_cannot_retry_after_assignment_paus
         content_version_id=content["id"],
         board_id=board_id,
         account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
     )
     assert blocked["blocked"] is True
     assert blocked["niche_assignment_inactive"] is True
+
+
+def test_model2_attributed_failed_retry_requires_explicit_niche_context(model2_db):
+    product, content = _model2_publication_fixture(model2_db, "retry-needs-niche")
+    board_id = f"test-board-{model2_db['suffix']}-retry-needs-niche"
+    reserved = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+        niche_id=model2_db["niche_a"],
+    )
+    database.finish_publish_attempt(
+        reserved["id"], status="failed", http_status=400, error_code="test_rejected"
+    )
+
+    blocked = database.begin_publish_attempt(
+        product_id=product["id"],
+        content_version_id=content["id"],
+        board_id=board_id,
+        account_id=model2_db["account_a"],
+    )
+    assert blocked["blocked"] is True
+    assert blocked["niche_context_required"] is True
 
 
 def test_model2_publication_reservation_requires_connected_credential(model2_db):
