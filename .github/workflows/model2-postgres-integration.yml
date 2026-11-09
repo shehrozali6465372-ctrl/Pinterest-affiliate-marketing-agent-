@@ -118,6 +118,7 @@ jobs:
                   "schedules": "SELECT count(*) AS n FROM affiliate_publishing_schedules WHERE account_id LIKE 'pinterest:test-model2-%'",
                   "scheduler_jobs": "SELECT count(*) AS n FROM affiliate_pin_jobs j JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id WHERE s.account_id LIKE 'pinterest:test-model2-%'",
                   "scheduler_sources": "SELECT count(*) AS n FROM affiliate_product_sources p JOIN affiliate_publishing_schedules s ON s.id = p.schedule_id WHERE s.account_id LIKE 'pinterest:test-model2-%'",
+                  "scheduler_reconciliation_audit": "SELECT count(*) AS n FROM affiliate_job_reconciliation_audit WHERE account_id LIKE 'pinterest:test-model2-%'",
               }
               leftovers = {name: conn.execute(query).fetchone()["n"] for name, query in checks.items()}
               assert all(count == 0 for count in leftovers.values()), f"test fixture data remains: {leftovers}"
