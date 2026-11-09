@@ -139,10 +139,10 @@ def test_operator_reencryption_updates_one_row_without_pinterest_calls(monkeypat
     update_params = fake_connection.calls[1][1]
     assert update_params[0].startswith(b"PVLT")
     assert update_params[0][6:9] == b"new"
-    assert update_params[2].startswith(b"PVLT")
-    assert update_params[2][6:9] == b"new"
+    assert update_params[1].startswith(b"PVLT")
+    assert update_params[1][6:9] == b"new"
     assert credential_vault._decrypt(update_params[0], aad_access) == "old-access"
-    assert credential_vault._decrypt(update_params[2], aad_refresh) == "old-refresh"
+    assert credential_vault._decrypt(update_params[1], aad_refresh) == "old-refresh"
 
 def test_retained_legacy_keyring_entry_takes_precedence_over_changed_legacy_env(monkeypatch):
     old_key = bytes([17]) * 32
