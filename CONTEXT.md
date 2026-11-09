@@ -734,3 +734,10 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Reconciliation audit table hardening: added a statement-level TRUNCATE trigger in migration 015 in addition to existing UPDATE/DELETE row trigger. PostgreSQL CI now checks TRUNCATE rejection; fixture teardown deletes only its own account-scoped rows instead of truncating the audit table.
 - Security limitation documented: shared X-API-Key authenticates the service request, not an individual human operator. Current audit evidence is caller-supplied text, not non-repudiable identity proof. Never store credentials or sensitive personal data in evidence. DB owner/superuser can bypass/disable triggers; this is not tamper-proof against privileged administrators.
 - Pending verification: rerun the exact feature-branch PostgreSQL CI after this change. No production migration/deployment, PR/merge, scheduler activation, or Pinterest Pin/Board action.
+
+
+### Reconciliation authentication hardening — 2026-11-09
+
+- Removed the scheduler module's duplicate API-key dependency and reused the canonical `app.auth.require_api_key` dependency. This avoids drift between scheduler and general service authentication; the dependency remains fail-closed (503 if no key is configured, 401 for absent/invalid key).
+- Added API regression coverage for both reconciliation GET and POST routes when the service key is unconfigured and when an invalid key is supplied. These tests are included in the PostgreSQL integration workflow's explicit test list via `tests/test_affiliate_scheduler.py`.
+- Feature-branch CI must pass on the resulting exact HEAD before this hardening is considered verified. No production access, merge, deployment, scheduler activation, Pinterest Pin or Board creation.
