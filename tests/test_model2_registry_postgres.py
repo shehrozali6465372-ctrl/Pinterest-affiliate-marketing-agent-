@@ -106,11 +106,13 @@ def model2_db(monkeypatch):
             )
             conn.execute(
                 "DELETE FROM content_versions WHERE product_id IN "
-                "(SELECT id FROM products WHERE product_name LIKE %s)",
+                "(SELECT id FROM products WHERE product_name LIKE %s "
+                "OR product_name LIKE 'Reconciliation fixture %')",
                 (f"Model2 test product {suffix}%",),
             )
             conn.execute(
-                "DELETE FROM products WHERE product_name LIKE %s",
+                "DELETE FROM products WHERE product_name LIKE %s "
+                "OR product_name LIKE 'Reconciliation fixture %'",
                 (f"Model2 test product {suffix}%",),
             )
             conn.execute(
