@@ -536,11 +536,12 @@ def test_end_to_end_image_provider_error_is_redacted_from_response_and_logs(monk
     assert "exception_type=ImageGenerationError" in caplog.text
 
 
-def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(monkeypatch):
-    from fastapi import HTTPException
+def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(monkeypatch, caplog):
+    import logging
     import app.workflow as workflow
     from app.content_generation import ContentGenerationError
 
+    secret_marker = "content-provider-secret-marker"
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
     _stub_generation_reservation(monkeypatch, workflow)
@@ -556,7 +557,7 @@ def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(
     })
 
     def fail_generation(**kwargs):
-        raise ContentGenerationError("provider temporarily unavailable")
+        raise ContentGenerationError(f"provider temporarily unavailable {secret_marker}")
 
     persistence_calls = []
     monkeypatch.setattr(workflow, "generate_pin_content", fail_generation)
@@ -565,21 +566,25 @@ def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(
         lambda **kwargs: persistence_calls.append(kwargs),
     )
 
-    response = client.post(
-        "/workflow/publish-product",
-        json={
-            "product_name": "Copco 3-Tier Spice Rack Organizer",
-            "product_details": "Three-tier spice rack organizer.",
-            "affiliate_url": "https://example.com/affiliate",
-            "account_id": "pinterest:test-account",
-        },
-        headers={
-            "X-API-Key": "private-test-api-key",
-            "Idempotency-Key": "request-key-content-fail",
-        },
-    )
+    with caplog.at_level(logging.ERROR, logger="app.workflow"):
+        response = client.post(
+            "/workflow/publish-product",
+            json={
+                "product_name": "Copco 3-Tier Spice Rack Organizer",
+                "product_details": "Three-tier spice rack organizer.",
+                "affiliate_url": "https://example.com/affiliate",
+                "account_id": "pinterest:test-account",
+            },
+            headers={
+                "X-API-Key": "private-test-api-key",
+                "Idempotency-Key": "request-key-content-fail",
+            },
+        )
     assert response.status_code == 503
     assert "saved image will be reused" in response.json()["detail"]
+    assert secret_marker not in response.text
+    assert secret_marker not in caplog.text
+    assert "exception_type=ContentGenerationError" in caplog.text
     assert persistence_calls == []
 
 
