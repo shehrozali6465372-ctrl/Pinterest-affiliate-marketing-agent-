@@ -1,10 +1,7 @@
 name: Affiliate Scheduler Worker
 
 on:
-  schedule:
-    # Hourly wake-up; due jobs are evaluated in their configured IANA timezone.
-    # GitHub Actions cron is best-effort and may be delayed.
-    - cron: "7 * * * *"
+  # Temporarily paused for approved maintenance; manual dispatch remains available.
   workflow_dispatch:
 
 permissions:
