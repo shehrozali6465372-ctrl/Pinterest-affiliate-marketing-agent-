@@ -101,14 +101,15 @@ def _decrypt(blob: bytes, aad: bytes) -> str:
         if cipher is None:
             raise TokenEncryptionConfigurationError("Encrypted credential key ID is not present in the configured keyring")
         return cipher.decrypt(blob[end:end + 12], blob[end + 12:], aad).decode("utf-8")
-    legacy = settings.pinterest_token_encryption_key
-    if legacy:
-        cipher = _decode_key(legacy, "PINTEREST_TOKEN_ENCRYPTION_KEY")
-    else:
+    if settings.pinterest_token_encryption_keys:
         _, keys = _keyring()
         cipher = keys.get("legacy")
-        if cipher is None:
-            raise TokenEncryptionConfigurationError("Legacy Pinterest credentials require the original encryption key")
+        if cipher is None and settings.pinterest_token_encryption_key:
+            cipher = _decode_key(settings.pinterest_token_encryption_key, "PINTEREST_TOKEN_ENCRYPTION_KEY")
+    else:
+        cipher = _decode_key(settings.pinterest_token_encryption_key, "PINTEREST_TOKEN_ENCRYPTION_KEY")
+    if cipher is None:
+        raise TokenEncryptionConfigurationError("Legacy Pinterest credentials require the original encryption key")
     if len(blob) < 28:
         raise TokenEncryptionConfigurationError("Legacy encrypted credential is truncated")
     return cipher.decrypt(blob[:12], blob[12:], aad).decode("utf-8")
