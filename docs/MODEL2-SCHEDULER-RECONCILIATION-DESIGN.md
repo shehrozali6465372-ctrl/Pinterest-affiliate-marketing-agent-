@@ -36,7 +36,7 @@ Response fields must be minimal: job ID/status, schedule/account identifiers, le
 
 ## 4. Transaction and locking
 
-- Use the same account/profile → niche → assignment → schedule → job lock order used by the Model 2 scheduler.
+- Use the same account/profile → niche → assignment → credential (when checking connected state) → schedule → job lock order used by the Model 2 scheduler.
 - Lock the schedule and target job; verify the job remains `uncertain`.
 - Resolve all publication candidates from the persisted product idempotency key and verify account and immutable niche attribution.
 - Lock the unique publication row before changing it.
@@ -94,3 +94,20 @@ This design is not an implementation or a production approval. Phase 10 remains 
 - Latest exact-head GitHub Actions run `42539115679`, commit `7c9b3484b73f43d40da492038569b0c28b12ad43`: **230 passed, 0 failed, 1 non-blocking warning**. The gate includes operator API tests and read-only PostgreSQL inspection. All **16** numbered migrations were recorded; fixture cleanup verified zero synthetic Model 2/Model 1 rows; disposable PostgreSQL service stopped. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42539115679
 - No production database migration, live scheduler run, Pinterest Pin/Board creation, PR, merge or deployment was performed.
 - Phase 10 is still pre-release: sanitized production-like migration/backup/restore rehearsal and separate owner approval for production migration/deployment/scheduler activation remain outstanding.
+
+
+
+## Publication reservation lock-order follow-up — CI verified (2026-11-09)
+
+A concurrency review found that retrying a failed publication could lock the publication row before acquiring Model 2 profile/niche/assignment locks, while scheduler reconciliation acquires those account locks before the publication row. Under a concurrent failed-publication reconciliation and retry, this inversion could cause a PostgreSQL deadlock.
+
+The reservation path now:
+- Reads a non-locking publication/attribution hint first and rechecks it under the publication lock.
+- Returns terminal or already-pending outcomes without acquiring unnecessary account locks.
+- Acquires Model 2 profile → niche → assignment → connected-credential metadata locks before the publication advisory lock and publication row.
+- Requires an explicit niche ID when retrying a publication that already has immutable niche attribution. Legacy un-attributed Model 1 retries remain supported; a failed legacy publication may gain its first attribution only when the retry explicitly supplies the niche.
+- Rechecks account ownership, immutable niche attribution and publication state after acquiring the row lock.
+
+The connected-credential metadata guard now also validates `account_id == pinterest:<pinterest_user_id>`; it reads no ciphertext and returns false for malformed/mismatched identity. Scheduler draft/activation/worker preflight uses this same guard.
+
+Synthetic regression coverage includes mismatched stored identity, scheduler rejection before draft creation, and explicit niche-context requirements for attributed retries. Exact-head CI run `42611158364`, commit `739b1ae70d3b7a3b01ac7644a34f14f235ab0ecc`: **269 passed, 0 failed, 1 warning**; all 16 migrations, fixture cleanup and PostgreSQL teardown passed. No Pinterest API write was performed.
