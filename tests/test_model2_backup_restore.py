@@ -115,15 +115,24 @@ def test_custom_format_backup_restores_migrated_schema_and_legacy_rows():
 
         with tempfile.TemporaryDirectory(prefix="model2-pg-backup-") as temp_dir:
             archive = Path(temp_dir) / "model2.dump"
+            # Use the same PostgreSQL 16 image as the disposable server. A
+            # newer host pg_restore may emit SET parameters unsupported by PG16.
             subprocess.run(
-                ["pg_dump", "--format=custom", "--no-owner", "--no-privileges",
-                 "--file", str(archive), "--dbname", source_dsn],
+                ["docker", "run", "--rm", "--network", "host",
+                 "--volume", f"{temp_dir}:/backup",
+                 "--env", "PGPASSWORD=model2-ci-only",
+                 "postgres:16", "pg_dump", "--format=custom", "--no-owner",
+                 "--no-privileges", "--file", "/backup/model2.dump",
+                 "--dbname", source_dsn],
                 check=True, capture_output=True, text=True, timeout=120,
             )
             assert archive.is_file() and archive.stat().st_size > 0
             subprocess.run(
-                ["pg_restore", "--exit-on-error", "--no-owner", "--no-privileges",
-                 "--dbname", restore_dsn, str(archive)],
+                ["docker", "run", "--rm", "--network", "host",
+                 "--volume", f"{temp_dir}:/backup",
+                 "--env", "PGPASSWORD=model2-ci-only",
+                 "postgres:16", "pg_restore", "--exit-on-error", "--no-owner",
+                 "--no-privileges", "--dbname", restore_dsn, "/backup/model2.dump"],
                 check=True, capture_output=True, text=True, timeout=120,
             )
 
