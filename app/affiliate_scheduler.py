@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
@@ -636,3 +636,62 @@ def get_schedule_status(schedule_id: int) -> dict[str, object]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Could not read schedule status.") from exc
+
+
+class SchedulerJobReconciliationInput(BaseModel):
+    account_id: str = Field(min_length=10, max_length=200)
+    outcome: str = Field(pattern=r"^(succeeded|failed)$")
+    pinterest_pin_id: str | None = Field(default=None, min_length=1, max_length=200)
+    operator_evidence: str = Field(min_length=12, max_length=2000)
+    confirm_pin_absent: bool = False
+
+    @field_validator("account_id", "operator_evidence")
+    @classmethod
+    def clean_reconciliation_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+
+@router.get("/jobs/{job_id}/reconciliation", dependencies=[Depends(require_scheduler_key)])
+def inspect_scheduler_job_reconciliation(
+    job_id: int, account_id: str = Query(..., min_length=10, max_length=200),
+) -> dict[str, object]:
+    """Read-only ledger linkage inspection. Never calls Pinterest or the workflow."""
+    if job_id <= 0:
+        raise HTTPException(status_code=422, detail="job_id must be positive")
+    from app.database import get_scheduler_job_reconciliation
+    try:
+        result = get_scheduler_job_reconciliation(job_id, account_id=account_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Scheduler reconciliation status is unavailable.") from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Scheduler job was not found for this account.")
+    return result
+
+
+@router.post("/jobs/{job_id}/reconcile", dependencies=[Depends(require_scheduler_key)])
+def reconcile_scheduler_job_endpoint(
+    job_id: int, payload: SchedulerJobReconciliationInput,
+) -> dict[str, object]:
+    """Atomically resolve an uncertain job using operator evidence; no provider calls."""
+    if job_id <= 0:
+        raise HTTPException(status_code=422, detail="job_id must be positive")
+    from app.database import reconcile_scheduler_job
+    try:
+        return reconcile_scheduler_job(
+            job_id, account_id=payload.account_id, outcome=payload.outcome,
+            pinterest_pin_id=payload.pinterest_pin_id,
+            operator_evidence=payload.operator_evidence,
+            confirm_pin_absent=payload.confirm_pin_absent,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Scheduler job was not found.") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Scheduler job does not belong to the requested account.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Scheduler reconciliation failed atomically; inspect the job before retrying.") from exc
+
