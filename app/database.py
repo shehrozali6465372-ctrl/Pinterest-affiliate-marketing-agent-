@@ -514,7 +514,7 @@ def begin_publish_attempt(
     niche_id: int | None = None,
     attribution_source: str = "workflow",
 ) -> dict:
-    """Reserve one publish attempt and optional immutable niche attribution atomically."""
+    """Reserve one publish attempt with account/niche locks before publication locks."""
     if niche_id is not None:
         if isinstance(niche_id, bool) or not isinstance(niche_id, int) or niche_id <= 0:
             raise ValueError("niche_id must be a positive integer")
@@ -524,6 +524,42 @@ def begin_publish_attempt(
             raise ValueError("unsupported niche attribution source")
 
     with connection() as conn:
+        # Read a non-locking hint first so terminal/idempotent outcomes can be
+        # returned without acquiring account locks. This is rechecked under lock.
+        hint = conn.execute(
+            """
+            SELECT pub.*, a.niche_id AS attributed_niche_id
+            FROM pin_publications pub
+            LEFT JOIN model2_publication_niche_attributions a
+              ON a.publication_id = pub.id
+            WHERE pub.content_version_id = %s AND pub.board_id = %s
+            """,
+            (content_version_id, board_id),
+        ).fetchone()
+        if hint:
+            if hint.get("account_id") != account_id:
+                return {"blocked": True, "account_mismatch": True, **dict(hint)}
+            hinted_attribution = hint.get("attributed_niche_id")
+            if niche_id is not None and hinted_attribution is not None and hinted_attribution != niche_id:
+                return {"blocked": True, "niche_attribution_mismatch": True, **dict(hint)}
+            if niche_id is not None and hinted_attribution is None and hint["status"] in {"succeeded", "pending", "unknown"}:
+                return {"blocked": True, "niche_attribution_missing": True, **dict(hint)}
+            if hint["status"] in {"succeeded", "pending", "unknown"}:
+                return {"blocked": True, **dict(hint)}
+            if hinted_attribution is not None and niche_id is None:
+                # An attributed Model 2 retry must carry its exact niche context.
+                # Do not acquire publication locks and then try to lock the
+                # account/niche rows in the reverse order.
+                return {"blocked": True, "niche_context_required": True, **dict(hint)}
+
+        # Global lock order: account profile -> niche -> assignment -> credential
+        # -> publication advisory lock -> publication row. Reconciliation follows
+        # the same account-before-publication direction.
+        if niche_id is not None:
+            block_reason = _model2_publication_assignment_block_reason(conn, account_id, niche_id)
+            if block_reason:
+                return {"blocked": True, block_reason: True}
+
         lock_key = f"{content_version_id}:{board_id}"
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
         row = conn.execute(
@@ -555,33 +591,23 @@ def begin_publish_attempt(
                 if attribution["niche_id"] != niche_id:
                     return {"blocked": True, "niche_attribution_mismatch": True, **dict(row)}
             if niche_id is not None and attribution is None and state in {"succeeded", "pending", "unknown"}:
-                # Never retroactively attribute a legacy or in-flight publication.
                 return {"blocked": True, "niche_attribution_missing": True, **dict(row)}
 
             if state in {"succeeded", "pending", "unknown"}:
                 return {"blocked": True, **dict(row)}
 
-            # A failed reservation is retryable. If it already has an immutable
-            # attribution, preserve and validate it even if this retry omitted niche_id.
-            effective_niche_id = (
-                niche_id if niche_id is not None
-                else (attribution["niche_id"] if attribution is not None else None)
-            )
-            if effective_niche_id is not None:
-                block_reason = _model2_publication_assignment_block_reason(
-                    conn, account_id, effective_niche_id
+            if attribution is not None and niche_id is None:
+                return {"blocked": True, "niche_context_required": True, **dict(row)}
+
+            if attribution is None and niche_id is not None:
+                conn.execute(
+                    """
+                    INSERT INTO model2_publication_niche_attributions
+                        (publication_id, account_id, niche_id, attribution_source)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (row["id"], account_id, niche_id, attribution_source),
                 )
-                if block_reason:
-                    return {"blocked": True, block_reason: True, **dict(row)}
-                if attribution is None:
-                    conn.execute(
-                        """
-                        INSERT INTO model2_publication_niche_attributions
-                            (publication_id, account_id, niche_id, attribution_source)
-                        VALUES (%s, %s, %s, %s)
-                        """,
-                        (row["id"], account_id, effective_niche_id, attribution_source),
-                    )
 
             row = conn.execute(
                 """
@@ -596,13 +622,6 @@ def begin_publish_attempt(
                 (account_id, row["id"]),
             ).fetchone()
             return {"blocked": False, **dict(row)}
-
-        if niche_id is not None:
-            block_reason = _model2_publication_assignment_block_reason(
-                conn, account_id, niche_id
-            )
-            if block_reason:
-                return {"blocked": True, block_reason: True}
 
         row = conn.execute(
             """
