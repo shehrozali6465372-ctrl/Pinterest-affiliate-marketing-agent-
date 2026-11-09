@@ -784,3 +784,15 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - New `tests/test_model2_legacy_upgrade.py` passed: on a separately created disposable PostgreSQL 16 database, migrations 001–013 were applied, a synthetic active legacy Model 1 schedule/source/queued job were inserted, then migrations 014–015 were applied. The test verified legacy schedule `niche_id=NULL`, active status, board metadata, queued job/idempotency lineage, retained one-active-schedule index and legacy schedule update semantics.
 - Temporary upgrade database was dropped in the test's finally block. The main disposable CI database recorded all 16 migration files and all test fixtures were cleaned. Container teardown completed and workflow conclusion was success.
 - This materially improves migration compatibility evidence but remains synthetic. Sanitized production-like snapshot rehearsal, backup/restore and production rollback rehearsal remain open.
+
+
+### Trusted Hub authentication hardening — 2026-11-09
+
+- Centralized the separate `X-Credential-Ingest-Key` check in `require_credential_ingest_key`; it is intentionally distinct from the general `X-API-Key` because it protects the Modern Living Hub server-to-server boundary.
+- The dependency now fails closed with HTTP 503 when the credential-ingest key is not configured, and HTTP 401 when a caller omits or supplies an invalid key.
+- Applied the dependency at the FastAPI route boundary for credential ingestion, OAuth refresh, bounded Pinterest account operations, analytics ingestion, and manual publishing. Removed repeated inline checks from the credential, refresh and operation handlers.
+- Added regression tests proving missing configuration blocks credential storage, OAuth refresh, and the Pinterest `create_board` operation before any side effect; invalid keys return 401 for all three. These tests use synthetic values and do not call Pinterest, create a real Board, or publish a Pin.
+- Also added missing-key fail-closed coverage for diagnostics and analytics learning routes, and centralized the end-to-end workflow route on `app.auth.require_api_key`.
+- Exact feature-branch CI run `42542035022` passed on commit `3011674c990df91fc611742199676b31c4c0c0dd`; the PostgreSQL integration job, static/integration tests, migration-ledger verification, fixture cleanup, and container teardown all completed successfully.
+- This verifies service-key enforcement in CI only. Shared service keys still do not identify individual humans or provide per-operator authorization/non-repudiation. Secret rotation, log-redaction review, sanitized production-like restore/rollback rehearsal, and owner approval remain release gates.
+- No production database was accessed or changed. No PR, merge, deployment, live scheduler activation, real Pinterest Board, or real Pin was performed.
