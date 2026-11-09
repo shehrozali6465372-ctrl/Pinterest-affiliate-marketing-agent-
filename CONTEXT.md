@@ -912,3 +912,13 @@ This section supersedes older entries above that describe the keyring, credentia
 - **Human decision required:** because the pre-existing default-branch workflows are already scheduled, owner must decide whether to disable the live Affiliate Scheduler Worker and/or Learning Loop until separately approved. The feature branch remains unmerged and undeployed; no change to `main` or production automation was made.
 - **Unresolved live publication question:** job 13's success output is insufficient to prove whether a new Pin was created. A production publication-ledger check or suitably redacted Render request log is needed, with explicit owner approval. No production database was accessed by the assistant.
 - No manual scheduler run, OAuth refresh, production DB query, real Pin/Board creation, deployment, PR, or merge was performed by the assistant.
+
+
+
+### Latest branch checkpoint after scheduler lock-order correction (2026-11-09)
+
+- Latest feature branch HEAD: `97acb108300e69845f49ec9b9c7eaa30efb79979`.
+- Exact-HEAD GitHub Actions run `42612357576` passed at that HEAD: **274 passed, 0 failed, 1 warning**. All 16 numbered migrations were recorded; Model 2 and synthetic Model 1 fixture cleanup passed; PostgreSQL teardown passed.
+- The code-bearing scheduler lock-order correction was tested at commit `3562ef346ec03e6b31815aef4dfb1b9f3c2f0cfe` in run `42611981311` with the same **274 passed** result. The later commits through `97acb108300e69845f49ec9b9c7eaa30efb79979` only updated CONTEXT/readiness/design documentation; the exact-head CI run also passed.
+- Branch comparison: 152 commits ahead of `main`, 0 behind. No PR for this feature branch, merge, deployment, production migration, production DB access, or production secret changes were performed by the assistant.
+- The active default-branch scheduled workflows and the unresolved publication outcome of worker job 13 are recorded in the operational correction section above. Owner decision is required before changing or disabling production workflows; an authorized read-only production ledger/log inspection is required to establish whether job 13 created a new Pin.
