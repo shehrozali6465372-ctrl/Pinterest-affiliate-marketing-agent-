@@ -748,3 +748,10 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - First CI attempt after centralizing scheduler auth failed during pytest collection: six modules hit a `NameError` because six existing route decorators still referenced the old `require_scheduler_key` symbol.
 - Root cause was an incomplete symbol replacement, not an authentication logic failure. All six remaining decorator references were replaced with the canonical `app.auth.require_api_key` dependency.
 - The failed run was `42540264184` at commit `0f57fb1`; it did not execute the test suite because collection failed. A new exact-head CI run is required before claiming verification.
+
+
+### Disposable CI audit teardown correction — 2026-11-09
+
+- The next CI run passed Python dependency setup and the disposable PostgreSQL target guard, but failed during PostgreSQL fixture teardown: the append-only trigger correctly rejected test cleanup DELETEs, and retained audit foreign keys then prevented synthetic publication deletion.
+- Corrected only the PostgreSQL test fixture teardown: inside a transaction against the workflow-guarded disposable CI database, disable user triggers on the audit table, delete only rows for that fixture's three synthetic account IDs, and re-enable triggers before commit. A failure rolls back the cleanup and trigger state. Production application code and migration protections are unchanged.
+- CI run `42540384478` exposed the teardown failure. New exact-head CI run required for verification.
