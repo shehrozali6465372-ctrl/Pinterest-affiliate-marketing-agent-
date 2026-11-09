@@ -1918,7 +1918,7 @@ def _create_uncertain_scheduler_fixture(
             INSERT INTO content_versions
                 (product_id, version_number, provider, model_id, prompt_version,
                  pin_idea, title, description, alt_text)
-            VALUES (%s, 1, 'test', 'test', 'test', 'test', 'test', 'test')
+            VALUES (%s, 1, 'test', 'test', 'test', 'test', 'test', 'test', 'test')
             RETURNING id
             """,
             (product_id,),
