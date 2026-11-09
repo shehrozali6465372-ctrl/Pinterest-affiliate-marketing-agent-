@@ -741,3 +741,10 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Removed the scheduler module's duplicate API-key dependency and reused the canonical `app.auth.require_api_key` dependency. This avoids drift between scheduler and general service authentication; the dependency remains fail-closed (503 if no key is configured, 401 for absent/invalid key).
 - Added API regression coverage for both reconciliation GET and POST routes when the service key is unconfigured and when an invalid key is supplied. These tests are included in the PostgreSQL integration workflow's explicit test list via `tests/test_affiliate_scheduler.py`.
 - Feature-branch CI must pass on the resulting exact HEAD before this hardening is considered verified. No production access, merge, deployment, scheduler activation, Pinterest Pin or Board creation.
+
+
+### Authentication refactor CI correction — 2026-11-09
+
+- First CI attempt after centralizing scheduler auth failed during pytest collection: six modules hit a `NameError` because six existing route decorators still referenced the old `require_scheduler_key` symbol.
+- Root cause was an incomplete symbol replacement, not an authentication logic failure. All six remaining decorator references were replaced with the canonical `app.auth.require_api_key` dependency.
+- The failed run was `42540264184` at commit `0f57fb1`; it did not execute the test suite because collection failed. A new exact-head CI run is required before claiming verification.
