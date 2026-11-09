@@ -282,7 +282,10 @@ def publish_product_end_to_end(
             )
         except ContentGenerationError as exc:
             _release_generation_lease_safely(idempotency_key, lease_token)
-            logger.error("workflow stage=content_generation outcome=failed detail=%s", str(exc)[:180])
+            logger.error(
+                "workflow stage=content_generation outcome=failed exception_type=%s",
+                type(exc).__name__,
+            )
             raise HTTPException(status_code=503, detail="Content generation failed; the saved image will be reused on retry with the same Idempotency-Key.") from exc
         except Exception as exc:
             _release_generation_lease_safely(idempotency_key, lease_token)
