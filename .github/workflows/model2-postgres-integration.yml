@@ -58,7 +58,7 @@ jobs:
       - name: Install PostgreSQL 16 client tools for backup/restore rehearsal
         run: |
           sudo apt-get update
-          sudo apt-get install --yes postgresql-client-16
+          sudo apt-get install --yes postgresql-client
           pg_dump --version
           pg_restore --version
 
