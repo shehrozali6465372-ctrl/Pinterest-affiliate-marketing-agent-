@@ -178,7 +178,7 @@ def create_draft_schedule(payload: CreateScheduleInput) -> dict[str, object]:
         raise HTTPException(status_code=503, detail="Could not persist the draft schedule.") from exc
 
 
-@router.post("/schedules/{schedule_id}/activate", dependencies=[Depends(require_scheduler_key)])
+@router.post("/schedules/{schedule_id}/activate", dependencies=[Depends(require_api_key)])
 def activate_schedule(schedule_id: int) -> dict[str, object]:
     """Explicitly enqueue a draft schedule. This does not execute jobs or contact Pinterest."""
     try:
@@ -285,7 +285,7 @@ def activate_schedule(schedule_id: int) -> dict[str, object]:
         raise HTTPException(status_code=503, detail="Could not activate and enqueue the schedule.") from exc
 
 
-@router.post("/schedules/{schedule_id}/pause", dependencies=[Depends(require_scheduler_key)])
+@router.post("/schedules/{schedule_id}/pause", dependencies=[Depends(require_api_key)])
 def pause_schedule(schedule_id: int) -> dict[str, object]:
     try:
         with connection() as conn:
@@ -332,7 +332,7 @@ def _account_local_day_bounds(timezone_name: str, *, now: datetime | None = None
     return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
 
 
-@router.post("/run-due", dependencies=[Depends(require_scheduler_key)])
+@router.post("/run-due", dependencies=[Depends(require_api_key)])
 def run_one_due_job() -> dict[str, object]:
     """Claim and execute at most one due job. Never replays uncertain Pinterest writes."""
     from fastapi import HTTPException
@@ -587,7 +587,7 @@ def run_one_due_job() -> dict[str, object]:
         raise HTTPException(status_code=503, detail="Scheduler worker could not safely process a due job.") from exc
 
 
-@router.get("/schedules/{schedule_id}", dependencies=[Depends(require_scheduler_key)])
+@router.get("/schedules/{schedule_id}", dependencies=[Depends(require_api_key)])
 def get_schedule_status(schedule_id: int) -> dict[str, object]:
     """Return schedule state and aggregate job counts without exposing affiliate URLs."""
     try:
@@ -646,7 +646,7 @@ class SchedulerJobReconciliationInput(BaseModel):
         return value
 
 
-@router.get("/jobs/{job_id}/reconciliation", dependencies=[Depends(require_scheduler_key)])
+@router.get("/jobs/{job_id}/reconciliation", dependencies=[Depends(require_api_key)])
 def inspect_scheduler_job_reconciliation(
     job_id: int, account_id: str = Query(..., min_length=10, max_length=200),
 ) -> dict[str, object]:
@@ -663,7 +663,7 @@ def inspect_scheduler_job_reconciliation(
     return result
 
 
-@router.post("/jobs/{job_id}/reconcile", dependencies=[Depends(require_scheduler_key)])
+@router.post("/jobs/{job_id}/reconcile", dependencies=[Depends(require_api_key)])
 def reconcile_scheduler_job_endpoint(
     job_id: int, payload: SchedulerJobReconciliationInput,
 ) -> dict[str, object]:
