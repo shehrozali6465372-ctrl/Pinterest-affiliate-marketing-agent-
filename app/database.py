@@ -781,13 +781,34 @@ def get_scheduler_job_reconciliation(job_id: int, *, account_id: str) -> dict | 
             """,
             (job["idempotency_key"],),
         ).fetchall()
-        candidate = dict(candidates[0]) if len(candidates) == 1 else None
+        candidate = None
+        linkage_status = "no_publication_candidate" if not candidates else "ambiguous_publication_candidates"
+        if len(candidates) == 1:
+            row = dict(candidates[0])
+            if row["publication_account_id"] != account_id:
+                linkage_status = "publication_account_mismatch"
+            elif job["product_id"] is not None and job["product_id"] != row["product_id"]:
+                linkage_status = "publication_product_mismatch"
+            elif job["niche_id"] is not None and row["attributed_niche_id"] != job["niche_id"]:
+                linkage_status = "publication_niche_attribution_missing_or_mismatched"
+            elif job["niche_id"] is None and row["attributed_niche_id"] is not None:
+                linkage_status = "legacy_model1_niche_attribution_mismatch"
+            else:
+                linkage_status = "matched"
+                candidate = {
+                    "publication_id": row["publication_id"],
+                    "publication_status": row["publication_status"],
+                    "board_id": row["board_id"],
+                    "content_version_id": row["content_version_id"],
+                    "pinterest_pin_id": row["pinterest_pin_id"],
+                }
         return {
             "job_id": job["job_id"], "job_status": job["job_status"],
             "schedule_id": job["schedule_id"], "account_id": job["account_id"],
             "niche_id": job["niche_id"], "schedule_status": job["schedule_status"],
             "product_id": job["product_id"], "job_pin_id": job["job_pin_id"],
             "publication_candidate_count": len(candidates),
+            "linkage_status": linkage_status,
             "publication": candidate,
             "read_only": True,
         }
