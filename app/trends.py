@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.auth import require_credential_ingest_key
 from app.credential_vault import get_pinterest_credential
 
 router = APIRouter(prefix="/trend-intelligence", tags=["trend-intelligence"])
@@ -109,14 +110,7 @@ def fetch_trends(account_id: str, regions: list[str], limit: int = 50) -> dict[s
     }
 
 
-def _require_ingest_key(x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key")) -> None:
-    import hmac
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
-
-
-@router.post("/run", dependencies=[Depends(_require_ingest_key)])
+@router.post("/run", dependencies=[Depends(require_credential_ingest_key)])
 def run_trend_intelligence(payload: TrendRequest) -> dict[str, object]:
     try:
         return fetch_trends(payload.account_id, payload.regions, payload.limit)
