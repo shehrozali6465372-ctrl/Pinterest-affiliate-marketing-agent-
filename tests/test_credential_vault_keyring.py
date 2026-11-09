@@ -160,3 +160,68 @@ def test_retained_legacy_keyring_entry_takes_precedence_over_changed_legacy_env(
         "active",
     )
     assert credential_vault._decrypt(ciphertext, aad) == "legacy-token"
+
+
+def test_read_only_key_inventory_counts_all_statuses_without_decrypting(monkeypatch):
+    _use_keyring(monkeypatch, {"legacy": _encoded_key(21), "active": _encoded_key(22)}, "active")
+    legacy_nonce = bytes([23]) * 12
+    legacy_blob = legacy_nonce + AESGCM(bytes([21]) * 32).encrypt(
+        legacy_nonce, b"synthetic", b"pinterest:123:access"
+    )
+    active_blob = credential_vault._encrypt("synthetic-active", b"pinterest:456:access")
+
+    rows = [
+        {
+            "account_id": "pinterest:123",
+            "pinterest_user_id": "123",
+            "status": "connected",
+            "access_token_ciphertext": legacy_blob,
+            "refresh_token_ciphertext": None,
+        },
+        {
+            "account_id": "pinterest:456",
+            "pinterest_user_id": "456",
+            "status": "revoked",
+            "access_token_ciphertext": active_blob,
+            "refresh_token_ciphertext": b"bad",
+        },
+        {
+            "account_id": "pinterest:wrong",
+            "pinterest_user_id": "789",
+            "status": "revoked",
+            "access_token_ciphertext": active_blob,
+            "refresh_token_ciphertext": None,
+        },
+    ]
+
+    class Cursor:
+        def fetchall(self):
+            return rows
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query):
+            assert "WHERE status" not in query
+            assert "access_token_ciphertext" in query
+            return Cursor()
+
+    monkeypatch.setattr(credential_vault, "connection", lambda: Connection())
+    monkeypatch.setattr(
+        credential_vault, "_decrypt",
+        lambda *args, **kwargs: pytest.fail("inventory must never decrypt tokens"),
+    )
+
+    result = credential_vault.pinterest_credential_encryption_inventory()
+    assert result == {
+        "credential_rows": 3,
+        "invalid_identity_rows": 1,
+        "access_token_key_ids": {"active": 2, "legacy": 1},
+        "refresh_token_key_ids": {"absent": 2, "invalid": 1},
+        "includes_revoked_rows": True,
+        "tokens_decrypted": False,
+    }
