@@ -766,3 +766,12 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - This run includes the centralized scheduler authentication refactor, GET/POST missing/invalid API-key regression tests, append-only audit UPDATE/DELETE/TRUNCATE protections, and the transaction-scoped disposable-CI fixture teardown.
 - Warning observed: Starlette TestClient/httpx deprecation and GitHub Actions Node.js 20 deprecation notices; no test failures. These warnings are maintenance items, not test failures.
 - No production database migration, deployment, merge, PR, live scheduler activation, Pinterest Pin, or Board was performed.
+
+
+### Populated legacy migration rehearsal added — 2026-11-09
+
+- Added `tests/test_model2_legacy_upgrade.py`, which creates a separate database only on the workflow-guarded loopback PostgreSQL 16 CI service, applies all 14 SQL migration files numbered 001–013 (there are two distinct 009 files), inserts a synthetic populated legacy Model 1 schedule/source/queued job, then applies migrations 014 and 015.
+- The test asserts the legacy schedule remains `niche_id IS NULL`, its active status, board metadata and queued job/idempotency lineage are preserved, the existing one-active-schedule index remains, and legacy schedule update semantics still work.
+- The temporary database is dropped with FORCE in a finally block. The test explicitly refuses DATABASE_URL or any non-loopback/non-CI target.
+- Added this test to the Model 2 PostgreSQL CI workflow. CI result is pending; do not call the rehearsal passed until its run is green.
+- This synthetic populated upgrade test is not a sanitized production clone and does not replace a production-like restore/rollback rehearsal.
