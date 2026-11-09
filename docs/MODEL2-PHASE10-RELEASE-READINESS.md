@@ -157,3 +157,16 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - Exact-head CI run 42545788592 passed on cfc7f96956a0ebf69e978eaf4e504f7de69994c0; all workflow steps, migration ledger/fixture cleanup checks and PostgreSQL container teardown passed.
 - Targeted review found DeepSeek logs bounded response metadata only and Cloudflare logs provider status/codes only. This does not constitute exhaustive Git-history secret scanning or a production log-retention/access-control audit. Secret rotation and operational access review remain outstanding release gates.
 - No production DB access, provider write, scheduler activation, deployment, Pin or Board creation occurred.
+
+
+### Credential/account identity review — implementation committed, CI pending (2026-11-09)
+
+**Status:** Partial security hardening; release gate remains open.
+
+- Credential writes now reject `account_id` values that do not exactly match `pinterest:<pinterest_user_id>` before encryption/database access. Access-token and refresh-token reads repeat the same metadata validation before decrypting.
+- The Hub Pinterest operation endpoint performs a read-only `GET /user_account` preflight and compares the returned Pinterest user ID to stored metadata before executing any requested operation, including `create_board`. Identity mismatch returns conflict before the write request.
+- Synthetic regression tests cover mismatched ingest metadata, malformed stored metadata, and a real-token identity mismatch with an assertion that no board-create request is issued. Both test files are included in the explicit CI test list.
+- **CI for these latest commits is not yet verified.** The prior successful exact-head run `42545907875` predates this patch and does not cover it.
+- Shared `X-API-Key` and `X-Credential-Ingest-Key` remain service-level credentials, not per-human identity, per-user permissions, or tenant isolation. This is acceptable only under the explicitly documented single-owner operating model.
+- **Open high-priority credential lifecycle gap:** the vault has one active `PINTEREST_TOKEN_ENCRYPTION_KEY`, no persisted key ID/key ring, and no tested re-encryption/rotation procedure. A direct environment-key replacement can render existing access/refresh ciphertext undecryptable. Keep the current key stable until versioned key management and a rollback-tested re-encryption procedure are implemented.
+- No production credentials/database, Pinterest OAuth refresh, Board/Pin creation, scheduler execution, deployment, PR, or merge occurred.
