@@ -1,7 +1,9 @@
 name: Pinterest Learning Loop
 
 on:
-  # Temporarily paused for approved maintenance; manual dispatch remains available.
+  schedule:
+    # Daily at 03:17 UTC (08:17 Pakistan Standard Time).
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
