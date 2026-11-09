@@ -59,19 +59,30 @@ def patch_connection(monkeypatch, conn):
 
 
 def test_credential_metadata_check_reads_no_token_material():
-    conn = FakeConnection([{"account_id": "pinterest:123456789"}])
+    conn = FakeConnection([{"account_id": "pinterest:123456789", "pinterest_user_id": "123456789"}])
 
     assert credential_vault.pinterest_account_is_connected_in_transaction(
         conn, "pinterest:123456789"
     ) is True
 
     query, params = conn.calls[0]
-    assert "SELECT account_id" in query
+    assert "SELECT account_id, pinterest_user_id" in query
     assert "status = 'connected'" in query
     assert "FOR SHARE" in query
     assert "ciphertext" not in query
     assert "token" not in query.lower()
     assert params == ("pinterest:123456789",)
+
+
+def test_credential_metadata_check_rejects_mismatched_stored_pinterest_identity():
+    conn = FakeConnection([{"account_id": "pinterest:123456789", "pinterest_user_id": "different-user"}])
+
+    assert credential_vault.pinterest_account_is_connected_in_transaction(
+        conn, "pinterest:123456789"
+    ) is False
+    query, _ = conn.calls[0]
+    assert "pinterest_user_id" in query
+    assert "ciphertext" not in query
 
 
 def test_credential_metadata_check_returns_false_without_connected_row():
@@ -191,7 +202,7 @@ def test_save_assignment_serializes_account_and_clears_previous_primary(monkeypa
     conn = FakeConnection([
         {"status": "active"},  # account profile FOR UPDATE
         {"status": "active"},  # niche FOR SHARE
-        {"account_id": "pinterest:123456789"},  # connected credential FOR SHARE
+        {"account_id": "pinterest:123456789", "pinterest_user_id": "123456789"},  # connected credential FOR SHARE
         None,  # clear previous active primary
         mapping_row,  # upsert target mapping
     ])
