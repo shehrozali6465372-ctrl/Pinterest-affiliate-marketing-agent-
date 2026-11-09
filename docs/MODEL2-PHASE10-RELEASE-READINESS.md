@@ -180,3 +180,14 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - Synthetic tests cover legacy compatibility, key-ID selection, active-key changes while old keys remain retained, wrong-key rejection, malformed configuration, and re-encryption. The explicit CI workflow includes the new test module, but **the latest change set is still awaiting independently verified CI**.
 - Rotation is **not executed**. Required order: restorable backup; configure old key under `legacy` plus new active key; deploy only with separate approval; re-encrypt every credential row; verify all envelopes and decryptability; retain old key through rollback window; remove old key only after rollback/restore evidence. Never remove the old key while any ciphertext still references it.
 - No production database or secrets were accessed or changed. No live OAuth, Pinterest write, Pin/Board, scheduler, deployment, PR or merge occurred.
+
+
+### Security follow-up — keyring and canonical ingest auth CI PASS (2026-11-09)
+
+- **Exact-head CI PASS:** run `42549027659`, commit `0b621fd7a133d8809123917b5365199c0893bd8d`. All steps passed, including the isolated disposable database guard, static/PostgreSQL tests, complete migration-ledger and fixture-cleanup checks, and container teardown.
+- Added versioned AES-256-GCM ciphertext envelopes with key IDs, optional JSON key ring and active key ID settings, legacy ciphertext compatibility, and a per-account operator-only re-encryption primitive. Synthetic tests cover key selection, retained old-key reads, wrong/missing keys, legacy reads and re-encryption.
+- Canonicalized trusted-Hub credential-ingest authentication in `app/auth.py`. Pinterest Trends now uses the same fail-closed guard as main integration routes: missing configuration is 503; invalid supplied key is 401.
+- Credential disconnect now rejects invalid stored account identity safely. Account-operation preflight checks actual Pinterest identity before any requested write.
+- This CI run uses disposable synthetic PostgreSQL and mocked provider responses. It is not evidence of production key rotation, complete credential inventory migration, sanitized production backup/restore, or live account verification.
+- **Production key rotation remains NOT DONE.** Required steps: retain original key under `legacy`; configure new active key; separately approve deployment; re-encrypt every credential row including revoked rows with ciphertext; verify key IDs and decryption; retain old key through rollback; remove it only after backup/restore and rollback evidence. Do not change or remove the current production key before those steps.
+- No production database/secret, Pinterest write, OAuth refresh, scheduler activation, Pin/Board creation, deployment, PR or merge occurred.
