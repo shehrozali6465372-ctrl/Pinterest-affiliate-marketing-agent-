@@ -147,4 +147,4 @@ Current CI emits a Starlette/httpx TestClient deprecation warning and GitHub Act
 
 A new disposable-CI test applies migrations 001–013, inserts synthetic legacy Model 1 scheduler data, and then applies migrations 014–015 to verify preservation of legacy schedule/job state and update semantics. This is a synthetic compatibility test only; it is not evidence from a sanitized production snapshot and does not satisfy the production-like backup/restore rehearsal requirement.
 
-- [ ] New populated legacy upgrade rehearsal CI passes on exact feature-branch HEAD.
+- [x] Synthetic populated legacy upgrade rehearsal passed in CI run `42540730785` (236 passed). This does not replace the sanitized production-like snapshot and restore/rollback rehearsal.
