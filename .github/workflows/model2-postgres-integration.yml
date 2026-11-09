@@ -86,6 +86,7 @@ jobs:
           tests/test_credential_vault_identity.py
           tests/test_credential_vault_keyring.py
           tests/test_pinterest_operation_identity.py
+          tests/test_trend_ingest_auth.py
           tests/test_api.py
           tests/test_model2_registry_migration.py
           tests/test_affiliate_scheduler.py
