@@ -887,3 +887,28 @@ This section supersedes older entries above that describe the keyring, credentia
 - Updated `docs/MODEL2-SCHEDULER-RECONCILIATION-DESIGN.md` and `docs/MODEL2-PHASE10-RELEASE-READINESS.md` with the current lock order, CI evidence and limitations.
 - **Still NOT DONE:** production key rotation; batch re-encryption of every credential row; production credential-key inventory; sanitized production-like backup/restore; Neon backup/PITR and owner-operated rollback rehearsal; production access/log-retention review.
 - Branch is still feature-only. No production DB/secrets, live OAuth refresh, scheduler activation, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
+
+
+
+### Scheduler deadlock hardening and main-branch scheduled-run discovery — 2026-11-09
+
+- Review found an additional lock-order inversion in `run_one_due_job`: bulk stale-job quarantine and schedule-completion updates acquired job/schedule locks before the Model 2 account-profile lock; post-workflow finalization also updated the job before acquiring the schedule lock. These paths could deadlock against reconciliation, which locks profile → niche → assignment → schedule → job.
+- Added `_lock_scheduler_job_context`, which re-reads a non-locking routing hint and then locks Model 2 profile → niche → assignment → schedule → job, rechecking account/schedule/job linkage.
+- Stale-claim quarantine now processes one candidate in its own transaction, acquires locks in the canonical order, and rechecks status and age before marking it uncertain. Removed the bulk schedule-completion sweep; normal terminal transitions already call the schedule completion helper while holding the schedule lock.
+- Post-workflow success, failure, uncertain, and retry-queue transitions now use `_finalize_claimed_job`, which rechecks that the job remains processing and updates it only after account/schedule/job locks are held. If safe finalization cannot be proven, the API returns 503 and does not claim that the scheduler ledger was updated.
+- Added `tests/test_affiliate_scheduler_lock_order.py` for lock ordering, stale-state rechecks and protection against overwriting a job that is no longer processing. The explicit PostgreSQL CI list includes the new test module.
+- First CI attempt exposed two test-fixture mismatches (the existing worker test's fake connection did not implement the new finalizer, and one assertion matched the wrong SQL fragment). Both test fixtures were corrected; this was not a production test or Pin action.
+- **Exact-head CI PASS:** run `42611981311`, commit `3562ef346ec03e6b31815aef4dfb1b9f3c2f0cfe`: **274 passed, 0 failed, 1 warning**. All 16 numbered migrations were recorded, fixture cleanup passed, and PostgreSQL teardown passed.
+- Branch comparison at this checkpoint: `feat/model2-open-source-reuse` is 149 commits ahead of `main`, 0 behind. No PR/merge/deployment was created by this work.
+
+### Operational correction — scheduled workflows on main are already executing (2026-11-09)
+
+**This section supersedes earlier same-day notes that stated no live scheduler execution had occurred.** The earlier statements were not accurate for the pre-existing default-branch cron workflows.
+
+- Read-only GitHub Actions inspection found scheduled runs on `main` for both `.github/workflows/affiliate-scheduler-worker.yml` and `.github/workflows/pinterest-learning-loop.yml`. These were triggered by GitHub's `schedule` event; the assistant did not dispatch or trigger them.
+- Affiliate Scheduler Worker run `42581914921` (2026-11-09 07:51 UTC) successfully called the Render production endpoint `POST /affiliate-scheduler/run-due`. Its safe workflow output reported `claimed=true`, `processed=true`, `job_id=13`, `status=succeeded`. The wrapper intentionally logged neither `published` nor Pinterest Pin ID, so the log alone cannot establish whether this created a new Pin or returned an already-published result. Do not claim either outcome without an authorized read-only production ledger check.
+- Pinterest Learning Loop run `42611471024` (2026-11-09 11:44 UTC) called the Render production `POST /learning-loop/run` endpoint. Its response reported `ok=false`, `pins_checked=17`, `snapshots_saved=16`, `learning_status=analytics_ingested_descriptive_evaluation_only`, and `model_trained=false`. This is evidence of live analytics ingestion and database snapshot writes, not Pin publishing.
+- The scheduler workflow's cron is `7 * * * *`; the learning-loop workflow also has a scheduled trigger. Both files are present on `main`. Scheduled workflow runs exist in GitHub Actions history. No workflow was triggered, dispatched, disabled, or modified on `main` during this continuation.
+- **Human decision required:** because the pre-existing default-branch workflows are already scheduled, owner must decide whether to disable the live Affiliate Scheduler Worker and/or Learning Loop until separately approved. The feature branch remains unmerged and undeployed; no change to `main` or production automation was made.
+- **Unresolved live publication question:** job 13's success output is insufficient to prove whether a new Pin was created. A production publication-ledger check or suitably redacted Render request log is needed, with explicit owner approval. No production database was accessed by the assistant.
+- No manual scheduler run, OAuth refresh, production DB query, real Pin/Board creation, deployment, PR, or merge was performed by the assistant.
