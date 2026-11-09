@@ -2019,7 +2019,7 @@ def test_scheduler_reconciliation_rejects_recent_pending_publication(model2_db):
         job_id, _ = _create_uncertain_scheduler_fixture(
             conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
             suffix=f"pending-{model2_db['suffix']}", publication_status="pending",
-            pending_age_minutes=2,
+            pending_age_minutes=2, attribution_niche_id=model2_db["niche_a"],
         )
     with pytest.raises(ValueError, match="10 minutes"):
         database.reconcile_scheduler_job(
