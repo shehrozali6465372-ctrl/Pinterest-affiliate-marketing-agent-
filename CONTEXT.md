@@ -796,3 +796,14 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Exact feature-branch CI run `42542035022` passed on commit `3011674c990df91fc611742199676b31c4c0c0dd`; the PostgreSQL integration job, static/integration tests, migration-ledger verification, fixture cleanup, and container teardown all completed successfully.
 - This verifies service-key enforcement in CI only. Shared service keys still do not identify individual humans or provide per-operator authorization/non-repudiation. Secret rotation, log-redaction review, sanitized production-like restore/rollback rehearsal, and owner approval remain release gates.
 - No production database was accessed or changed. No PR, merge, deployment, live scheduler activation, real Pinterest Board, or real Pin was performed.
+
+
+### Workflow provider-error redaction — CI PASS (2026-11-09)
+
+- Security review found the end-to-end workflow logged raw ImageGenerationError and ContentGenerationError messages; provider exception text can contain request/provider details and must not be treated as safe log content.
+- Updated app/workflow.py to log only the exception class for image/content generation failures. Image-generation HTTP responses now return a fixed generic message rather than exposing the raw provider exception. Existing content-generation response was already generic.
+- Added regression tests injecting synthetic secret-marker strings into both provider exceptions. Tests assert the marker is absent from both HTTP responses and captured application logs, while the exception class remains observable for diagnostics.
+- Exact-head PostgreSQL CI run 42545788592 passed on commit cfc7f96956a0ebf69e978eaf4e504f7de69994c0. The workflow, isolated database guard, test job, migration-ledger/fixture-cleanup verification, and disposable PostgreSQL teardown all completed successfully.
+- Review of DeepSeek logging found only bounded metadata (HTTP status, provider code, response content type/size, duration and provider request ID); no request headers, API keys, prompt content or response bodies are logged. Cloudflare image-generation logging emits status/provider codes only. Other reviewed operational modules contain no raw token/credential logging statements.
+- This is a targeted code/log review plus synthetic regression coverage, not an exhaustive secret scan of all Git history or a production log-retention/access-control audit. Secret rotation and operational access review remain release gates.
+- No production DB access/change, PR, merge, deployment, scheduler activation, Pinterest API write, real Pin or Board creation occurred.
