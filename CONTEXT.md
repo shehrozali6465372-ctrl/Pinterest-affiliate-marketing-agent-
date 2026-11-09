@@ -727,3 +727,10 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - Latest exact-head commit `7c9b3484b73f43d40da492038569b0c28b12ad43`, GitHub Actions run `42539115679`: **230 passed, 0 failed, 1 non-blocking warning** on disposable PostgreSQL 16.15. Includes authenticated API tests and read-only PostgreSQL inspection coverage. All **16** numbered migrations recorded; Model 2 and synthetic Model 1 fixture cleanup verified; ephemeral PostgreSQL service stopped. Link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42539115679
 - The earlier intermediate CI failures were corrected (fixture content-version values, JSONB parameter casts, missing test niche attribution, synthetic fixture cleanup predicates). The final exact-head run above passed tests and cleanup.
 - Phase 10 remains PRE-RELEASE / BLOCKED: sanitized production-like migration rehearsal and backup/restore/rollback rehearsal for migrations 014 and 015 are not verified; separate owner approval remains required for production migration, deployment and live scheduler activation. No PR, merge, production migration/deployment, scheduler run, real Pinterest Pin or Board creation occurred.
+
+
+### Phase 10 security follow-up — 2026-11-09
+
+- Reconciliation audit table hardening: added a statement-level TRUNCATE trigger in migration 015 in addition to existing UPDATE/DELETE row trigger. PostgreSQL CI now checks TRUNCATE rejection; fixture teardown deletes only its own account-scoped rows instead of truncating the audit table.
+- Security limitation documented: shared X-API-Key authenticates the service request, not an individual human operator. Current audit evidence is caller-supplied text, not non-repudiable identity proof. Never store credentials or sensitive personal data in evidence. DB owner/superuser can bypass/disable triggers; this is not tamper-proof against privileged administrators.
+- Pending verification: rerun the exact feature-branch PostgreSQL CI after this change. No production migration/deployment, PR/merge, scheduler activation, or Pinterest Pin/Board action.
