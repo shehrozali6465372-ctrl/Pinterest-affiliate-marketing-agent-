@@ -150,7 +150,7 @@ def test_populated_legacy_model1_scheduler_survives_model2_migrations():
             assert "affiliate_one_active_schedule_per_account_idx" in indexes
             assert conn.execute(
                 "SELECT count(*) FROM schema_migrations"
-            ).fetchone()[0] == 15
+            ).fetchone()[0] == 16
     finally:
         if created:
             with psycopg.connect(admin_dsn, autocommit=True) as admin:
