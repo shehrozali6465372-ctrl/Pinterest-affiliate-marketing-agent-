@@ -54,9 +54,9 @@ def model2_db(monkeypatch):
                 VALUES (%s, %s, %s, 'connected'), (%s, %s, %s, 'connected'),
                        (%s, %s, %s, 'connected')
                 """,
-                (account_a, "test-user-a", b"test-ciphertext-a",
-                 account_b, "test-user-b", b"test-ciphertext-b",
-                 account_c, "test-user-c", b"test-ciphertext-c"),
+                (account_a, f"test-model2-a-{suffix}", b"test-ciphertext-a",
+                 account_b, f"test-model2-b-{suffix}", b"test-ciphertext-b",
+                 account_c, f"test-model2-c-{suffix}", b"test-ciphertext-c"),
             )
             conn.execute(
                 "INSERT INTO model2_account_profiles (account_id) VALUES (%s), (%s)",
