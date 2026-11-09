@@ -111,3 +111,24 @@ The reservation path now:
 The connected-credential metadata guard now also validates `account_id == pinterest:<pinterest_user_id>`; it reads no ciphertext and returns false for malformed/mismatched identity. Scheduler draft/activation/worker preflight uses this same guard.
 
 Synthetic regression coverage includes mismatched stored identity, scheduler rejection before draft creation, and explicit niche-context requirements for attributed retries. Exact-head CI run `42611158364`, commit `739b1ae70d3b7a3b01ac7644a34f14f235ab0ecc`: **269 passed, 0 failed, 1 warning**; all 16 migrations, fixture cleanup and PostgreSQL teardown passed. No Pinterest API write was performed.
+
+
+
+## Worker lock-order follow-up — CI verified (2026-11-09)
+
+The worker must not bulk-update scheduler jobs before locking their account context. Such child-first updates invert the reconciliation order and can deadlock with an operator reconciliation transaction.
+
+The worker now uses the following order for stale-claim quarantine and post-workflow finalization:
+
+1. Read an unlocked job/schedule routing hint.
+2. For Model 2, lock account profile, niche, and exact account-niche assignment in that order.
+3. Lock and revalidate the schedule row.
+4. Lock and revalidate the job row.
+5. Recheck processing status and stale timestamp where applicable.
+6. Update the job; update schedule terminal status only while its schedule row is already locked.
+
+Stale claims are quarantined one at a time in a separate transaction. The previous bulk stale-job update and bulk schedule-completion sweep were removed. Post-workflow success/retry/failure/uncertain transitions use the same ordered finalizer. If the job is no longer processing or Model 2 linkage cannot be locked and revalidated, finalization fails closed.
+
+Synthetic regression tests assert lock statement ordering and stale-state rechecks. Exact-head CI run `42611981311`, commit `3562ef346ec03e6b31815aef4dfb1b9f3c2f0cfe`: 274 passed, 0 failed, 1 warning; all 16 migrations, fixture cleanup and PostgreSQL teardown passed.
+
+This is application-level concurrency hardening, not proof of zero deadlocks under all production load patterns. Production-like load/concurrency testing remains outstanding.
