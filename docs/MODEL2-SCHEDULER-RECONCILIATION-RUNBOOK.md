@@ -5,7 +5,7 @@
 ## Safety boundary
 
 - Reconciliation is a database-only operation. The GET/POST endpoints do not call Pinterest, refresh OAuth, invoke the publishing workflow, generate content/media, or create a Board/Pin.
-- Use only an exact account/job pair. The shared `X-API-Key` authenticates the operator service request; `account_id` is checked against the job's persisted schedule account.
+- Use only an exact account/job pair. The shared `X-API-Key` authenticates the service request; `account_id` is checked against the job's persisted schedule account. The shared key does **not** identify an individual human operator, and the current audit row is not a cryptographic/non-repudiable human identity record. Do not claim otherwise.
 - Do not guess whether a Pin exists. A success requires a confirmed Pin ID and exactly one matching publication-ledger row. A failure requires explicit confirmation that the Pin is absent.
 - Never put OAuth tokens, API keys, cookies, or other credentials in `operator_evidence`.
 - A reconciled `failed` job is terminal. Do not requeue it or reuse its idempotency key. A future attempt must be a separate approved job with a new key.
@@ -72,7 +72,7 @@ This records the job as terminal `failed`. If a publication ledger row exists, i
 
 ## 4. Atomicity and audit
 
-The publication ledger update (when present), scheduler-job state transition and append-only audit row are committed in one PostgreSQL transaction. Any failure rolls the whole transaction back. The audit stores account, schedule/job/publication IDs, outcome, optional Pin ID, operator evidence and timestamp. It does not store credentials.
+The publication ledger update (when present), scheduler-job state transition and append-only audit row are committed in one PostgreSQL transaction. Any failure rolls the whole transaction back. The audit stores account, schedule/job/publication IDs, outcome, optional Pin ID, operator evidence and timestamp. It does not store credentials. Treat `operator_evidence` as a short reference/summary only; never paste secrets, tokens, cookies, raw headers or sensitive personal data. UPDATE, DELETE and TRUNCATE are rejected by database triggers under ordinary SQL access; a database owner/superuser can still alter or disable triggers, so this is not tamper-proof against privileged DB administrators.
 
 The endpoint returns HTTP 409 for non-uncertain jobs, ambiguous/mismatched linkage, a recent pending publication, insufficient evidence or conflicting ledger state. Stop and investigate; do not try a different ID until the evidence is independently established.
 
