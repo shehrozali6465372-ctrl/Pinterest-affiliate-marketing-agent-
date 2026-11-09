@@ -861,3 +861,13 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - **Exact implementation CI PASS:** run `42594318912`, commit `b38e66180a336d04e61f5439ea05e7c1d61c5981`; **265 passed, 0 failed, 1 warning**. All 16 migrations were recorded, fixture cleanup passed, and the PostgreSQL service was stopped. This is synthetic disposable backup/restore evidence only, not a sanitized production snapshot or Neon restore proof.
 - Updated `docs/MODEL2-PHASE10-RELEASE-READINESS.md` with the scope and CI evidence. Production-like sanitized snapshot rehearsal and operational restore/rollback remain open.
 - This rehearsal is synthetic and isolated. It does not access Neon, production credentials, real Pinterest, Render, or the scheduled worker. It does not authorize production migration, deployment, scheduler activation, PR/merge, or Pin/Board creation.
+
+
+### Read-only credential key inventory — implementation and exact-head CI PASS (2026-11-09)
+
+- Added `pinterest_credential_encryption_inventory()` in `app/credential_vault.py`. It scans all credential rows, including revoked rows, and returns aggregate counts of access/refresh ciphertext by key ID, legacy ciphertext, absent refresh ciphertext, malformed envelope and invalid canonical account identity.
+- This is metadata-only: it never decrypts tokens, returns account identifiers, calls Pinterest, or exposes an HTTP endpoint.
+- Added a synthetic test proving revoked rows are included and the inventory does not invoke token decryption.
+- Exact-head CI PASS: run `42594679834`, commit `8738194e9715278f835da665b6a58348ccaa7086`; **266 passed, 0 failed, 1 warning**. All 16 migrations recorded, fixture cleanup passed, and PostgreSQL service teardown passed.
+- This is a read-only rotation-preflight primitive only. No batch re-encryption, production key rotation, production DB access, OAuth refresh, scheduler activation, Pin/Board creation, PR, merge or deployment occurred.
+- Updated `docs/MODEL2-PHASE10-RELEASE-READINESS.md` with the verified implementation and its limitations.
