@@ -2,17 +2,17 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-import hmac
 import json
 import math
 
 import httpx
 import psycopg
 from cryptography.exceptions import InvalidTag
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.auth import require_api_key
 from app.credential_vault import TokenEncryptionConfigurationError, get_pinterest_credential
 from app.database import DatabaseConfigurationError
 
@@ -20,9 +20,8 @@ router = APIRouter(prefix="/learning-loop", tags=["learning-loop"])
 METRICS = ["IMPRESSION", "SAVE", "PIN_CLICK", "OUTBOUND_CLICK"]
 
 
-def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    if not settings.app_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+
+_require_api_key = require_api_key
 
 
 class LearningRequest(BaseModel):
@@ -67,7 +66,7 @@ def _extract_metrics(raw: dict[str, object]) -> dict[str, float | None]:
 
 
 
-@router.post("/run", dependencies=[Depends(_require_api_key)])
+@router.post("/run", dependencies=[Depends(require_api_key)])
 def run_learning_loop(payload: LearningRequest) -> dict[str, object]:
     """Fetch real analytics for confirmed Pins belonging to this account and persist snapshots."""
     from app.database import connection
