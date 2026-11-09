@@ -242,3 +242,10 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - Existing publication verification now uses a credential reader that refuses expired/unknown-expiry tokens instead of silently refreshing OAuth.
 - These are read-only verification safeguards. The feature branch's existing atomic scheduler reconciliation endpoint and runbook remain the authoritative recovery path. Exact-head tests and PostgreSQL CI must be rerun after this follow-up.
 - Latest-base local suite after this follow-up: **336 passed, 74 skipped, 1 non-blocking warning**. PostgreSQL backup/restore and populated legacy-upgrade modules require disposable PostgreSQL and were not run locally; exact-head CI is still required.
+
+### Exact-head CI for read-only verification hardening — PASS (2026-11-09)
+
+- Commit `9a5c6f056f17449f6111b1d6e098775cfa363fa3`, GitHub Actions run `42644496929`: **320 passed, 0 failed, 1 non-blocking warning** on disposable PostgreSQL 16.
+- The run applied and recorded all 16 numbered migrations, verified cleanup of synthetic Model 2 and Model 1 fixtures, and stopped the PostgreSQL service.
+- The CI run covers the new bounded GET-only Board listing/resolution tests, no-refresh credential tests, the connection-scoped publication reconciliation helper tests, the existing atomic scheduler reconciliation tests and the manual-publish auth fixture correction.
+- This is isolated CI evidence only. It does not verify live Pinterest credentials or Board/Pin state, production database operations, production cron control, deployment or scheduler activation.
