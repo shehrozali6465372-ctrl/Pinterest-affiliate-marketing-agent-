@@ -91,8 +91,8 @@ def model2_db(monkeypatch):
             # Remove only this test fixture's audit rows; the audit table
             # rejects UPDATE, DELETE and TRUNCATE even in disposable CI.
             conn.execute(
-                "DELETE FROM affiliate_job_reconciliation_audit WHERE account_id LIKE %s",
-                ("pinterest:test-model2-%",),
+                "DELETE FROM affiliate_job_reconciliation_audit WHERE account_id IN (%s, %s, %s)",
+                (account_a, account_b, account_c),
             )
             conn.execute(
                 "TRUNCATE TABLE model2_learning_snapshot_sources, model2_publication_niche_attributions"
