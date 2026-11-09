@@ -658,6 +658,24 @@ def test_live_diagnostics_requires_api_key_and_never_runs_without_auth(monkeypat
     assert response.status_code == 401
 
 
+def test_diagnostics_and_learning_routes_fail_closed_when_api_key_is_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", None)
+
+    diagnostics_response = unauthenticated_client.post(
+        "/diagnostics/run",
+        json={"account_id": "pinterest:test-account"},
+    )
+    learning_response = unauthenticated_client.post(
+        "/learning-loop/run",
+        json={"account_id": "pinterest:test-account"},
+    )
+
+    assert diagnostics_response.status_code == 503
+    assert learning_response.status_code == 503
+    assert diagnostics_response.json()["detail"] == "API authentication is not configured."
+    assert learning_response.json()["detail"] == "API authentication is not configured."
+
+
 def test_live_diagnostics_runs_read_only_pinterest_and_reports_side_effect_guard(monkeypatch):
     from types import SimpleNamespace
     from app import diagnostics
