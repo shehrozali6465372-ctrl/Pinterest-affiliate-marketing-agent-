@@ -94,8 +94,8 @@ def test_stale_claim_quarantine_locks_account_context_before_job_update(monkeypa
     profile = _index(fake.statements, "FROM model2_account_profiles")
     niche = _index(fake.statements, "FROM model2_niches")
     assignment = _index(fake.statements, "FROM model2_account_niches")
-    schedule = _index(fake.statements, "FROM affiliate_publishing_schedules")
-    job = _index(fake.statements, "FROM affiliate_pin_jobs j WHERE j.id")
+    schedule = _index(fake.statements, "FROM affiliate_publishing_schedules WHERE id = %s FOR UPDATE")
+    job = _index(fake.statements, "FROM affiliate_pin_jobs WHERE id = %s FOR UPDATE")
     update = _index(fake.statements, "UPDATE affiliate_pin_jobs")
     assert profile < niche < assignment < schedule < job < update
 
