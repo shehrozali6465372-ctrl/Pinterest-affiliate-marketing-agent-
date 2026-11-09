@@ -82,3 +82,64 @@ def test_invalid_keyring_configuration_fails_closed(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_token_encryption_active_key_id", "k1")
     with pytest.raises(credential_vault.TokenEncryptionConfigurationError, match="JSON object"):
         credential_vault._encrypt("token", b"account:access")
+
+
+def test_operator_reencryption_updates_one_row_without_pinterest_calls(monkeypatch):
+    legacy_key = bytes([13]) * 32
+    legacy_encoded = base64.b64encode(legacy_key).decode("ascii")
+    aad_access = b"pinterest:123:access"
+    aad_refresh = b"pinterest:123:refresh"
+    nonce_access = bytes([14]) * 12
+    nonce_refresh = bytes([15]) * 12
+    old_access = nonce_access + AESGCM(legacy_key).encrypt(nonce_access, b"old-access", aad_access)
+    old_refresh = nonce_refresh + AESGCM(legacy_key).encrypt(nonce_refresh, b"old-refresh", aad_refresh)
+    _use_keyring(monkeypatch, {"legacy": legacy_encoded, "new": _encoded_key(16)}, "new")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_key", None)
+
+    class Cursor:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class Connection:
+        def __init__(self):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, query, params):
+            self.calls.append((query, params))
+            if query.lstrip().startswith("SELECT"):
+                return Cursor({
+                    "account_id": "pinterest:123",
+                    "pinterest_user_id": "123",
+                    "access_token_ciphertext": old_access,
+                    "refresh_token_ciphertext": old_refresh,
+                })
+            return Cursor()
+
+    fake_connection = Connection()
+    monkeypatch.setattr(credential_vault, "connection", lambda: fake_connection)
+    result = credential_vault.reencrypt_pinterest_credential("pinterest:123")
+
+    assert result == {
+        "account_id": "pinterest:123",
+        "re_encrypted": True,
+        "active_key_id": "new",
+        "refresh_token_re_encrypted": True,
+        "pinterest_api_called": False,
+    }
+    assert len(fake_connection.calls) == 2
+    update_params = fake_connection.calls[1][1]
+    assert update_params[0].startswith(b"PVLT")
+    assert update_params[0][6:9] == b"new"
+    assert update_params[2].startswith(b"PVLT")
+    assert update_params[2][6:9] == b"new"
+    assert credential_vault._decrypt(update_params[0], aad_access) == "old-access"
+    assert credential_vault._decrypt(update_params[2], aad_refresh) == "old-refresh"
