@@ -148,3 +148,12 @@ Current CI emits a Starlette/httpx TestClient deprecation warning and GitHub Act
 A new disposable-CI test applies migrations 001–013, inserts synthetic legacy Model 1 scheduler data, and then applies migrations 014–015 to verify preservation of legacy schedule/job state and update semantics. This is a synthetic compatibility test only; it is not evidence from a sanitized production snapshot and does not satisfy the production-like backup/restore rehearsal requirement.
 
 - [x] Synthetic populated legacy upgrade rehearsal passed in CI run `42540730785` (236 passed). This does not replace the sanitized production-like snapshot and restore/rollback rehearsal.
+
+
+### Workflow provider-error redaction — verified in disposable CI (2026-11-09)
+
+- Removed raw image/content provider exception messages from end-to-end workflow logs; image-generation API responses now return a fixed generic error instead of raw provider exception text.
+- Added regression tests with synthetic secret markers proving that neither image nor content provider exception text appears in HTTP responses or application logs.
+- Exact-head CI run 42545788592 passed on cfc7f96956a0ebf69e978eaf4e504f7de69994c0; all workflow steps, migration ledger/fixture cleanup checks and PostgreSQL container teardown passed.
+- Targeted review found DeepSeek logs bounded response metadata only and Cloudflare logs provider status/codes only. This does not constitute exhaustive Git-history secret scanning or a production log-retention/access-control audit. Secret rotation and operational access review remain outstanding release gates.
+- No production DB access, provider write, scheduler activation, deployment, Pin or Board creation occurred.
