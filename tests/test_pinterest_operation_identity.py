@@ -98,3 +98,25 @@ def test_account_operation_rejects_mismatched_stored_account_metadata_before_net
 
     assert response.status_code == 409
     assert "identity does not match" in response.json()["detail"]
+
+def test_disconnect_fails_closed_when_stored_credential_identity_is_invalid(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "synthetic-hub-key")
+
+    from app import credential_vault
+
+    def reject_invalid_identity(account_id):
+        raise ValueError("synthetic identity mismatch")
+
+    monkeypatch.setattr(credential_vault, "revoke_pinterest_credential", reject_invalid_identity)
+    response = TestClient(app).post(
+        "/integrations/pinterest/operation",
+        headers={"X-Credential-Ingest-Key": "synthetic-hub-key"},
+        json={
+            "account_id": "pinterest:123456",
+            "operation": "disconnect",
+            "payload": {},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "identity is invalid" in response.json()["detail"]
