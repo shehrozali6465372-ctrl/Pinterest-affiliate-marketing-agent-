@@ -201,3 +201,12 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - The initial restore attempt exposed a client/server major-version mismatch (PostgreSQL 18 client against PostgreSQL 16 server). The final test runs `pg_dump` and `pg_restore` from the same `postgres:16` container image as the disposable server; the final CI run passed.
 - **Scope limitation:** this is a synthetic disposable-database backup/restore rehearsal, not a sanitized production-like snapshot. It does not validate production data volume, provider secrets, Neon backup/PITR configuration, production credentials, or real operational restore access. The production-like snapshot rehearsal and owner-approved operational restore/rollback plan remain open release gates.
 - No Neon/production database, production secret, live OAuth, Pinterest API write, scheduled worker, real Pin/Board, PR, merge or deployment was used or authorized.
+
+
+### Credential key-usage inventory — implementation and CI verified (2026-11-09)
+
+- Added read-only operator maintenance primitive `pinterest_credential_encryption_inventory()`. It inspects every credential row regardless of connected/revoked status and reports aggregate access/refresh ciphertext counts by key ID, legacy format, absent refresh ciphertext, malformed envelope and invalid canonical account metadata.
+- The inventory never decrypts token material, returns account identifiers, or calls Pinterest. It is not exposed as an HTTP route.
+- Synthetic regression verifies revoked rows are included, malformed identity/envelope states are counted, and the decrypt function is never invoked.
+- Exact-head CI run `42594679834`, commit `8738194e9715278f835da665b6a58348ccaa7086`: **266 passed, 0 failed, 1 warning**. All 16 migrations, fixture cleanup and PostgreSQL teardown passed.
+- This makes a future operator-led rotation easier to reconcile, but does not perform batch re-encryption or prove production key coverage. Production key rotation remains NOT DONE; backup/restore against a sanitized production-like snapshot remains open.
