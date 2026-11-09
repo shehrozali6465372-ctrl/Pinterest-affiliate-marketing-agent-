@@ -775,3 +775,12 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 - The temporary database is dropped with FORCE in a finally block. The test explicitly refuses DATABASE_URL or any non-loopback/non-CI target.
 - Added this test to the Model 2 PostgreSQL CI workflow. CI result is pending; do not call the rehearsal passed until its run is green.
 - This synthetic populated upgrade test is not a sanitized production clone and does not replace a production-like restore/rollback rehearsal.
+
+
+### Populated legacy upgrade rehearsal — CI PASS (2026-11-09)
+
+- GitHub Actions run `42540730785` completed successfully on commit `3ba1ef15d910039aa98f7f876760e209c2d2b44d`.
+- Test suite result: **236 passed, 0 failed, 1 warning**.
+- New `tests/test_model2_legacy_upgrade.py` passed: on a separately created disposable PostgreSQL 16 database, migrations 001–013 were applied, a synthetic active legacy Model 1 schedule/source/queued job were inserted, then migrations 014–015 were applied. The test verified legacy schedule `niche_id=NULL`, active status, board metadata, queued job/idempotency lineage, retained one-active-schedule index and legacy schedule update semantics.
+- Temporary upgrade database was dropped in the test's finally block. The main disposable CI database recorded all 16 migration files and all test fixtures were cleaned. Container teardown completed and workflow conclusion was success.
+- This materially improves migration compatibility evidence but remains synthetic. Sanitized production-like snapshot rehearsal, backup/restore and production rollback rehearsal remain open.
