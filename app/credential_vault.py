@@ -319,17 +319,22 @@ def reencrypt_pinterest_credential(account_id: str) -> dict[str, Any]:
             if refresh is not None
             else None
         )
-        conn.execute(
-            """UPDATE pinterest_credentials
-               SET access_token_ciphertext = %s,
-                   refresh_token_ciphertext = CASE
-                       WHEN %s IS NULL THEN refresh_token_ciphertext
-                       ELSE %s
-                   END,
-                   updated_at = now()
-               WHERE account_id = %s""",
-            (new_access, new_refresh, new_refresh, stored_account_id),
-        )
+        if new_refresh is None:
+            conn.execute(
+                """UPDATE pinterest_credentials
+                   SET access_token_ciphertext = %s, updated_at = now()
+                   WHERE account_id = %s""",
+                (new_access, stored_account_id),
+            )
+        else:
+            conn.execute(
+                """UPDATE pinterest_credentials
+                   SET access_token_ciphertext = %s,
+                       refresh_token_ciphertext = %s,
+                       updated_at = now()
+                   WHERE account_id = %s""",
+                (new_access, new_refresh, stored_account_id),
+            )
     return {
         "account_id": stored_account_id,
         "re_encrypted": True,
