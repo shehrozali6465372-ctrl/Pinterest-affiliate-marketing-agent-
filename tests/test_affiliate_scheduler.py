@@ -270,6 +270,31 @@ def test_scheduler_reconciliation_routes_fail_closed_without_configured_key(
     assert response.json()["detail"] == "API authentication is not configured."
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("get", "/affiliate-scheduler/jobs/123/reconciliation?account_id=pinterest:123", None),
+        ("post", "/affiliate-scheduler/jobs/123/reconcile", {
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "operator_evidence": "Operator verified the exact account and Board.",
+            "confirm_pin_absent": True,
+        }),
+    ],
+)
+def test_scheduler_reconciliation_routes_reject_invalid_key(
+    monkeypatch, method, path, body,
+):
+    monkeypatch.setattr(settings, "app_api_key", "expected-service-key")
+    client = TestClient(app)
+    response = (
+        getattr(client, method)(path, json=body, headers={"X-API-Key": "wrong-key"})
+        if body is not None
+        else client.get(path, headers={"X-API-Key": "wrong-key"})
+    )
+    assert response.status_code == 401
+
+
 def test_scheduler_reconciliation_inspection_api_is_authenticated_and_read_only(monkeypatch):
     from app import database
 
