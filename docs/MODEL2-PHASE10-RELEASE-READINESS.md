@@ -222,3 +222,15 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - Synthetic custom-format PostgreSQL 16 backup/restore rehearsal separately passed in run `42594318912` (**265 passed** at that checkpoint). It verifies legacy rows/schema and triggers after restore into a second disposable database.
 - These are CI/synthetic results only. Production key rotation, complete production credential re-encryption, sanitized production-like snapshot restore, Neon PITR/backup configuration, owner-operated restore/rollback rehearsal and production access review remain **NOT DONE**.
 - The branch remains unmerged and undeployed. No production DB or secrets were accessed/changed; no live OAuth refresh, scheduler activation, real Pin/Board creation, PR or merge occurred.
+
+
+
+### Scheduler lock-order hardening and default-branch cron risk (2026-11-09)
+
+- Worker stale-claim quarantine and post-workflow job finalization now follow account profile → niche → assignment → schedule → job lock order, matching scheduler reconciliation. Stale claims are handled one at a time in a separate transaction; worker finalization rechecks the job is still processing before updating it.
+- Added explicit lock-order regression tests. Exact-head CI run `42611981311`, commit `3562ef346ec03e6b31815aef4dfb1b9f3c2f0cfe`: **274 passed, 0 failed, 1 warning**. All 16 migrations, fixture cleanup and PostgreSQL teardown passed.
+- **Operational blocker discovered:** read-only GitHub Actions history shows that default-branch `main` has active scheduled triggers for both Affiliate Scheduler Worker and Pinterest Learning Loop. This supersedes prior release-readiness wording that implied no live scheduled execution had occurred.
+- Affiliate Scheduler Worker run `42581914921` called the Render production `/affiliate-scheduler/run-due` endpoint and reported `claimed=true`, `processed=true`, `job_id=13`, `status=succeeded`. Its wrapper omits `published` and Pin ID, so whether a new Pin was created is **unknown from this evidence**.
+- Pinterest Learning Loop run `42611471024` called the Render production `/learning-loop/run` endpoint and reported `ok=false`, 17 Pins checked, 16 analytics snapshots saved, descriptive evaluation only, and `model_trained=false`. This confirms live analytics ingestion/snapshot writes, not Pin publishing.
+- The assistant did not dispatch these runs and did not change or disable workflows on `main`. The feature branch remains unmerged and undeployed.
+- **Release gate:** owner must explicitly decide whether the main-branch cron workflows should be disabled until go-live approval. Do not merge/deploy this feature branch or enable/dispatch any worker without separate approval. If the owner wants to confirm job 13's publication outcome, authorize a narrowly scoped read-only production ledger/log inspection; do not query production data without that approval.
