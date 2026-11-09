@@ -2282,3 +2282,34 @@ def test_scheduler_reconciliation_audit_is_immutable(model2_db):
                         (job_id,),
                     )
 
+
+
+def test_scheduler_reconciliation_inspection_is_read_only_and_account_scoped(model2_db):
+    with database.connection() as conn:
+        job_id, publication_id = _create_uncertain_scheduler_fixture(
+            conn, account_id=model2_db["account_a"], niche_id=model2_db["niche_a"],
+            suffix=f"inspect-{model2_db['suffix']}",
+            attribution_niche_id=model2_db["niche_a"],
+        )
+    result = database.get_scheduler_job_reconciliation(
+        job_id, account_id=model2_db["account_a"],
+    )
+    assert result["job_status"] == "uncertain"
+    assert result["linkage_status"] == "matched"
+    assert result["publication_candidate_count"] == 1
+    assert result["publication"]["publication_id"] == publication_id
+    assert result["read_only"] is True
+    assert "publication_account_id" not in result["publication"]
+    assert database.get_scheduler_job_reconciliation(
+        job_id, account_id=model2_db["account_b"],
+    ) is None
+    with database.connection() as conn:
+        job_status = conn.execute(
+            "SELECT status FROM affiliate_pin_jobs WHERE id = %s", (job_id,)
+        ).fetchone()["status"]
+        audit_count = conn.execute(
+            "SELECT count(*) AS n FROM affiliate_job_reconciliation_audit WHERE job_id = %s",
+            (job_id,),
+        ).fetchone()["n"]
+    assert job_status == "uncertain"
+    assert audit_count == 0
