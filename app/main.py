@@ -578,7 +578,14 @@ def pinterest_account_operation(
         "create_board": ("POST", "/boards", {"name": str(data.get("name") or ""), "description": str(data.get("description") or "")}),
     }
     if operation == "disconnect":
-        revoke_pinterest_credential(payload.account_id)
+        try:
+            revoke_pinterest_credential(payload.account_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from None
+        except ValueError:
+            raise HTTPException(status_code=409, detail="Stored Pinterest credential identity is invalid; disconnect was not applied.") from None
+        except Exception:
+            raise HTTPException(status_code=503, detail="Pinterest credential could not be safely disconnected.") from None
         return {"disconnected": True}
     if operation not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported Pinterest operation.")
