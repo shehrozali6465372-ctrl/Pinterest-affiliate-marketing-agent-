@@ -228,9 +228,19 @@ def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
 
 
 def revoke_pinterest_credential(account_id: str) -> None:
-    """Disable an account in the Agent database without exposing its token."""
+    """Disable a credential only after validating its stored canonical Pinterest identity."""
     with connection() as conn:
-        conn.execute("UPDATE pinterest_credentials SET status = 'revoked', updated_at = now() WHERE account_id = %s", (account_id,))
+        row = conn.execute(
+            "SELECT account_id, pinterest_user_id FROM pinterest_credentials WHERE account_id = %s FOR UPDATE",
+            (account_id,),
+        ).fetchone()
+        if not row:
+            raise LookupError("Pinterest account is not connected")
+        _validate_account_identity(str(row["account_id"]), str(row["pinterest_user_id"]))
+        conn.execute(
+            "UPDATE pinterest_credentials SET status = 'revoked', updated_at = now() WHERE account_id = %s",
+            (account_id,),
+        )
 
 
 def pinterest_account_is_connected_in_transaction(conn, account_id: str) -> bool:
