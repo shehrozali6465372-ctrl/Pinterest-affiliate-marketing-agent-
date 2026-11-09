@@ -34,3 +34,8 @@ $$;
 CREATE TRIGGER affiliate_job_reconciliation_audit_no_mutation
 BEFORE UPDATE OR DELETE ON affiliate_job_reconciliation_audit
 FOR EACH ROW EXECUTE FUNCTION affiliate_job_reconciliation_audit_immutable();
+
+-- Prevent accidental bulk truncation through ordinary application SQL access.
+CREATE TRIGGER affiliate_job_reconciliation_audit_no_truncate
+BEFORE TRUNCATE ON affiliate_job_reconciliation_audit
+FOR EACH STATEMENT EXECUTE FUNCTION affiliate_job_reconciliation_audit_immutable();
