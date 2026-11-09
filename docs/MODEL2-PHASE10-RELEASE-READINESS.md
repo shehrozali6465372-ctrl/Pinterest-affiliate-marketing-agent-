@@ -191,3 +191,13 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - This CI run uses disposable synthetic PostgreSQL and mocked provider responses. It is not evidence of production key rotation, complete credential inventory migration, sanitized production backup/restore, or live account verification.
 - **Production key rotation remains NOT DONE.** Required steps: retain original key under `legacy`; configure new active key; separately approve deployment; re-encrypt every credential row including revoked rows with ciphertext; verify key IDs and decryption; retain old key through rollback; remove it only after backup/restore and rollback evidence. Do not change or remove the current production key before those steps.
 - No production database/secret, Pinterest write, OAuth refresh, scheduler activation, Pin/Board creation, deployment, PR or merge occurred.
+
+
+
+### Disposable PostgreSQL backup/restore rehearsal — CI PASS (2026-11-09)
+
+- Added a synthetic custom-format backup/restore regression on the isolated GitHub Actions PostgreSQL 16 service. It applies all 16 numbered migrations, inserts representative legacy Model 1 schedule/source/job rows, creates a `pg_dump --format=custom` archive using PostgreSQL 16 client tools, restores into a separate empty database using `pg_restore`, and verifies migration ledger, legacy row preservation, nullable `niche_id`, and migration trigger presence.
+- Exact-head CI run `42594318912`, commit `b38e66180a336d04e61f5439ea05e7c1d61c5981`: **265 passed, 0 failed, 1 warning**. Full migration ledger check confirmed all 16 migrations; fixture cleanup passed; PostgreSQL service teardown passed.
+- The initial restore attempt exposed a client/server major-version mismatch (PostgreSQL 18 client against PostgreSQL 16 server). The final test runs `pg_dump` and `pg_restore` from the same `postgres:16` container image as the disposable server; the final CI run passed.
+- **Scope limitation:** this is a synthetic disposable-database backup/restore rehearsal, not a sanitized production-like snapshot. It does not validate production data volume, provider secrets, Neon backup/PITR configuration, production credentials, or real operational restore access. The production-like snapshot rehearsal and owner-approved operational restore/rollback plan remain open release gates.
+- No Neon/production database, production secret, live OAuth, Pinterest API write, scheduled worker, real Pin/Board, PR, merge or deployment was used or authorized.
