@@ -122,12 +122,10 @@ def _validate_model2_schedule_context(conn, *, account_id: str, niche_id: int, t
     if not assignment or assignment["status"] != "active":
         raise HTTPException(status_code=409, detail="The exact account-to-niche assignment is missing or inactive.")
 
-    credential = conn.execute(
-        "SELECT status FROM pinterest_credentials WHERE account_id = %s",
-        (account_id,),
-    ).fetchone()
-    if not credential or credential["status"] != "connected":
-        raise HTTPException(status_code=409, detail="Connected Pinterest credential metadata is required; no token was read or refreshed.")
+    from app.credential_vault import pinterest_account_is_connected_in_transaction
+
+    if not pinterest_account_is_connected_in_transaction(conn, account_id):
+        raise HTTPException(status_code=409, detail="A connected Pinterest credential with matching account identity is required; no token was read or refreshed.")
     return profile["timezone"]
 
 
