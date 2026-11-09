@@ -356,6 +356,22 @@ def test_publish_routes_fail_closed_without_configured_api_key(monkeypatch):
     assert "authentication is not configured" in shorthand_route.json()["detail"]
 
 
+def test_workflow_route_uses_canonical_fail_closed_api_auth(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", None)
+    response = unauthenticated_client.post(
+        "/workflow/publish-product",
+        json={
+            "product_name": "Test product",
+            "product_details": "Test details",
+            "affiliate_url": "https://example.com/item",
+            "account_id": "pinterest:test-account",
+        },
+        headers={"Idempotency-Key": "workflow-auth-test-123"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "API authentication is not configured."
+
+
 def test_legacy_publish_routes_are_retired_and_never_call_gateway(monkeypatch):
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     import app.main as main_module
