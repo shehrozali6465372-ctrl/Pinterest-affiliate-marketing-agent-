@@ -1,6 +1,6 @@
 # Model 2 Phase 10 — Release Readiness
 
-**Status:** PRE-RELEASE REVIEW — NOT APPROVED FOR PRODUCTION RELEASE. R1 hardening is verified on exact feature-branch head; remaining release gates are open.
+**Status:** PRE-RELEASE REVIEW — NOT APPROVED FOR PRODUCTION RELEASE. R1 hardening and operator reconciliation are verified on exact feature-branch head; production migration/restore rehearsal and owner approvals remain open.
 
 **Review date:** 2026-11-09  
 **Feature branch:** `feat/model2-open-source-reuse`  
@@ -23,16 +23,19 @@ No production credentials or database contents were read for this review.
 - Phase 9 owner-approved implementation is on the isolated feature branch.
 - Exact implementation CI commit `761204b7e5d09cce6eb5f26543602702d5db606a`, run `42536328716`: **212 passed, 0 failed, 1 warning** on disposable PostgreSQL 16.15.
 - Docs closure commit `14e8e97c08fb1f61d93cf969e08cfe4cf9e9eb1d`, run `42536572870`: **212 passed, 0 failed, 1 warning** on disposable PostgreSQL 16.15.
-- Both runs recorded all 15 numbered migrations, verified Model 2 and synthetic Model 1 fixture cleanup, and stopped the ephemeral PostgreSQL container.
+- The Phase 9 runs recorded all 15 numbered migrations. The latest Phase 10 reconciliation run below records all 16 numbered migrations, verifies Model 2 and synthetic Model 1 fixture cleanup, and stops the ephemeral PostgreSQL container.
 - Local full suite at the implementation checkpoint: **283 passed, 56 skipped, 1 non-blocking warning**. Local DB integration tests were skipped because `DATABASE_URL` and `TEST_DATABASE_URL` were unset. CI is the PostgreSQL evidence.
 - Feature branch is isolated from `main`; no PR/merge/deploy.
+- Phase 10 reconciliation implementation commit `12146a83fc13fab9301396100a00f8f48508a2c0`, GitHub Actions run `42538656224`: **226 passed, 0 failed, 1 warning** on disposable PostgreSQL 16.15. All 16 numbered migrations were recorded; fixture cleanup passed; PostgreSQL container stopped. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42538656224
+- Added migration 015, atomic account-checked scheduler-job reconciliation, read-only inspection, authenticated operator POST route, append-only audit and operator runbook `docs/MODEL2-SCHEDULER-RECONCILIATION-RUNBOOK.md`. No Pinterest/provider/workflow calls occur during reconciliation.
+
 
 ## 3. Security and operational findings
 
 ### R1 — Uncertain publication must consume quota and block replacement
 
 **Severity:** High — release blocker.  
-**Status:** Fix implemented; exact-head CI pending.
+**Status:** Fix implemented and exact-head CI verified.
 
 A scheduler job in `uncertain` may correspond to a Pin that Pinterest created even though the response was lost or ambiguous. Before hardening, account quota counted only `processing` and `succeeded`, and schedule replacement only blocked `queued`/`processing`. This could permit another Pin after an ambiguous result.
 
@@ -45,7 +48,15 @@ Hardening in this review:
 - Local full suite after this hardening: **283 passed, 57 skipped, 1 non-blocking warning**. PostgreSQL integration tests remain skipped locally because DB environment variables are unset; no DB was contacted.
 - Exact-head implementation commit `5f818fa5adb5e3c45b1bd8f52d17926ae2ca2d8e`, GitHub Actions run `42536949741`: **213 passed, 0 failed, 1 warning** on disposable PostgreSQL 16.15. All 15 numbered migrations were recorded, Model 2 and synthetic Model 1 fixtures were cleaned, and the PostgreSQL container was stopped.
 
-**Remaining operational limitation:** there is no scheduler-job reconciliation endpoint in this phase. An uncertain job therefore remains fail-closed until an operator follows a separately approved, evidence-based reconciliation procedure. Do not directly edit production job status or infer that a Pin does not exist. A documented and tested reconciliation/runbook path is required before enabling unattended Model 2 scheduling.
+**Reconciliation now implemented and tested on the feature branch:**
+- `GET /affiliate-scheduler/jobs/{job_id}/reconciliation?account_id=...` performs read-only ledger linkage inspection.
+- `POST /affiliate-scheduler/jobs/{job_id}/reconcile` resolves only an `uncertain` job, checks the exact account and idempotency-key lineage, validates Model 2 niche attribution, and atomically updates publication ledger (when present), job state and append-only audit.
+- Success requires one matching publication row and a verified Pin ID. Missing ledger cannot be marked succeeded. Confirmed absence requires explicit `confirm_pin_absent=true`; the job becomes terminal failed and the same key is never requeued.
+- Recent pending rows, ambiguous candidates, account/product/niche mismatch, repeat reconciliation and transaction write failure are rejected/rolled back.
+- Synthetic PostgreSQL regression matrix passed in run `42538656224`; no Pinterest Pin/Board was created.
+- Operator instructions: `docs/MODEL2-SCHEDULER-RECONCILIATION-RUNBOOK.md`.
+
+This resolves the reconciliation implementation blocker for isolated feature-branch readiness. It does not authorize production reconciliation or unattended scheduling.
 
 ### R2 — Scheduled worker is a production side-effect trigger
 
@@ -104,19 +115,19 @@ Current CI emits a Starlette/httpx TestClient deprecation warning and GitHub Act
 |---|---|---|
 | Account isolation | Pass in tests | Exact account+niche composite FK and repository/workflow checks |
 | Authentication | Pass for service-key model | Fail-closed shared API key; no human/tenant identity |
-| Publication safety | Conditional | Single gateway, idempotency and uncertainty quarantine; scheduler uncertainty reconciliation runbook missing |
+| Publication safety | Pass on feature branch / production conditional | Single gateway, idempotency, uncertainty quarantine, atomic operator reconciliation and append-only audit; no live publication test |
 | Quota concurrency | Pass in CI | Same-account serialization; different-account parallel claims; uncertain quota hardening awaits CI |
 | Legacy compatibility | Pass in CI | Nullable niche, unchanged legacy branch, regression suite |
-| Migration integrity | Pass in disposable CI | All 15 migrations applied; production-like rehearsal not run |
+| Migration integrity | Pass in disposable CI | All 16 migrations applied; production-like rehearsal not run |
 | Rollback | Partial | App rollback can retain additive schema; data-preserving schema rollback/restore not rehearsed |
 | Operations | Conditional | Hourly best-effort worker can publish; explicit enablement/runbook needed |
-| Observability | Partial | Safe job/schedule state available; operator reconciliation workflow and alerting policy need definition |
+| Observability | Partial | Read-only job/ledger inspection and audit are available; alerting policy still needs definition |
 | Deployment | Not approved | No PR, merge, production migration or deployment authorized |
 
 ## 6. Exit criteria before any release approval
 
 - [x] Exact-head CI passes after R1 hardening; migration ledger and fixture cleanup verified (run `42536949741`).
-- [ ] Operator reconciliation procedure for uncertain scheduler jobs is documented and tested without a real Pin write.
+- [x] Operator reconciliation procedure for uncertain scheduler jobs is documented and tested without a real Pin write (run `42538656224`).
 - [ ] Production-like sanitized migration rehearsal and restore/rollback rehearsal pass.
 - [ ] Owner reviews the scheduled worker's production side effects and explicitly approves activation window/controls.
 - [ ] Security review confirms service key handling, account scoping, log redaction and operational access.
