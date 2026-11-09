@@ -10,7 +10,7 @@
 
 This is a static/security and disposable-CI release-readiness review only. It does not authorize:
 
-- applying migration 014 to Neon or any shared/production database;
+- applying migrations 014 or 015 to Neon or any shared/production database;
 - deploying or merging Model 2;
 - activating schedules, running due jobs, or invoking the scheduled worker against production;
 - Pinterest API writes, OAuth refresh/reconnect/token rotation, or real Pin/Board creation;
@@ -70,11 +70,11 @@ Before production release, the owner must explicitly approve when Model 2 schedu
 
 **Severity:** High — release gate.
 
-Migration 014 is additive: nullable `niche_id`, composite FK, indexes and a trigger scoped to Model 2 schedule rows. Disposable CI applied all numbered migrations from a clean PostgreSQL 16 database. This is not a rehearsal against a sanitized production-like snapshot.
+Migrations 014 and 015 are additive: 014 adds nullable `niche_id`, its composite FK, indexes and a trigger scoped to Model 2 schedule rows; 015 adds the append-only scheduler reconciliation audit table and immutability trigger. Disposable CI applied all 16 numbered migrations from a clean PostgreSQL 16 database. This is not a rehearsal against a sanitized production-like snapshot.
 
 Proposed release procedure (not executed):
 1. Capture and verify a restorable backup/snapshot using the approved database operations process.
-2. Rehearse migration 014 against a sanitized clone with production-like schema and representative legacy schedules/jobs.
+2. Rehearse migrations 014 and 015 against a sanitized clone with production-like schema, representative legacy schedules/jobs and audit-table constraints.
 3. Verify legacy schedules retain `niche_id IS NULL`, remain readable/updatable under legacy behavior, and no existing rows are backfilled or rewritten.
 4. Verify Model 2 constraints, indexes and trigger; run read-only post-migration integrity checks.
 5. Deploy application code only after migration rehearsal and explicit approval.
@@ -102,11 +102,11 @@ Current CI emits a Starlette/httpx TestClient deprecation warning and GitHub Act
 
 ## 4. Migration compatibility / rollback assessment
 
-- Migration 014 adds a nullable column, FK, check, indexes and trigger; no table rebuild or data backfill is present.
+- Migration 014 adds a nullable column, FK, check, indexes and trigger; migration 015 adds an audit table, constraints and append-only trigger. Neither migration rebuilds existing tables or backfills existing business rows.
 - Existing Model 1 schedules keep `niche_id NULL`; trigger logic explicitly skips legacy rows.
 - Existing one-active-schedule-per-account unique index is retained.
 - Application rollback can leave the additive schema installed; old code does not need to read `niche_id` to use its existing explicit-column queries.
-- Dropping the migration is not an approved rollback strategy. If Model 2 data exists, dropping FK/trigger/column risks losing or invalidating state.
+- Dropping either migration is not an approved rollback strategy. If Model 2 schedule or reconciliation audit rows exist, dropping constraints, triggers, tables or columns risks losing or invalidating state.
 - Production-like migration rehearsal and restore test remain unverified.
 
 ## 5. Release scorecard
