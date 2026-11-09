@@ -134,6 +134,17 @@ class PublishRequest(BaseModel):
     content_version_id: int = Field(gt=0)
 
 
+def require_credential_ingest_key(
+    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
+) -> None:
+    """Require the separately scoped trusted-Hub service credential; fail closed on misconfiguration."""
+    expected = settings.pinterest_credential_ingest_key
+    if not expected:
+        raise HTTPException(status_code=503, detail="Credential-ingest authentication is not configured.")
+    if not x_credential_ingest_key or not hmac.compare_digest(x_credential_ingest_key, expected):
+        raise HTTPException(status_code=401, detail="Valid service credential required.")
+
+
 
 def _serialize_row(row: dict) -> dict[str, object]:
     result = dict(row)
@@ -239,15 +250,11 @@ def provider_diagnostics() -> dict[str, object]:
     return result
 
 
-@app.post("/integrations/pinterest/credentials", status_code=status.HTTP_201_CREATED)
+@app.post("/integrations/pinterest/credentials", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_credential_ingest_key)])
 def ingest_pinterest_credential(
     payload: PinterestCredentialInput,
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
 ) -> dict[str, object]:
     """Accept Pinterest OAuth credentials from the trusted Modern Living Hub backend only."""
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
     if not settings.pinterest_token_encryption_key:
         raise HTTPException(status_code=503, detail="Pinterest credential encryption is not configured.")
     try:
@@ -285,14 +292,6 @@ class PinterestAnalyticsIntegrationInput(BaseModel):
 
 
 
-def require_credential_ingest_key(
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
-) -> None:
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
-
-
 @app.post("/integrations/pinterest/analytics/run", dependencies=[Depends(require_credential_ingest_key)])
 def run_pinterest_analytics_integration(payload: PinterestAnalyticsIntegrationInput) -> dict[str, object]:
     """Run read-only Pinterest organic analytics ingestion through the trusted Hub boundary."""
@@ -300,16 +299,11 @@ def run_pinterest_analytics_integration(payload: PinterestAnalyticsIntegrationIn
     return run_learning_loop(LearningRequest(account_id=payload.account_id, period_days=payload.period_days))
 
 
-@app.post("/integrations/pinterest/refresh")
+@app.post("/integrations/pinterest/refresh", dependencies=[Depends(require_credential_ingest_key)])
 def refresh_pinterest_credential(
     payload: PinterestRefreshInput,
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
 ) -> dict[str, object]:
     """Refresh an expired Pinterest access token using server-to-server app credentials."""
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
-
     from datetime import datetime, timedelta, timezone
     import httpx
     from cryptography.exceptions import InvalidTag
@@ -569,15 +563,11 @@ def publish_manual_pin(
 
 
 
-@app.post("/integrations/pinterest/operation")
+@app.post("/integrations/pinterest/operation", dependencies=[Depends(require_credential_ingest_key)])
 def pinterest_account_operation(
     payload: PinterestOperationInput,
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
 ) -> dict[str, object]:
     """Execute a bounded Pinterest API operation using an encrypted Neon credential."""
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
     from app.credential_vault import get_pinterest_credential, revoke_pinterest_credential
     import httpx
     operation = payload.operation
