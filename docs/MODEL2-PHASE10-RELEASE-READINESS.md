@@ -170,3 +170,13 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - Shared `X-API-Key` and `X-Credential-Ingest-Key` remain service-level credentials, not per-human identity, per-user permissions, or tenant isolation. This is acceptable only under the explicitly documented single-owner operating model.
 - **Open high-priority credential lifecycle gap:** the vault has one active `PINTEREST_TOKEN_ENCRYPTION_KEY`, no persisted key ID/key ring, and no tested re-encryption/rotation procedure. A direct environment-key replacement can render existing access/refresh ciphertext undecryptable. Keep the current key stable until versioned key management and a rollback-tested re-encryption procedure are implemented.
 - No production credentials/database, Pinterest OAuth refresh, Board/Pin creation, scheduler execution, deployment, PR, or merge occurred.
+
+
+### Versioned credential encryption and controlled rotation — implementation committed, CI pending (2026-11-09)
+
+- Optional key ring: `PINTEREST_TOKEN_ENCRYPTION_KEYS` JSON object maps key IDs to base64-encoded 32-byte keys; `PINTEREST_TOKEN_ENCRYPTION_ACTIVE_KEY_ID` selects the write key. The existing single-key `PINTEREST_TOKEN_ENCRYPTION_KEY` remains supported for legacy deployments.
+- New AES-256-GCM ciphertext is versioned and includes a key ID. Existing nonce-prefixed legacy ciphertext remains readable when the original key is retained. AAD continues to bind each token to its account and token type.
+- Added operator-only per-account `reencrypt_pinterest_credential(account_id)`, which re-encrypts access and refresh ciphertext in one row transaction without calling Pinterest. It is not exposed through HTTP.
+- Synthetic tests cover legacy compatibility, key-ID selection, active-key changes while old keys remain retained, wrong-key rejection, malformed configuration, and re-encryption. The explicit CI workflow includes the new test module, but **the latest change set is still awaiting independently verified CI**.
+- Rotation is **not executed**. Required order: restorable backup; configure old key under `legacy` plus new active key; deploy only with separate approval; re-encrypt every credential row; verify all envelopes and decryptability; retain old key through rollback window; remove old key only after rollback/restore evidence. Never remove the old key while any ciphertext still references it.
+- No production database or secrets were accessed or changed. No live OAuth, Pinterest write, Pin/Board, scheduler, deployment, PR or merge occurred.
