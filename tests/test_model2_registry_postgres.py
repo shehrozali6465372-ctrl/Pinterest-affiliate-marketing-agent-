@@ -1574,6 +1574,21 @@ def test_model2_schedule_requires_exact_active_account_niche_and_profile_timezon
     assert cross_account.value.status_code == 409
 
 
+def test_model2_schedule_rejects_mismatched_connected_credential_identity(model2_db):
+    from app import database
+    from app.affiliate_scheduler import create_draft_schedule
+
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE pinterest_credentials SET pinterest_user_id = 'wrong-user' WHERE account_id = %s",
+            (model2_db["account_a"],),
+        )
+
+    with pytest.raises(HTTPException) as mismatch:
+        create_draft_schedule(_model2_schedule_payload(model2_db["account_a"], model2_db["niche_a"]))
+    assert mismatch.value.status_code == 409
+
+
 def test_model2_schedule_activation_rechecks_paused_assignment_and_connected_metadata(model2_db):
     from app import database
     from app.affiliate_scheduler import create_draft_schedule, activate_schedule
