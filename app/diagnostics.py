@@ -1,24 +1,23 @@
 """Authenticated live integration diagnostics; never publishes a Pinterest Pin."""
 from __future__ import annotations
 
-import hmac
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from cryptography.exceptions import InvalidTag
 import psycopg
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.auth import require_api_key
 
 router = APIRouter(prefix="/diagnostics", tags=["diagnostics"])
 
 
-def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    if not settings.app_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+
+_require_api_key = require_api_key
 
 
-@router.get("/database", dependencies=[Depends(_require_api_key)])
+@router.get("/database", dependencies=[Depends(require_api_key)])
 def database_diagnostic() -> dict[str, object]:
     """Verify the application's configured database connection using a read-only query only."""
     try:
