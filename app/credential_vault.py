@@ -17,7 +17,12 @@ class TokenEncryptionConfigurationError(RuntimeError):
 
 def _validate_account_identity(account_id: str, pinterest_user_id: str) -> None:
     """Reject credential rows whose canonical account key disagrees with Pinterest identity."""
-    if not pinterest_user_id or account_id != f"pinterest:{pinterest_user_id}":
+    if (
+        not pinterest_user_id
+        or any(character.isspace() for character in pinterest_user_id)
+        or ":" in pinterest_user_id
+        or account_id != f"pinterest:{pinterest_user_id}"
+    ):
         raise ValueError("Pinterest account_id must match pinterest_user_id")
 
 
