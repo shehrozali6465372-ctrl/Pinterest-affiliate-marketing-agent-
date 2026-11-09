@@ -55,6 +55,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Install PostgreSQL 16 client tools for backup/restore rehearsal
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+          pg_dump --version
+          pg_restore --version
+
       - name: Verify isolated disposable database target
         run: |
           python - <<'PY'
@@ -92,6 +99,7 @@ jobs:
           tests/test_affiliate_scheduler.py
           tests/test_model2_registry_postgres.py
           tests/test_model2_legacy_upgrade.py
+          tests/test_model2_backup_restore.py
 
       - name: Verify full migration ledger and fixture cleanup
         run: |
