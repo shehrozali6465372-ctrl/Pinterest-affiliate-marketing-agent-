@@ -521,13 +521,13 @@ This section supersedes earlier references above to the latest feature-branch CI
 
 ### Latest production-readiness continuation — exact-head verification (2026-11-10)
 
-**Authoritative feature-branch head:** `7bbcd1332623d0abf169fc06ff1c94f3402a6ac6`  
+**Latest code-verified feature-branch head:** `f7d5ae591b21689bc5349dc0f898a20cee8b5e4b`  
 **PR:** [#77](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/77) — OPEN, NOT MERGED, NOT DEPLOYED.
 
 #### Additional side-effect and quota hardening
 
 - **Pinterest Board creation:** migration 016 adds an account-scoped durable idempotency ledger. `create_board` requires `Idempotency-Key`, replays stored success, rejects payload mismatch, and blocks in-progress/uncertain outcomes. Timeouts, unreadable success responses and 5xx responses are treated as uncertain; no automatic retry can issue a second provider POST for the same key.
-- **Pinterest OAuth refresh:** official Pinterest authentication documentation describes successful continuous refresh as returning a new access token and continuous refresh token. Both the Hub-facing refresh endpoint and internal auto-refresh path previously lacked durable uncertainty state. Migration 017 now records a SHA-256 fingerprint of the current access/refresh token generation (never raw tokens), and both paths share the ledger; the internal path also retains its per-account advisory lock. Both paths block duplicate/in-progress/uncertain attempts and mark timeouts/5xx/incomplete responses uncertain. Success is finalized only after encrypted token persistence. A fresh access token is not refreshed again unnecessarily. Refresh requests now send only documented refresh-grant parameters (grant_type and refresh_token), not the unsupported continuous_refresh parameter. Ambiguous token generations require operator-controlled recovery/reconnect.
+- **Pinterest OAuth refresh:** official Pinterest authentication documentation describes successful continuous refresh as returning a new access token and continuous refresh token. Both the Hub-facing refresh endpoint and internal auto-refresh path previously lacked durable uncertainty state. Migration 017 now records a SHA-256 fingerprint of the current access/refresh token generation (never raw tokens), and both paths share the ledger; the internal path also retains its per-account advisory lock. Both paths block duplicate/in-progress/uncertain attempts and mark timeouts/5xx/incomplete responses uncertain. Success is finalized only after encrypted token persistence. A fresh access token is not refreshed again unnecessarily. Refresh requests now send only documented refresh-grant parameters (`grant_type` and `refresh_token`), not the undocumented `continuous_refresh` parameter. Ambiguous token generations require operator-controlled recovery/reconnect.
 - **Legacy Model 1 scheduler quota:** both legacy daily-quota SQL predicates now count `uncertain` jobs alongside `processing` and `succeeded`. This closes a gap where an ambiguous Pin outcome could have failed to consume quota and allowed an extra same-day job. A synthetic regression test covers the last available daily slot.
 - Restore rehearsal documentation and disposable CI cleanup checks now include migrations 016 and 017 and the Pinterest refresh-operation ledger.
 
@@ -536,10 +536,10 @@ This section supersedes earlier references above to the latest feature-branch CI
 
 #### Exact-head CI evidence
 
-- Python tests run [42909034642](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42909034642): **445 passed, 1 skipped, 1 non-blocking warning**.
-- Python CI run [42909034636](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42909034636): Bandit passed; pip-audit reported **No known vulnerabilities found**; **445 passed, 1 skipped**.
-- Model 2 PostgreSQL integration run [42909034522](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42909034522): **351 passed**; all **18 numbered migrations** recorded; Model 2, Model 1 and OAuth refresh fixtures cleaned; disposable PostgreSQL container stopped.
-- The Python test run includes synthetic timeout/replay tests for OAuth refresh and Board creation, plus the legacy uncertain-quota regression. The PostgreSQL run exercises the real encrypted OAuth credential persistence and operation ledger against disposable PostgreSQL; Pinterest remains mocked.
+- Python tests run [42910252955](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42910252955): **447 passed, 1 skipped, 1 non-blocking Starlette/httpx deprecation warning**.
+- Python CI run [42910252539](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42910252539): Bandit passed; pip-audit reported **No known vulnerabilities found**; **447 passed, 1 skipped**.
+- Model 2 PostgreSQL integration run [42910253005](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42910253005): **352 passed**; all **18 numbered migrations** recorded; Model 2, Model 1 and OAuth refresh fixtures cleaned; disposable PostgreSQL container stopped.
+- The Python test run includes synthetic timeout/replay tests for both OAuth refresh paths and Board creation, disconnect-contract verification, documented OAuth request-parameter checks, and the legacy uncertain-quota regression. The PostgreSQL run exercises the real encrypted OAuth credential persistence and operation ledger against disposable PostgreSQL; Pinterest remains mocked.
 
 #### Remaining release gates — unchanged
 
