@@ -43,3 +43,44 @@ def test_trends_ingest_accepts_valid_key_and_calls_read_only_fetch(monkeypatch):
     assert response.status_code == 200
     assert response.json()["read_only"] is True
     assert calls == [("pinterest:123456", ["US"], 50)]
+
+
+
+def test_trend_visuals_ingest_returns_service_unavailable_when_key_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", None)
+    response = TestClient(app).post(
+        "/trend-visuals/run",
+        json={"account_id": "pinterest:123456", "regions": ["US"]},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Credential-ingest authentication is not configured."
+
+
+def test_trend_visuals_ingest_rejects_invalid_key(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "synthetic-trusted-hub-key")
+    response = TestClient(app).post(
+        "/trend-visuals/run",
+        headers={"X-Credential-Ingest-Key": "wrong-key"},
+        json={"account_id": "pinterest:123456", "regions": ["US"]},
+    )
+    assert response.status_code == 401
+
+
+def test_trend_visuals_ingest_uses_shared_guard_and_accepts_valid_key(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "synthetic-trusted-hub-key")
+    from app import trend_visuals
+
+    calls = []
+    monkeypatch.setattr(
+        trend_visuals,
+        "fetch_featured_topics",
+        lambda account_id, regions: calls.append((account_id, regions)) or {"ok": True, "read_only": True},
+    )
+    response = TestClient(app).post(
+        "/trend-visuals/run",
+        headers={"X-Credential-Ingest-Key": "synthetic-trusted-hub-key"},
+        json={"account_id": "pinterest:123456", "regions": ["US"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["read_only"] is True
+    assert calls == [("pinterest:123456", ["US"])]

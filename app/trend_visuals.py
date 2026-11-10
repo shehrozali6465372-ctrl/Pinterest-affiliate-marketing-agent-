@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 import json
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from app.auth import require_credential_ingest_key
 from app.config import settings
 from app.credential_vault import get_pinterest_credential
 
@@ -75,13 +76,7 @@ def fetch_featured_topics(account_id: str, regions: list[str]) -> dict[str, obje
             "fetched_at": now.isoformat(), "regions": result, "read_only": True,
             "note": "Example Pin image metadata comes from Pinterest. It is not yet a machine-vision classification."}
 
-def require_ingest_key(x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key")):
-    import hmac
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
-
-@router.post("/run", dependencies=[Depends(require_ingest_key)])
+@router.post("/run", dependencies=[Depends(require_credential_ingest_key)])
 def run_visual_trends(payload: VisualTrendRequest):
     try:
         return fetch_featured_topics(payload.account_id, payload.regions)

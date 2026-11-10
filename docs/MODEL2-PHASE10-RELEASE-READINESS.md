@@ -249,3 +249,109 @@ A new disposable-CI test applies migrations 001–013, inserts synthetic legacy 
 - The run applied and recorded all 16 numbered migrations, verified cleanup of synthetic Model 2 and Model 1 fixtures, and stopped the PostgreSQL service.
 - The CI run covers the new bounded GET-only Board listing/resolution tests, no-refresh credential tests, the connection-scoped publication reconciliation helper tests, the existing atomic scheduler reconciliation tests and the manual-publish auth fixture correction.
 - This is isolated CI evidence only. It does not verify live Pinterest credentials or Board/Pin state, production database operations, production cron control, deployment or scheduler activation.
+
+
+### Latest exact-head continuation verification — 2026-11-09 (authoritative)
+
+This section supersedes earlier notes in this document that say the read-only Board resolver/no-refresh credential follow-up still awaits CI, or that identify `9a5c6f0` as the latest verified feature-branch head.
+
+- Feature branch exact HEAD: `369239ec8e5ed7a7fadcd39cc86a041f8dd98bef`; working tree clean at verification; 155 commits ahead of `origin/main`, 0 behind.
+- Exact-head GitHub Actions run `42644694242`: **320 passed, 0 failed, 1 non-blocking Starlette/httpx warning**. The run includes the bounded GET-only Board resolver, no-refresh credential reader, connection-scoped reconciliation helper, atomic scheduler reconciliation, credential keyring/identity controls and scheduler lock-order regression suite.
+- CI verified a loopback-only disposable PostgreSQL 16 target, empty `DATABASE_URL`, all 16 numbered migration records, cleanup of Model 2 and synthetic Model 1 fixtures, and PostgreSQL service teardown.
+- Local full suite without `TEST_DATABASE_URL` was not a valid full DB integration run: two tests (`test_model2_backup_restore.py` and `test_model2_legacy_upgrade.py`) correctly failed their explicit guard requiring `TEST_DATABASE_URL` rather than falling back to `DATABASE_URL`. With those two PostgreSQL-admin integration modules excluded, local result was **336 passed, 74 skipped, 1 warning**. Both DB integration modules were included in and passed by exact-head disposable PostgreSQL CI.
+- Local `compileall` and `git diff --check` passed. No new implementation was needed in this continuation because the previously implemented feature set was already present and exact-head CI verified it; no duplicate components were added.
+- **Release status remains PRE-RELEASE / BLOCKED.** The following are not solvable by another local code/test run and remain operational/owner gates: sanitized production-like snapshot migration plus restore/rollback rehearsal; Neon backup/PITR and owner-operated restore verification; production credential inventory and explicitly approved key rotation/re-encryption; production access and log-retention review; owner decision on existing main-branch scheduled worker/Learning Loop behavior; separate approvals for production migration, deployment and scheduler activation.
+- No production DB write/read, secret access or rotation, OAuth refresh, Pinterest write, real Pin/Board creation, scheduler dispatch, PR, merge or deployment occurred in this continuation.
+
+
+## Phase 10 — Master blocker checklist and one-by-one execution plan (2026-11-09)
+
+This checklist is the active execution tracker. Do not repeat completed synthetic work. Close each gate only with recorded evidence.
+
+### Gate 1 — Migration, backup and restore safety
+- [x] Disposable PostgreSQL 16 custom-format `pg_dump` / `pg_restore` rehearsal; all 16 migrations, legacy rows and required triggers verified. CI run `42594318912` (265 passed).
+- [x] Populated legacy Model 1 upgrade through migrations 014–015 verified in disposable CI; CI run `42540730785`.
+- [ ] Sanitized production-like snapshot migration and restore/rollback rehearsal. **Blocked:** requires an owner-approved sanitized snapshot and approved isolated target. No production DB access or snapshot extraction is authorized by this checklist.
+- [ ] Document and verify the application rollback / additive-schema retention procedure against that sanitized clone. Do not drop migrations 014/015 as a rollback shortcut.
+
+### Gate 2 — Neon backup / PITR and restore access
+- [ ] Record Neon project's backup/PITR availability, retention and recovery-point capabilities from owner-authorized evidence.
+- [ ] Verify the owner/operator can initiate and complete a restore into an isolated target, without overwriting production.
+- [ ] Record restore owner, escalation path, expected recovery-point objective (RPO) and recovery-time objective (RTO). Do not invent values; owner must approve targets.
+- **Boundary:** no production Neon inspection, restore, branch mutation or database write without separate explicit approval.
+
+### Gate 3 — Credential inventory and controlled key rotation
+- [x] Versioned AES-256-GCM keyring, legacy ciphertext reader, key-ID inventory and one-account re-encryption primitive implemented and covered by synthetic tests.
+- [ ] Obtain owner-authorized production aggregate key inventory (no token values, plaintext, account identifiers or secrets in reports).
+- [ ] Confirm a restorable backup and old-key retention before any rotation.
+- [ ] Obtain explicit approval for keyring configuration/deployment and batch re-encryption.
+- [ ] Re-encrypt and verify every eligible credential row, including revoked rows that still contain ciphertext; retain old keys through the rollback window.
+- **Boundary:** no production secret access, key generation, environment change, token decryption, OAuth refresh or rotation until separately approved.
+
+### Gate 4 — Production access, logging and retention security
+- [ ] Complete static review of authentication, authorization boundaries, account scoping, secret redaction and error handling.
+- [ ] Obtain owner-authorized evidence for production service access, database roles, log access, retention and deletion policy.
+- [ ] Record findings and remediate code-owned issues on this feature branch; production configuration changes require separate approval.
+
+### Gate 5 — Existing scheduled side effects
+- [ ] Owner decides whether the already-scheduled `main` Affiliate Scheduler Worker may continue to execute jobs before Model 2 go-live.
+- [ ] Owner separately decides whether the `main` Pinterest Learning Loop may continue analytics snapshot writes.
+- [ ] Document allowed activation window, backlog handling, rate limits, monitoring and stop procedure.
+- **Boundary:** do not dispatch, pause, resume, edit or activate production workflows without explicit approval.
+
+### Gate 6 — Release authorization
+- [ ] Owner approves production migration as a separate action.
+- [ ] Owner approves application deployment/merge as a separate action.
+- [ ] Owner approves scheduler activation as a separate action.
+- [ ] Final release review confirms all prior gates and evidence links.
+
+### Execution rule
+Work in gate order. For each gate: inspect existing evidence first; implement only missing code/documentation that is safe on the isolated feature branch; run targeted tests and exact-head CI where code changes; update this tracker with evidence; then move to the next gate. If a gate requires owner credentials, production access, a sanitized snapshot, or a business decision, mark it BLOCKED with the exact required owner action rather than bypassing the control.
+
+**Current release state: PRE-RELEASE / BLOCKED.** No production DB writes, production secret changes, OAuth refresh, Pinterest API writes, real Pin/Board creation, scheduler changes, merge or deployment are authorized by this checklist.
+
+
+### Gate 4 execution note — duplicate trusted-Hub auth guard corrected (2026-11-09)
+
+- Static review found `POST /trend-visuals/run` used a local duplicate `X-Credential-Ingest-Key` guard. Unlike the canonical shared guard, it returned HTTP 401 when the credential-ingest key was not configured (the shared fail-closed contract is HTTP 503 for missing server configuration and 401 for an invalid supplied key).
+- Corrected `app/trend_visuals.py` to depend on `app.auth.require_credential_ingest_key`; removed the duplicate local guard.
+- Added regression tests for unconfigured key (503), wrong key (401), and valid key (handler invoked). Targeted test result: `6 passed, 1 existing Starlette/httpx deprecation warning` via `pytest -q tests/test_trend_ingest_auth.py`.
+- This is a feature-branch code change after the previously recorded exact-head CI run. **Exact-head CI has not yet been run for this new change.** Do not call the branch release-verified until CI is rerun.
+- No database, production secret, OAuth, Pinterest API write, Pin/Board, scheduler, deployment, PR or merge was used.
+
+
+- After the trusted-Hub guard correction, the broader local suite (excluding only the two PostgreSQL-admin integration modules that require a dedicated `TEST_DATABASE_URL`) passed: **339 passed, 74 skipped, 1 non-blocking warning** in 23.89s. `compileall` and `git diff --check` also passed.
+- The two excluded backup/restore and legacy-upgrade modules remain covered by their prior disposable PostgreSQL CI evidence; they were not rerun locally without the isolated database service.
+- The change is still uncommitted and unpushed. Exact-head GitHub Actions must verify it before this correction can be marked CI-closed.
+
+
+### Gate 4 execution note — application-level security review checkpoint (2026-11-09)
+
+- Reviewed route authentication boundaries across Model 2 registry/learning, scheduler, trends ingestion, manual publishing, Pinterest account operations, dashboard and publication verification.
+- Model 2 registry and learning routers apply the shared fail-closed `X-API-Key` dependency at router level. Scheduler endpoints declare the shared API-key guard. Trends and trusted-Hub credential endpoints use the shared credential-ingest guard. Manual Pin publishing uses the credential-ingest guard as a function dependency. Dashboard data endpoints require the signed session; the cookie is Secure, HttpOnly and SameSite=Strict.
+- Dashboard HTML and session create/delete routes are intentionally reachable without an existing session; data endpoints are not. Health is public by design; readiness and provider diagnostics require the API key.
+- **Authorization model limitation confirmed:** the shared service API key is a single-owner operator boundary, not per-human RBAC or independent tenant identity. Model 2 account scoping is enforced in domain/repository operations, but production multi-user exposure is not approved by this baseline. Do not describe this as multi-user authorization.
+- Reviewed the manual publishing preflight and operation boundary: manual publishing checks stored Pinterest identity and board ownership before publication reservation/write; the general account operation endpoint checks live Pinterest identity before its allowlisted operation. No live request was sent during this review.
+- Dashboard database exceptions return a generic 503; the read-only Pinterest verification client raises bounded/sanitized `PinterestReadError` messages. No raw provider response body or bearer token is intentionally returned by these inspected paths.
+- Targeted security regression set: **102 passed, 1 existing Starlette/httpx deprecation warning** (dashboard, Model 2 APIs, credential vault/keyring, account identity, manual publishing, reconciliation and authentication modules).
+- Broader local suite after the shared guard correction: **339 passed, 74 skipped, 1 warning**; `compileall` and `git diff --check` passed.
+- Remaining Gate 4 items are operational: production database/service roles, human access review, log-reader permissions, retention/deletion policy and production configuration evidence. These require owner-authorized production evidence and are not marked complete.
+- Exact-head CI has not been rerun after the shared guard correction. The feature branch remains uncommitted/unpushed; no deployment, production credential, production database, OAuth refresh, scheduler change, Pin or Board operation occurred.
+
+
+### Gate 4 execution note — runtime route authorization inventory (2026-11-09)
+
+- Re-enumerated FastAPI route declarations across `app/` and inspected the assembled application route table. Router inclusion is lazy in the installed FastAPI version, so the assembled table exposes `_IncludedRouter` placeholders; the source router declarations were therefore also inspected directly.
+- Operational/data-changing route groups are protected by the shared API-key or credential-ingest dependency: Model 2 registry and learning routers (router-level), affiliate scheduler operations, workflow, diagnostics, Learning Loop, trends/trend-visuals ingestion, Pinterest credential/analytics/refresh/operation endpoints, manual publishing, product/content writes, and publication reconciliation/publishing.
+- Dashboard data endpoints call the signed-session validator. The dashboard HTML is intentionally public; session creation verifies the submitted API key and issues a Secure, HttpOnly, SameSite=Strict cookie; session deletion only clears that cookie and does not expose data or perform an operational mutation.
+- `/health` is intentionally public. FastAPI schema/docs routes are enabled by framework defaults; they expose API descriptions, not an authorization bypass. Whether to disable or protect documentation endpoints in production is an owner deployment-policy decision and should be recorded before public exposure if API surface concealment is required.
+- No confirmed unauthenticated publishing, scheduler, credential, analytics-ingestion, registry-write or learning-write route was found in this pass. This is static/code-level route evidence, not proof of production gateway, reverse-proxy or identity-provider configuration.
+- Gate 4 remains open for production role/access evidence, log-reader permissions, retention/deletion policy, and owner confirmation of acceptable documentation exposure. The existing shared API key remains a single-owner operator boundary, not multi-user RBAC.
+
+
+### Additional release blocker — GitHub main-branch protection (owner/admin action)
+
+- Previous read-only GitHub repository audit found `main` branch protection disabled, required-status-check enforcement off, and no repository rulesets (`GET /branches/main` / `GET /rulesets`).
+- This is a release-control gap: a green CI run alone does not prevent an unreviewed or failing-status merge to `main` while protection is disabled.
+- Required owner/admin action before production release: enable branch protection or an equivalent ruleset for `main`, require the relevant CI status check(s), prevent force-push and branch deletion, and verify the effective settings with a fresh read-only check.
+- No repository settings were changed in this continuation. Do not treat the feature branch's successful CI as proof that `main` is protected.
