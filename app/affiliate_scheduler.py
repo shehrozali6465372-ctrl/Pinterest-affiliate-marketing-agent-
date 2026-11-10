@@ -660,9 +660,29 @@ def run_one_due_job() -> dict[str, object]:
                 idempotency_key=claimed["idempotency_key"],
             )
         except HTTPException as exc:
-            detail = exc.detail if isinstance(exc.detail, str) else "workflow_rejected"
-            detail_lower = str(detail).casefold()
-            uncertain = exc.status_code in (409, 502) or "uncertain" in detail_lower or "inspect" in detail_lower or "safely recorded" in detail_lower
+            detail = exc.detail
+            detail_code = detail.get("code") if isinstance(detail, dict) else None
+            detail_message = (
+                detail.get("message", "") if isinstance(detail, dict)
+                else detail if isinstance(detail, str) else "workflow_rejected"
+            )
+            detail_lower = str(detail_message).casefold()
+            definite_pre_publish_conflict = (
+                exc.status_code == 409
+                and detail_code in {
+                    "niche_assignment_inactive",
+                    "niche_account_not_connected",
+                }
+            )
+            uncertain = (
+                not definite_pre_publish_conflict
+                and (
+                    exc.status_code in (409, 502)
+                    or "uncertain" in detail_lower
+                    or "inspect" in detail_lower
+                    or "safely recorded" in detail_lower
+                )
+            )
             retryable = exc.status_code == 503 and not uncertain and claimed["attempt_count"] < 3
             if retryable:
                 delay_minutes = 5 * (2 ** (claimed["attempt_count"] - 1))
@@ -675,6 +695,7 @@ def run_one_due_job() -> dict[str, object]:
                     claimed, status="uncertain" if uncertain else "failed",
                     safe_error_code=(
                         "publish_outcome_uncertain" if uncertain
+                        else "pre_publish_conflict" if definite_pre_publish_conflict
                         else f"workflow_http_{exc.status_code}"
                     ),
                 )

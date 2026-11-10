@@ -192,6 +192,7 @@ def test_model2_workflow_rejects_inactive_assignment_before_any_provider_or_pint
         )
 
     assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "niche_assignment_inactive"
     assert calls["generation"] == []
     assert calls["product"] == []
     assert calls["publish"] == []

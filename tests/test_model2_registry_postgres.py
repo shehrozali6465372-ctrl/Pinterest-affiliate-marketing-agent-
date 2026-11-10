@@ -1920,6 +1920,69 @@ def test_model2_uncertain_job_consumes_daily_quota_and_blocks_schedule_replaceme
     assert "uncertain" in blocked.value.detail.casefold()
 
 
+def test_model2_pre_publish_niche_conflict_does_not_consume_quota_or_block_replacement(model2_db, monkeypatch):
+    from app import database, workflow
+    from app.affiliate_scheduler import (
+        activate_schedule,
+        create_draft_schedule,
+        pause_schedule,
+        run_one_due_job,
+    )
+
+    old_id, _ = _create_and_activate_model2_schedule(
+        model2_db["account_a"], model2_db["niche_a"], daily_limit=1
+    )
+    with database.connection() as conn:
+        due_jobs = conn.execute(
+            "SELECT id FROM affiliate_pin_jobs WHERE schedule_id = %s ORDER BY id LIMIT 2",
+            (old_id,),
+        ).fetchall()
+        assert len(due_jobs) == 2
+        conn.execute(
+            "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE id IN (%s, %s)",
+            (due_jobs[0]["id"], due_jobs[1]["id"]),
+        )
+
+    workflow_calls = []
+
+    def fail_before_publish_once(payload, *, idempotency_key):
+        workflow_calls.append(idempotency_key)
+        if len(workflow_calls) == 1:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "niche_assignment_inactive",
+                    "message": "The account profile or niche assignment is paused; no Pin request was sent.",
+                },
+            )
+        return {"published": False, "already_published": False, "product_id": None, "pin_id": None}
+
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", fail_before_publish_once)
+
+    first = run_one_due_job()
+    second = run_one_due_job()
+
+    assert first["status"] == "failed"
+    assert second["status"] == "succeeded"
+    assert len(workflow_calls) == 2
+    with database.connection() as conn:
+        states = conn.execute(
+            "SELECT id, status, safe_error_code FROM affiliate_pin_jobs WHERE id IN (%s, %s) ORDER BY id",
+            (due_jobs[0]["id"], due_jobs[1]["id"]),
+        ).fetchall()
+    assert [row["status"] for row in states] == ["failed", "succeeded"]
+    assert states[0]["safe_error_code"] == "pre_publish_conflict"
+
+    # Once normal queued work is cancelled by pausing the old schedule, a
+    # definite pre-publish failure must not leave an uncertainty blocker.
+    pause_schedule(old_id)
+    replacement = create_draft_schedule(
+        _model2_schedule_payload(model2_db["account_a"], model2_db["niche_a"])
+    )
+    activated = activate_schedule(replacement["schedule_id"])
+    assert activated["status"] == "active"
+
+
 def _create_uncertain_scheduler_fixture(
     conn, *, account_id: str, niche_id: int, suffix: str,
     publication_status: str | None = "unknown",

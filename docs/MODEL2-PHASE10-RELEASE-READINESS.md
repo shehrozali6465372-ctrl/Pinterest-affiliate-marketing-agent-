@@ -45,6 +45,7 @@ Hardening in this review:
 - A schedule with an uncertain job is not automatically marked completed.
 - Existing legacy Model 1 quota behavior is not changed.
 - Regression coverage verifies the uncertain result is never re-run, consumes the daily quota, and blocks replacement.
+- Definite pre-publish conflicts are distinct from ambiguous publication outcomes: the worker treats only the explicit `niche_assignment_inactive` and `niche_account_not_connected` 409 codes as `failed` (not quota-consuming). Generic/ambiguous 409 and 502 outcomes remain `uncertain` and retain the fail-closed quota/replacement guard.
 - Local full suite after this hardening: **283 passed, 57 skipped, 1 non-blocking warning**. PostgreSQL integration tests remain skipped locally because DB environment variables are unset; no DB was contacted.
 - Exact-head implementation commit `5f818fa5adb5e3c45b1bd8f52d17926ae2ca2d8e`, GitHub Actions run `42536949741`: **213 passed, 0 failed, 1 warning** on disposable PostgreSQL 16.15. All 15 numbered migrations were recorded, Model 2 and synthetic Model 1 fixtures were cleaned, and the PostgreSQL container was stopped.
 

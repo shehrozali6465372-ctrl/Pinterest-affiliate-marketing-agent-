@@ -140,7 +140,10 @@ def publish_product_end_to_end(
         except (Model2NotFoundError, Model2ConflictError):
             raise HTTPException(
                 status_code=409,
-                detail="The requested account-to-niche assignment is missing or inactive.",
+                detail={
+                    "code": "niche_assignment_inactive",
+                    "message": "The requested account-to-niche assignment is missing or inactive; no Pin request was sent.",
+                },
             ) from None
         except Exception:
             raise HTTPException(

@@ -367,3 +367,125 @@ def test_scheduler_reconciliation_post_api_rejects_missing_absence_confirmation(
         },
     )
     assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("workflow_detail", "http_status", "expected_status", "expected_error"),
+    [
+        (
+            {
+                "code": "niche_assignment_inactive",
+                "message": "The account profile or niche assignment is paused; no Pin request was sent.",
+            },
+            409,
+            "failed",
+            "pre_publish_conflict",
+        ),
+        (
+            {
+                "code": "niche_account_not_connected",
+                "message": "The Pinterest account is not connected; no Pin request was sent.",
+            },
+            409,
+            "failed",
+            "pre_publish_conflict",
+        ),
+        ("publish outcome uncertain", 409, "uncertain", "publish_outcome_uncertain"),
+        (
+            {"code": "niche_assignment_inactive", "message": "Pre-publish conflict"},
+            502,
+            "uncertain",
+            "publish_outcome_uncertain",
+        ),
+    ],
+)
+
+def test_worker_distinguishes_pre_publish_conflicts_from_ambiguous_409s(
+    monkeypatch, workflow_detail, http_status, expected_status, expected_error
+):
+    from app import affiliate_scheduler, workflow
+    from fastapi import HTTPException
+
+    claimed = {
+        "id": 501,
+        "schedule_id": 91,
+        "idempotency_key": "paused-niche-worker-test",
+        "attempt_count": 1,
+        "source_id": 73,
+    }
+    details = {
+        "account_id": "pinterest:123",
+        "niche_id": 19,
+        "board_name": "Home Finds",
+        "board_description": "Home organization",
+        "product_name": "Organizer",
+        "product_details": "Kitchen drawer organizer",
+        "affiliate_url": "https://example.com/item",
+    }
+    hint = {
+        "schedule_id": 91,
+        "account_id": "pinterest:123",
+        "niche_id": 19,
+        "timezone": "UTC",
+    }
+    schedule = {
+        "id": 91,
+        "account_id": "pinterest:123",
+        "niche_id": 19,
+        "timezone": "UTC",
+        "daily_pin_limit": 5,
+        "status": "active",
+    }
+    finalized = []
+
+    class Result:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class FakeConnection:
+        def execute(self, query, params=None):
+            if "SELECT s.id AS schedule_id" in query and "s.niche_id IS NOT NULL" in query:
+                return Result(hint)
+            if "SELECT id, account_id, niche_id, timezone, daily_pin_limit" in query:
+                return Result(schedule)
+            if "SELECT now() AS current_time" in query:
+                return Result({"current_time": datetime.now(timezone.utc)})
+            if "WITH candidate AS" in query:
+                return Result(claimed)
+            if "SELECT s.account_id, s.niche_id, s.board_name" in query:
+                return Result(details)
+            return Result()
+
+    @contextmanager
+    def fake_connection():
+        yield FakeConnection()
+
+    def paused_niche_workflow(*args, **kwargs):
+        raise HTTPException(
+            status_code=http_status,
+            detail=workflow_detail,
+        )
+
+    monkeypatch.setattr(affiliate_scheduler, "connection", fake_connection)
+    monkeypatch.setattr(affiliate_scheduler, "_quarantine_one_expired_claim", lambda: None)
+    monkeypatch.setattr(affiliate_scheduler, "_validate_model2_schedule_context", lambda *a, **k: "UTC")
+    monkeypatch.setattr(
+        affiliate_scheduler,
+        "_account_local_day_bounds",
+        lambda *a, **k: (datetime.now(timezone.utc), datetime.now(timezone.utc) + timedelta(days=1)),
+    )
+    monkeypatch.setattr(
+        affiliate_scheduler,
+        "_finalize_claimed_job",
+        lambda *args, **kwargs: finalized.append(kwargs) or True,
+    )
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", paused_niche_workflow)
+
+    result = affiliate_scheduler.run_one_due_job()
+
+    assert result["status"] == expected_status
+    assert finalized[0]["status"] == expected_status
+    assert finalized[0]["safe_error_code"] == expected_error
