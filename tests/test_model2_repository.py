@@ -132,6 +132,24 @@ def test_save_account_profile_uses_metadata_only_check_and_returns_profile(monke
     assert "ciphertext" not in conn.calls[1][0]
 
 
+def test_save_account_profile_rejects_timezone_change_with_active_schedule(monkeypatch):
+    conn = FakeConnection([
+        {"account_id": "pinterest:123456789", "timezone": "UTC"},
+        {"id": 42},  # active immutable schedule
+    ])
+    patch_connection(monkeypatch, conn)
+
+    with pytest.raises(Model2ConflictError, match="timezone cannot change while an active schedule exists"):
+        model2_repository.save_account_profile(
+            AccountProfileInput(account_id="pinterest:123456789", timezone="Asia/Karachi")
+        )
+
+    assert len(conn.calls) == 2
+    assert "status = 'active'" in conn.calls[1][0]
+    assert "affiliate_publishing_schedules" in conn.calls[1][0]
+    assert not any("INSERT INTO model2_account_profiles" in query for query, _ in conn.calls)
+
+
 def test_pausing_existing_profile_does_not_require_connected_token_and_pauses_mappings(monkeypatch):
     profile_row = {
         "account_id": "pinterest:123456789",

@@ -494,3 +494,11 @@ This section supersedes earlier references above to the latest feature-branch CI
 - Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42834166667
 - This closes the synthetic automated rollback/recovery test gap only. It does not establish a sanitized production-like restore, Neon PITR/restore capability, production RPO/RTO, or independent reviewer sign-off. The release scorecard remains partial for rollback and Phase 10 remains blocked.
 - No production database, credentials, OAuth, scheduler, Pinterest API write, real Pin/Board, merge or deployment was used.
+
+### PR #77 — Codex P2 timezone immutability remediation (2026-11-10)
+
+- Codex completed review of exact PR head `3316814507155c83f885be8787799b442978e20a` and reported one new P2 in `app/model2_repository.py`: changing an account profile timezone while an immutable Model 2 schedule is active leaves the worker repeatedly rejecting due jobs because the schedule/profile timezones diverge.
+- Remediation in progress: `save_account_profile` now reads the existing profile timezone under its existing `FOR UPDATE` lock. If a timezone change is requested, it checks for an active Model 2 schedule (`niche_id IS NOT NULL`) and raises `Model2ConflictError` before updating the profile. This shares the profile-row serialization lock used by schedule creation/activation, preventing a concurrent activation from racing the timezone change. Once the schedule is paused, the timezone may be changed and a replacement schedule created.
+- Added a repository unit regression test and a disposable PostgreSQL integration test for rejection while active and successful change after pause. These tests are pending execution in CI; the current connected development device has no preinstalled pytest and local dependency installation is being prepared in an isolated virtual environment.
+- The previous pre-publish-conflict P2 remains fixed and its review thread was resolved. The new timezone finding is not yet resolved; do not call the Codex review clean until a fresh review of the corrected commit is complete.
+- No production DB, live schedule, credentials, OAuth, Pinterest API, Pin/Board, merge or deployment was touched. PR #77 remains review-only; Phase 10 remains PRE-RELEASE / BLOCKED.

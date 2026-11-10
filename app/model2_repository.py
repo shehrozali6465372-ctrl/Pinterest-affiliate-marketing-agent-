@@ -53,13 +53,32 @@ def save_account_profile(payload: AccountProfileInput) -> dict:
     with connection() as conn:
         existing = conn.execute(
             """
-            SELECT account_id
+            SELECT account_id, timezone
             FROM model2_account_profiles
             WHERE account_id = %s
             FOR UPDATE
             """,
             (profile.account_id,),
         ).fetchone()
+
+        # Activated Model 2 schedules have immutable timezone configuration.
+        # Serialize this check with schedule activation by retaining the profile
+        # row lock acquired above (activation locks the same row first).
+        if existing is not None and existing.get("timezone") not in (None, profile.timezone):
+            active_schedule = conn.execute(
+                """
+                SELECT id
+                FROM affiliate_publishing_schedules
+                WHERE account_id = %s AND niche_id IS NOT NULL AND status = 'active'
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (profile.account_id,),
+            ).fetchone()
+            if active_schedule is not None:
+                raise Model2ConflictError(
+                    "Account timezone cannot change while an active Model 2 schedule exists; pause and replace the schedule first"
+                )
 
         # A new profile is explicit onboarding and always requires a connected
         # credential. Reactivation also requires a currently connected account.

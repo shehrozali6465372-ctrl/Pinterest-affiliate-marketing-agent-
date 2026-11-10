@@ -1599,6 +1599,27 @@ def test_model2_schedule_requires_exact_active_account_niche_and_profile_timezon
     assert cross_account.value.status_code == 409
 
 
+def test_model2_profile_timezone_cannot_change_while_schedule_is_active(model2_db):
+    from app.model2_repository import Model2ConflictError
+
+    schedule_id, _ = _create_and_activate_model2_schedule(
+        model2_db["account_a"], model2_db["niche_a"]
+    )
+    with pytest.raises(Model2ConflictError, match="timezone cannot change while an active schedule exists"):
+        save_account_profile(AccountProfileInput(
+            account_id=model2_db["account_a"], timezone="Asia/Karachi"
+        ))
+
+    # Once the immutable schedule is paused, the profile timezone can be
+    # changed; a replacement schedule can then be created with the new zone.
+    from app.affiliate_scheduler import pause_schedule
+    pause_schedule(schedule_id)
+    changed = save_account_profile(AccountProfileInput(
+        account_id=model2_db["account_a"], timezone="Asia/Karachi"
+    ))
+    assert changed["timezone"] == "Asia/Karachi"
+
+
 def test_model2_schedule_rejects_mismatched_connected_credential_identity(model2_db):
     from app import database
     from app.affiliate_scheduler import create_draft_schedule
