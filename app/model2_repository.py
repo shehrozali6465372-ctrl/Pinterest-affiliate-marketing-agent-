@@ -77,7 +77,7 @@ def save_account_profile(payload: AccountProfileInput) -> dict:
             ).fetchone()
             if active_schedule is not None:
                 raise Model2ConflictError(
-                    "Account timezone cannot change while an active Model 2 schedule exists; pause and replace the schedule first"
+                    "Account timezone cannot change while an active schedule exists for this Model 2 account; pause and replace the schedule first"
                 )
 
         # A new profile is explicit onboarding and always requires a connected
