@@ -968,3 +968,13 @@ This is the latest verified feature-branch checkpoint and supersedes earlier not
 - Neon read-only settings: Free plan `free_v3`, 6-hour PITR window, no automatic snapshot schedule (not available on Free), one manual snapshot `production-main-pre-restore-rehearsal-20261103`. No SQL, branch creation, restore or setting change was performed.
 - Neon owner-operated restore, sanitized production-like snapshot migration/rollback, RPO/RTO and production credential rotation remain open.
 - Agent repository main has no branch protection/rulesets. Backup private repository branch protection/rulesets API returns 403 requiring GitHub Pro or public visibility. No settings changed; do not expose private backup repository or upgrade plans without approval.
+
+
+### Gate 4 static application security review — closed (2026-11-10)
+
+- Rechecked fail-closed API-key and credential-ingest guards, Model 2 registry/learning router protection, canonical account/niche SQL scoping, Pinterest identity preflight, operational route protections, and inspected logging/error-handling paths. No new application-code authorization bypass was identified in the inspected paths.
+- Confirmed the owner-approved model remains one operator managing multiple Pinterest accounts. `X-API-Key` is service authentication, not per-human RBAC or tenant identity; no synthetic human/tenant identity is introduced.
+- Inspected content, media and workflow logs use bounded metadata/exception types rather than raw provider exception text. This does not establish production log access/retention controls or constitute a historical full-log scan.
+- Marked Gate 4's static application-code review complete in `docs/MODEL2-PHASE10-RELEASE-READINESS.md`. Production service/database roles, human access, log-reader permissions, retention and deletion policy remain owner-evidence blockers.
+- No code changes were made. Latest exact-head CI remains run `42731770533` at `1e03f196a0380c88aebe2a0b1bb3272273dc6873`: 323 passed, 0 failed, 1 non-blocking warning; all 16 migrations recorded, fixtures cleaned and disposable PostgreSQL 16 stopped.
+- No production DB access/write, production secret access/rotation, OAuth refresh, scheduler operation, Pinterest API write, real Pin/Board creation, PR, merge or deployment occurred.

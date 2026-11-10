@@ -289,7 +289,7 @@ This checklist is the active execution tracker. Do not repeat completed syntheti
 - **Boundary:** no production secret access, key generation, environment change, token decryption, OAuth refresh or rotation until separately approved.
 
 ### Gate 4 — Production access, logging and retention security
-- [ ] Complete static review of authentication, authorization boundaries, account scoping, secret redaction and error handling.
+- [x] Complete static application-code review of authentication, authorization boundaries, account scoping, secret redaction and error handling (2026-11-10; evidence below).
 - [ ] Obtain owner-authorized evidence for production service access, database roles, log access, retention and deletion policy.
 - [ ] Record findings and remediate code-owned issues on this feature branch; production configuration changes require separate approval.
 
@@ -384,3 +384,14 @@ Work in gate order. For each gate: inspect existing evidence first; implement on
 - Read-only GitHub checks confirm the agent repository `main` branch has no branch protection and no repository rulesets. The authenticated account has repository admin permission, but no settings were changed.
 - The private backup repository's branch-protection/ruleset API reports that the feature requires GitHub Pro or a public repository. Do not make the private backup repository public or upgrade a plan without owner direction.
 - Required owner decision: choose an acceptable merge-control strategy for the private repositories and plan constraints. Until then, green CI does not equal enforced protection against unreviewed or failing-status merges.
+
+
+### Gate 4 execution note — static application security review closed (2026-11-10)
+
+- Rechecked the shared fail-closed API-key and credential-ingest guards, Model 2 registry/learning router dependencies, account/niche-scoped repository and learning SQL predicates, Pinterest identity preflight, and protected operational route groups. No new application-code authorization bypass was identified in the inspected paths.
+- Confirmed the approved operating model is one owner/operator managing multiple Pinterest accounts. The shared `X-API-Key` is service authentication, not per-human RBAC or tenant identity; no human/tenant identity is fabricated. This remains acceptable only for the explicitly selected single-operator deployment model.
+- Rechecked application logging and broad exception boundaries. Inspected content, media and workflow logs use bounded stage/status/exception-type metadata rather than raw provider exception text; inspected API error paths return generic storage/provider failures where appropriate. This is not a full historical log scan or proof of production log access/retention controls.
+- Reconfirmed account/niche data operations use canonical account IDs and explicit account+niche predicates; learning projections join analytics to succeeded publications and exact account/niche attribution. Existing CI covers the cross-account and identity regressions.
+- Latest exact-head feature CI remains run `42731770533` at `1e03f196a0380c88aebe2a0b1bb3272273dc6873`: **323 passed, 0 failed, 1 non-blocking warning**, all 16 migrations recorded, fixtures cleaned and disposable PostgreSQL 16 stopped. No source code changed during this review.
+- **Gate 4 static application-code item is closed.** Remaining Gate 4 production evidence is still open: production service/database roles, human access, log-reader permissions, retention and deletion policy. No production settings or logs were accessed or changed in this review.
+- No production DB access/write, secret access/rotation, OAuth refresh, scheduler operation, Pinterest API write, Pin/Board creation, PR, merge or deployment occurred.
