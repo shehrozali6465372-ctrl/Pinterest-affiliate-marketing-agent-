@@ -514,3 +514,32 @@ def test_refresh_replays_completed_operation_without_second_provider_post(monkey
     assert second.status_code == 200
     assert second.json()["replayed"] is True
     assert writes == ["POST"]
+
+
+def test_refresh_endpoint_does_not_refresh_an_already_fresh_access_token(monkeypatch):
+    import httpx
+    from datetime import timedelta
+    from app import credential_vault, database
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123",
+        "refresh_token": "current-refresh-secret",
+    })
+    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123",
+        "access_token": "current-access-secret",
+        "expires_at": datetime.now(timezone.utc) + timedelta(hours=2),
+    })
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation",
+                        lambda **kwargs: pytest.fail("fresh token must not claim a refresh operation"))
+    class FakeClient:
+        def __init__(self, *args, **kwargs): raise AssertionError("no OAuth HTTP client should be created")
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    response = client.post(
+        "/integrations/pinterest/refresh", headers=HEADERS,
+        json={"account_id": "pinterest:123", "client_id": "client-id", "client_secret": "client-secret"},
+    )
+    assert response.status_code == 200
+    assert response.json()["already_fresh"] is True
+    assert response.json()["refreshed"] is False
