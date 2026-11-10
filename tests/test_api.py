@@ -1103,6 +1103,40 @@ def test_readiness_rejects_present_but_invalid_encryption_key(monkeypatch):
     assert "present-but-not-valid-base64" not in str(body)
 
 
+def test_credential_ingest_accepts_keyring_only_encryption_configuration(monkeypatch):
+    import base64
+    import app.credential_vault as credential_vault
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "configured-ingest-test-key")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_key", None)
+    encoded_key = base64.b64encode(b"k" * 32).decode("ascii")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_keys", json.dumps({"active": encoded_key}))
+    monkeypatch.setattr(settings, "pinterest_token_encryption_active_key_id", "active")
+    monkeypatch.setattr(
+        credential_vault,
+        "store_pinterest_credential",
+        lambda payload: {
+            "account_id": payload["account_id"],
+            "pinterest_user_id": payload["pinterest_user_id"],
+            "status": "connected",
+            "updated_at": None,
+        },
+    )
+
+    response = client.post(
+        "/integrations/pinterest/credentials",
+        json={
+            "account_id": "pinterest:test-user",
+            "pinterest_user_id": "test-user",
+            "access_token": "synthetic-token",
+        },
+        headers={"X-Credential-Ingest-Key": "configured-ingest-test-key"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["stored"] is True
+
+
 def test_trusted_hub_routes_fail_closed_when_ingest_auth_is_unconfigured(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", None)
     credential_payload = {

@@ -246,10 +246,16 @@ def ingest_pinterest_credential(
     payload: PinterestCredentialInput,
 ) -> dict[str, object]:
     """Accept Pinterest OAuth credentials from the trusted Modern Living Hub backend only."""
-    if not settings.pinterest_token_encryption_key:
-        raise HTTPException(status_code=503, detail="Pinterest credential encryption is not configured.")
+    from app.credential_vault import (
+        store_pinterest_credential,
+        token_encryption_key_is_valid,
+    )
+    if not token_encryption_key_is_valid():
+        raise HTTPException(
+            status_code=503,
+            detail="Pinterest credential encryption is not configured or invalid.",
+        )
     try:
-        from app.credential_vault import store_pinterest_credential
         saved = store_pinterest_credential(payload.model_dump())
         return {
             "stored": True,

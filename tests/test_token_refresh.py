@@ -253,7 +253,8 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
     monkeypatch.setattr(database, "_pool", None)
     database.run_migrations()
 
-    account_id = f"pinterest:pb05-test-{uuid.uuid4().hex}"
+    pinterest_user_id = f"pb05-test-{uuid.uuid4().hex}"
+    account_id = f"pinterest:{pinterest_user_id}"
     encryption_key = base64.b64encode(bytes(range(32))).decode("ascii")
     assert len(base64.b64decode(encryption_key)) == 32
     monkeypatch.setattr(settings, "pinterest_token_encryption_key", encryption_key)
@@ -263,8 +264,8 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
     try:
         credential_vault.store_pinterest_credential({
             "account_id": account_id,
-            "pinterest_user_id": "pb05-test-user",
-            "username": "pb05-test-user",
+            "pinterest_user_id": pinterest_user_id,
+            "username": pinterest_user_id,
             "access_token": "old-access-token-fixture",
             "refresh_token": "old-refresh-token-fixture",
             "scope": "user_accounts:read,pins:read",
