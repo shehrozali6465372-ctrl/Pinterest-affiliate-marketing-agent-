@@ -572,6 +572,8 @@ def pinterest_account_operation(
     import json
     operation = payload.operation
     data = payload.payload
+    if operation == "create_board" and not idempotency_key:
+        raise HTTPException(status_code=422, detail="Idempotency-Key is required for create_board.")
     allowed = {
         "account": ("GET", "/user_account", None),
         "boards": ("GET", "/boards?page_size=100", None),
@@ -598,8 +600,6 @@ def pinterest_account_operation(
     method, path, body = allowed[operation]
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
-    if operation == "create_board" and not idempotency_key:
-        raise HTTPException(status_code=422, detail="Idempotency-Key is required for create_board.")
     expected_user_id = str(credential.get("pinterest_user_id") or "")
     if not expected_user_id or payload.account_id != f"pinterest:{expected_user_id}":
         raise HTTPException(status_code=409, detail="Stored Pinterest credential identity does not match the requested account.")
