@@ -117,7 +117,7 @@ Current CI emits a Starlette/httpx TestClient deprecation warning and GitHub Act
 | Account isolation | Pass in tests | Exact account+niche composite FK and repository/workflow checks |
 | Authentication | Pass for service-key model | Fail-closed shared API key; no human/tenant identity |
 | Publication safety | Pass on feature branch / production conditional | Single gateway, idempotency, uncertainty quarantine, atomic operator reconciliation and append-only audit; no live publication test |
-| Quota concurrency | Pass in CI | Same-account serialization; different-account parallel claims; uncertain quota hardening awaits CI |
+| Quota concurrency | Pass in CI | Same-account serialization; different-account parallel claims; ambiguous outcomes remain quota-consuming; definite pre-publish conflicts do not (exact-head CI run 42845977735) |
 | Legacy compatibility | Pass in CI | Nullable niche, unchanged legacy branch, regression suite |
 | Migration integrity | Pass in disposable CI | All 16 migrations applied; production-like rehearsal not run |
 | Rollback | Partial | App rollback can retain additive schema; data-preserving schema rollback/restore not rehearsed |
