@@ -341,10 +341,19 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
                 "SELECT access_token_ciphertext, refresh_token_ciphertext FROM pinterest_credentials WHERE account_id = %s",
                 (account_id,),
             ).fetchone()
+            ledger = conn.execute(
+                "SELECT status, request_fingerprint FROM pinterest_refresh_operations WHERE account_id = %s",
+                (account_id,),
+            ).fetchone()
         assert bytes(row["access_token_ciphertext"]) != b"rotated-access-token-fixture"
         assert bytes(row["refresh_token_ciphertext"]) != b"rotated-refresh-token-fixture"
+        assert ledger["status"] == "succeeded"
+        assert len(ledger["request_fingerprint"]) == 64
+        assert "old-access-token-fixture" not in ledger["request_fingerprint"]
+        assert "old-refresh-token-fixture" not in ledger["request_fingerprint"]
     finally:
         with database.connection() as conn:
+            conn.execute("DELETE FROM pinterest_refresh_operations WHERE account_id = %s", (account_id,))
             conn.execute("DELETE FROM pinterest_credentials WHERE account_id = %s", (account_id,))
         database.close_pool()
 
