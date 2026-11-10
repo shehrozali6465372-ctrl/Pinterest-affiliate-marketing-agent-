@@ -316,7 +316,7 @@ Work in gate order. For each gate: inspect existing evidence first; implement on
 - Static review found `POST /trend-visuals/run` used a local duplicate `X-Credential-Ingest-Key` guard. Unlike the canonical shared guard, it returned HTTP 401 when the credential-ingest key was not configured (the shared fail-closed contract is HTTP 503 for missing server configuration and 401 for an invalid supplied key).
 - Corrected `app/trend_visuals.py` to depend on `app.auth.require_credential_ingest_key`; removed the duplicate local guard.
 - Added regression tests for unconfigured key (503), wrong key (401), and valid key (handler invoked). Targeted test result: `6 passed, 1 existing Starlette/httpx deprecation warning` via `pytest -q tests/test_trend_ingest_auth.py`.
-- This is a feature-branch code change after the previously recorded exact-head CI run. **Exact-head CI has not yet been run for this new change.** Do not call the branch release-verified until CI is rerun.
+- This was initially recorded as awaiting CI. It is now covered by exact-head disposable PostgreSQL CI run `42731241964` on commit `a4f9c3aafeb67035d4c264cbb3db62e263e372be`: **323 passed, 0 failed, 1 non-blocking Starlette/httpx warning**. All 16 numbered migrations were recorded, synthetic fixtures were cleaned, and the PostgreSQL 16 service was stopped. The run included `tests/test_trend_ingest_auth.py` and the backup/restore and legacy-upgrade integration modules. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42731241964.
 - No database, production secret, OAuth, Pinterest API write, Pin/Board, scheduler, deployment, PR or merge was used.
 
 
@@ -355,3 +355,10 @@ Work in gate order. For each gate: inspect existing evidence first; implement on
 - This is a release-control gap: a green CI run alone does not prevent an unreviewed or failing-status merge to `main` while protection is disabled.
 - Required owner/admin action before production release: enable branch protection or an equivalent ruleset for `main`, require the relevant CI status check(s), prevent force-push and branch deletion, and verify the effective settings with a fresh read-only check.
 - No repository settings were changed in this continuation. Do not treat the feature branch's successful CI as proof that `main` is protected.
+
+
+### Trusted-Hub trend-ingest guard — exact-head CI closure (2026-11-10)
+
+- Commit `a4f9c3aafeb67035d4c264cbb3db62e263e372be` uses the canonical fail-closed `require_credential_ingest_key` dependency for `/trend-visuals/run`; the duplicate local guard is removed.
+- Exact-head GitHub Actions run `42731241964`: **323 passed, 0 failed, 1 non-blocking warning** on isolated PostgreSQL 16.15. All 16 migrations recorded, synthetic Model 1/Model 2 fixture cleanup passed, and PostgreSQL service teardown passed.
+- No production DB, credential, Pinterest write, real Pin/Board, scheduler activation, deployment, PR or merge was used.

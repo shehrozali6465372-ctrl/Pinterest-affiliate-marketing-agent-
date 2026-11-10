@@ -950,3 +950,12 @@ This is the latest verified feature-branch checkpoint and supersedes earlier not
 - **Still blocked for production release:** sanitized production-like snapshot migration/backup/restore/rollback rehearsal; Neon backup/PITR and owner-operated restore access verification; production credential inventory and approved key rotation/re-encryption; production access/log-retention review; owner decision on existing main-branch scheduled worker/Learning Loop side effects; separate explicit approvals for migration, deployment and scheduler activation.
 - Existing main-branch scheduled workflows were already executing as documented above. Do not dispatch, pause, resume, or otherwise modify them without owner approval. Job 13's production publication outcome was previously verified only through an explicitly approved read-only ledger query; no further production query is authorized by this checkpoint.
 - No production DB writes, secret access/rotation, OAuth refresh, Pinterest API writes, real Pin/Board creation, merge, PR, deployment or scheduler dispatch occurred during this continuation.
+
+
+### Model 2 Phase 10 — trusted-Hub trend-ingest auth CI closure (2026-11-10)
+
+- Commit `a4f9c3aafeb67035d4c264cbb3db62e263e372be` on `feat/model2-open-source-reuse` replaces the duplicate `/trend-visuals/run` credential-ingest guard with the canonical shared fail-closed guard.
+- Exact-head GitHub Actions run `42731241964`: **323 passed, 0 failed, 1 non-blocking Starlette/httpx warning**. Disposable PostgreSQL 16.15 only; loopback target guard passed; all 16 numbered migrations recorded; Model 2 and synthetic Model 1 fixture cleanup passed; PostgreSQL service stopped. Includes backup/restore and populated legacy-upgrade integration tests.
+- Local full suite excluding only the two PostgreSQL-admin integration modules: **339 passed, 74 skipped, 1 warning**. Targeted trend-ingest tests: **6 passed**. `compileall` and `git diff --check` passed.
+- Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42731241964
+- No production DB writes, production secret access/rotation, OAuth refresh, Pinterest API write, real Pin/Board, scheduler change, deployment, PR or merge occurred.
