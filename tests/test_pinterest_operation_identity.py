@@ -147,20 +147,24 @@ def test_create_board_replays_persisted_success_without_second_provider_write(mo
                         lambda **kwargs: dict(stored))
     monkeypatch.setattr(database, "complete_pinterest_board_operation",
                         lambda **kwargs: stored.update(status="succeeded", result=kwargs["result"]))
-    class Response:
+    class IdentityResponse:
+        status_code = 200
+        is_success = True
+        content = b'{"id":"123456"}'
+        def json(self): return {"id": "123456"}
+    class BoardResponse:
         status_code = 200
         is_success = True
         content = b'{"id":"board-1"}'
-        def json(self):
-            return {"id": "board-1"}
+        def json(self): return {"id": "board-1"}
     class Client:
         def __init__(self, *args, **kwargs): pass
         def __enter__(self): return self
         def __exit__(self, *args): return False
-        def get(self, *args, **kwargs): return Response()
+        def get(self, *args, **kwargs): return IdentityResponse()
         def request(self, method, url, **kwargs):
             writes.append((method, url))
-            return Response()
+            return BoardResponse()
     monkeypatch.setattr(httpx, "Client", Client)
     client = TestClient(app)
     request = {"account_id": "pinterest:123456", "operation": "create_board",
