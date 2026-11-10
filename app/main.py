@@ -598,6 +598,14 @@ def pinterest_account_operation(
     base = settings.pinterest_api_base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
     method, path, body = allowed[operation]
+    board_write_started = False
+    if operation == "create_board":
+        from app.database import (
+            claim_pinterest_board_operation,
+            complete_pinterest_board_operation,
+            mark_pinterest_board_operation_failed,
+            mark_pinterest_board_operation_uncertain,
+        )
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
     expected_user_id = str(credential.get("pinterest_user_id") or "")
@@ -624,12 +632,6 @@ def pinterest_account_operation(
                      "description": body["description"]},
                     sort_keys=True, separators=(",", ":"),
                 ).encode()).hexdigest()
-                from app.database import (
-                    claim_pinterest_board_operation,
-                    complete_pinterest_board_operation,
-                    mark_pinterest_board_operation_failed,
-                    mark_pinterest_board_operation_uncertain,
-                )
                 try:
                     claim = claim_pinterest_board_operation(
                         account_id=payload.account_id,
@@ -648,6 +650,8 @@ def pinterest_account_operation(
                     raise HTTPException(status_code=409, detail="Board creation outcome is uncertain or still in progress; automatic retry is blocked pending reconciliation.")
                 if claim["status"] == "failed":
                     raise HTTPException(status_code=409, detail="This board operation was previously rejected; use a new reviewed operation after resolving the rejection.")
+            if operation == "create_board":
+                board_write_started = True
             response = client.request(method, f"{base}{path}", headers=headers, json=body)
         try:
             result = response.json() if response.content else {}
@@ -657,13 +661,15 @@ def pinterest_account_operation(
                 raise HTTPException(status_code=502, detail="Pinterest board response was unreadable; outcome marked uncertain and will not be retried.") from None
             raise HTTPException(status_code=502, detail="Pinterest API returned an unreadable response.") from None
     except httpx.HTTPError as exc:
-        if operation == "create_board":
+        if operation == "create_board" and board_write_started:
             try:
                 mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
             except Exception:
                 # The durable in_progress row itself blocks another provider POST.
                 pass
             raise HTTPException(status_code=502, detail="Pinterest board request outcome is uncertain; automatic retry is blocked.") from None
+        if operation == "create_board":
+            raise HTTPException(status_code=502, detail="Pinterest account preflight failed; no board write was sent.") from None
         raise HTTPException(status_code=502, detail="Pinterest API request failed.") from exc
     if not response.is_success:
         if operation == "create_board":
