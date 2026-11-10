@@ -521,7 +521,7 @@ This section supersedes earlier references above to the latest feature-branch CI
 
 ### Latest production-readiness continuation — exact-head verification (2026-11-10)
 
-**Latest code-verified feature-branch head:** `f7d5ae591b21689bc5349dc0f898a20cee8b5e4b`  
+**Latest code-verified feature-branch head:** `9ffc4fdaa30d0c7d9dd17d3f6ad1d2e6ee2249cc`  
 **PR:** [#77](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/77) — OPEN, NOT MERGED, NOT DEPLOYED.
 
 #### Additional side-effect and quota hardening
@@ -536,10 +536,10 @@ This section supersedes earlier references above to the latest feature-branch CI
 
 #### Exact-head CI evidence
 
-- Python tests run [42910252955](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42910252955): **447 passed, 1 skipped, 1 non-blocking Starlette/httpx deprecation warning**.
-- Python CI run [42910252539](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42910252539): Bandit passed; pip-audit reported **No known vulnerabilities found**; **447 passed, 1 skipped**.
-- Model 2 PostgreSQL integration run [42910253005](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42910253005): **352 passed**; all **18 numbered migrations** recorded; Model 2, Model 1 and OAuth refresh fixtures cleaned; disposable PostgreSQL container stopped.
-- The Python test run includes synthetic timeout/replay tests for both OAuth refresh paths and Board creation, disconnect-contract verification, documented OAuth request-parameter checks, and the legacy uncertain-quota regression. The PostgreSQL run exercises the real encrypted OAuth credential persistence and operation ledger against disposable PostgreSQL; Pinterest remains mocked.
+- Python tests run [42911604974](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42911604974): **447 passed, 1 skipped, 1 non-blocking Starlette/httpx deprecation warning**.
+- Python CI run [42911604828](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42911604828): Bandit passed; pip-audit reported **No known vulnerabilities found**; **447 passed, 1 skipped**.
+- Model 2 PostgreSQL integration run [42911604962](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42911604962): **352 passed**; all **18 numbered migrations** recorded; Model 2, Model 1 and OAuth refresh fixtures cleaned; disposable PostgreSQL container stopped.
+- The Python test run includes synthetic timeout/replay tests for both OAuth refresh paths and Board creation, disconnect-contract verification, documented OAuth request-parameter checks, and the legacy uncertain-quota regression. The PostgreSQL integration also exercises two simultaneous claims for one refresh-token generation: exactly one acquires the write claim, the other observes `in_progress`, and a subsequent claim observes `uncertain` after simulated ambiguity. The PostgreSQL run exercises the real encrypted OAuth credential persistence and operation ledger against disposable PostgreSQL; Pinterest remains mocked.
 
 #### Remaining release gates — unchanged
 
