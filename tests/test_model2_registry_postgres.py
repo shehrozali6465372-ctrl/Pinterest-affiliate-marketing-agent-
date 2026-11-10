@@ -1925,7 +1925,6 @@ def test_model2_pre_publish_niche_conflict_does_not_consume_quota_or_block_repla
     from app.affiliate_scheduler import (
         activate_schedule,
         create_draft_schedule,
-        pause_schedule,
         run_one_due_job,
     )
 
@@ -1990,9 +1989,14 @@ def test_model2_pre_publish_niche_conflict_does_not_consume_quota_or_block_repla
     assert [row["status"] for row in states] == ["failed", "succeeded"]
     assert states[0]["safe_error_code"] == "pre_publish_conflict"
 
-    # Once normal queued work is cancelled by pausing the old schedule, a
-    # definite pre-publish failure must not leave an uncertainty blocker.
-    pause_schedule(old_id)
+    # All old jobs are terminal. A definite pre-publish failure must not
+    # leave an uncertainty blocker that prevents the next schedule.
+    with database.connection() as conn:
+        old_schedule_status = conn.execute(
+            "SELECT status FROM affiliate_publishing_schedules WHERE id = %s",
+            (old_id,),
+        ).fetchone()["status"]
+    assert old_schedule_status == "completed"
     replacement = create_draft_schedule(
         _model2_schedule_payload(model2_db["account_a"], model2_db["niche_a"])
     )
