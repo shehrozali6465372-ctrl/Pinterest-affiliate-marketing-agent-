@@ -517,3 +517,33 @@ This section supersedes earlier references above to the latest feature-branch CI
 - Codex completed a fresh review of `18aa83a325e2c5597dc6c832160de2d467adbcfd`: `has_any_findings=false`, `has_unresolved_findings=false`; receipt states “Didn't find any major issues. Nice work!”.
 - The timezone P2 review thread was explicitly resolved after the guarded timezone change and exact-head CI passed. All four Codex review threads on PR #77 are now resolved.
 - PR #77 remains open for owner review; this is not merge or production-release approval. Phase 10 remains PRE-RELEASE / BLOCKED by the independent production readiness gates documented above.
+
+
+### Latest production-readiness continuation — exact-head verification (2026-11-10)
+
+**Authoritative feature-branch head:** `7bbcd1332623d0abf169fc06ff1c94f3402a6ac6`  
+**PR:** [#77](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/77) — OPEN, NOT MERGED, NOT DEPLOYED.
+
+#### Additional side-effect and quota hardening
+
+- **Pinterest Board creation:** migration 016 adds an account-scoped durable idempotency ledger. `create_board` requires `Idempotency-Key`, replays stored success, rejects payload mismatch, and blocks in-progress/uncertain outcomes. Timeouts, unreadable success responses and 5xx responses are treated as uncertain; no automatic retry can issue a second provider POST for the same key.
+- **Pinterest OAuth refresh:** official Pinterest authentication documentation describes successful continuous refresh as returning a new access token and continuous refresh token. The Hub-facing refresh endpoint previously lacked a durable operation record for an ambiguous timeout. Migration 017 now records a SHA-256 fingerprint of the current access/refresh token generation (never raw tokens), blocks duplicate/in-progress/uncertain attempts, and marks success only after encrypted token persistence. A fresh access token is not refreshed again unnecessarily. If the response or persistence is ambiguous, the same token generation is blocked and requires operator-controlled recovery/reconnect.
+- **Legacy Model 1 scheduler quota:** both legacy daily-quota SQL predicates now count `uncertain` jobs alongside `processing` and `succeeded`. This closes a gap where an ambiguous Pin outcome could have failed to consume quota and allowed an extra same-day job. A synthetic regression test covers the last available daily slot.
+- Restore rehearsal documentation and disposable CI cleanup checks now include migrations 016 and 017 and the Pinterest refresh-operation ledger.
+
+#### Exact-head CI evidence
+
+- Python tests run [42909034642](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42909034642): **445 passed, 1 skipped, 1 non-blocking warning**.
+- Python CI run [42909034636](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42909034636): Bandit passed; pip-audit reported **No known vulnerabilities found**; **445 passed, 1 skipped**.
+- Model 2 PostgreSQL integration run [42909034522](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42909034522): **351 passed**; all **18 numbered migrations** recorded; Model 2, Model 1 and OAuth refresh fixtures cleaned; disposable PostgreSQL container stopped.
+- The Python test run includes synthetic timeout/replay tests for OAuth refresh and Board creation, plus the legacy uncertain-quota regression. The PostgreSQL run exercises the real encrypted OAuth credential persistence and operation ledger against disposable PostgreSQL; Pinterest remains mocked.
+
+#### Remaining release gates — unchanged
+
+- No sanitized production-like snapshot restore/rehearsal or owner-verified Neon PITR/restore access, RPO/RTO and escalation evidence.
+- No production credential inventory, approved key rotation/re-encryption, rollback evidence, or complete service-key/log-retention operational review.
+- Existing hourly Affiliate Scheduler Worker and daily Pinterest Learning Loop remain active on main by owner decision. They were not dispatched, paused, resumed or changed in this continuation.
+- Render Free cold-start/restart limitations and readiness/health-check design remain unresolved availability concerns.
+- No production database migration, production credential read/rotation, OAuth refresh, Pinterest API write, real Pin/Board creation, scheduler dispatch/change, PR merge or deployment was performed.
+
+**Phase 10 remains PRE-RELEASE / BLOCKED.** Green disposable CI verifies feature-branch code only; it does not satisfy production restore rehearsal, availability, security-operations, owner-approval or deployment gates.
