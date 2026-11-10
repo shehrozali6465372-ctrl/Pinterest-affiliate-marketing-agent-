@@ -221,8 +221,10 @@ def test_malformed_refresh_token_expiry_fails_closed(monkeypatch):
 def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgres(monkeypatch):
     """Exercise the real vault + refresh endpoint against disposable PostgreSQL; Pinterest is mocked."""
     import base64
+    import hashlib
     import os
     import uuid
+    from concurrent.futures import ThreadPoolExecutor
     import httpx
     from app import credential_vault, database
 
@@ -234,6 +236,7 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
 
     pinterest_user_id = f"pb05-test-{uuid.uuid4().hex}"
     account_id = f"pinterest:{pinterest_user_id}"
+    concurrency_account_id = f"pinterest:pb05-test-concurrency-{uuid.uuid4().hex}"
     encryption_key = base64.b64encode(bytes(range(32))).decode("ascii")
     assert len(base64.b64decode(encryption_key)) == 32
     monkeypatch.setattr(settings, "pinterest_token_encryption_key", encryption_key)
@@ -251,6 +254,26 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
             "expires_at": "2026-10-01T00:00:00+00:00",
             "refresh_token_expires_at": "2030-01-01T00:00:00+00:00",
         })
+
+        # Two concurrent callers for one token generation must yield exactly
+        # one provider-write claim; the other caller observes in_progress.
+        concurrency_fingerprint = hashlib.sha256(b"synthetic-concurrent-refresh-generation").hexdigest()
+        def claim_concurrent_refresh(_):
+            return database.claim_pinterest_refresh_operation(
+                account_id=concurrency_account_id,
+                request_fingerprint=concurrency_fingerprint,
+            )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            concurrent_claims = list(executor.map(claim_concurrent_refresh, range(2)))
+        assert sorted(item["status"] for item in concurrent_claims) == ["acquired", "in_progress"]
+        database.mark_pinterest_refresh_operation_uncertain(
+            account_id=concurrency_account_id,
+            request_fingerprint=concurrency_fingerprint,
+        )
+        assert database.claim_pinterest_refresh_operation(
+            account_id=concurrency_account_id,
+            request_fingerprint=concurrency_fingerprint,
+        )["status"] == "uncertain"
 
         class FakeResponse:
             content = b'{"access_token":"rotated-access-token-fixture"}'
@@ -324,7 +347,7 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
         assert "old-refresh-token-fixture" not in ledger["request_fingerprint"]
     finally:
         with database.connection() as conn:
-            conn.execute("DELETE FROM pinterest_refresh_operations WHERE account_id = %s", (account_id,))
+            conn.execute("DELETE FROM pinterest_refresh_operations WHERE account_id IN (%s, %s)", (account_id, concurrency_account_id))
             conn.execute("DELETE FROM pinterest_credentials WHERE account_id = %s", (account_id,))
         database.close_pool()
 
