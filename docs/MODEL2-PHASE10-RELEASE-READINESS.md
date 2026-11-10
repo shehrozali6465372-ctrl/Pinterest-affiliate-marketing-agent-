@@ -483,3 +483,13 @@ This section supersedes earlier references above to the latest feature-branch CI
 - No workflow was enabled, disabled, paused, resumed or dispatched for this decision. Existing production side effects continue under the already-configured `main` workflows.
 - The existing uncertainty remains: scheduler job 14's wrapper output did not distinguish `published` from `already_published`; its publication outcome remains UNKNOWN. No production ledger or Pinterest verification was performed by recording this decision.
 - The decision does not approve Model 2 merge/deployment, production migrations, credential rotation, database restore, or any new Pinterest publication.
+
+
+### Synthetic pre-Model-2 rollback/recovery CI — PASS (2026-11-10)
+
+- Added a separate test that captures a custom-format backup after synthetic legacy migrations 001–012, advances the source through Model 2 migrations 013–015, and restores the known-good pre-upgrade archive into a clean disposable PostgreSQL 16 database.
+- Recovery checks verify the 13-file legacy migration ledger, absence of Model 2-only schema additions, and preservation of synthetic legacy schedule/job rows. The test restores a prior compatible schema rather than attempting unsafe down migrations.
+- Exact-head CI run `42834166667` at commit `d57473554942972cdc45d52e987f8d7539cedae0`: **338 passed, 0 failed, 1 non-blocking warning**. All 16 current migration files were verified in the CI database; fixture cleanup and PostgreSQL service teardown passed.
+- Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42834166667
+- This closes the synthetic automated rollback/recovery test gap only. It does not establish a sanitized production-like restore, Neon PITR/restore capability, production RPO/RTO, or independent reviewer sign-off. The release scorecard remains partial for rollback and Phase 10 remains blocked.
+- No production database, credentials, OAuth, scheduler, Pinterest API write, real Pin/Board, merge or deployment was used.

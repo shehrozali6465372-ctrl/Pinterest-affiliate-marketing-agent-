@@ -978,3 +978,13 @@ This is the latest verified feature-branch checkpoint and supersedes earlier not
 - Marked Gate 4's static application-code review complete in `docs/MODEL2-PHASE10-RELEASE-READINESS.md`. Production service/database roles, human access, log-reader permissions, retention and deletion policy remain owner-evidence blockers.
 - No code changes were made. Latest exact-head CI remains run `42731770533` at `1e03f196a0380c88aebe2a0b1bb3272273dc6873`: 323 passed, 0 failed, 1 non-blocking warning; all 16 migrations recorded, fixtures cleaned and disposable PostgreSQL 16 stopped.
 - No production DB access/write, production secret access/rotation, OAuth refresh, scheduler operation, Pinterest API write, real Pin/Board creation, PR, merge or deployment occurred.
+
+
+### Synthetic backup rollback/recovery CI — verified 2026-11-10
+
+- Continued from exact feature-branch HEAD `1a6994af4be17e2c866f85ecda30ecb74e279a5c`; no completed implementation was repeated. Added `test_pre_model2_backup_restores_legacy_schema_after_upgrade_rollback` to `tests/test_model2_backup_restore.py`.
+- The test creates a synthetic pre-Model-2 baseline using all 13 migration files numbered 001–012 (both 009 files included), inserts a legacy schedule/source/queued job, captures a PostgreSQL 16 custom-format backup, advances the source through migrations 013–015, and restores the baseline archive into a separate disposable recovery database. It verifies the old migration ledger, no `niche_id` or Model 2-only registry/reconciliation tables, and preserved legacy rows. Recovery uses backup restore, not unsafe down SQL.
+- Commit `d57473554942972cdc45d52e987f8d7539cedae0` pushed to `feat/model2-open-source-reuse`. Exact-head CI run `42834166667` passed: **338 passed, 0 failed, 1 non-blocking warning**; all 16 migrations recorded; synthetic fixture cleanup passed; disposable PostgreSQL 16 stopped. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42834166667
+- Worktree was clean and branch synchronized with origin at this code commit. Runbook and Phase 10 readiness docs were updated with exact evidence and limitations.
+- **Phase 10 remains BLOCKED / PRE-RELEASE.** This is synthetic CI recovery only, not a sanitized production-derived snapshot, not Neon restore/PITR evidence, and not owner-operated production recovery. Independent review, owner-approved input, Neon restore access/RPO/RTO, production credential inventory/rotation, production access/log-retention evidence, and separate migration/deployment/scheduler approvals remain open.
+- No production DB, credentials, OAuth refresh, scheduler activation/dispatch, Pinterest write, real Pin/Board, merge, or deployment occurred.

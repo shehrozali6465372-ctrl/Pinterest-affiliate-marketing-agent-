@@ -84,11 +84,19 @@ The gate is PASS only when all are true:
 
 Any missing approval, unknown data classification, production connection, checksum mismatch, migration failure, test failure, rollback failure, or incomplete cleanup is **BLOCKED/FAIL**, not a conditional pass.
 
+## Executed synthetic CI recovery evidence (2026-11-10)
+
+- Added `test_pre_model2_backup_restores_legacy_schema_after_upgrade_rollback` in `tests/test_model2_backup_restore.py`.
+- The test creates a synthetic pre-Model-2 PostgreSQL baseline from migrations 001–012 (13 files, including both 009 migrations), inserts synthetic legacy schedule/source/job rows, captures a PostgreSQL 16 custom-format backup, applies migrations 013–015 to the source, and restores the pre-upgrade archive into a separate disposable recovery database.
+- Recovery assertions verify the exact pre-Model-2 migration ledger, absence of the Model 2 registry/reconciliation tables and `niche_id` column, and preservation of the synthetic legacy schedule and queued job.
+- Exact-head GitHub Actions run `42834166667` at commit `d57473554942972cdc45d52e987f8d7539cedae0` passed: **338 passed, 0 failed, 1 non-blocking warning**. All 16 migration files were verified in the shared CI database, fixture cleanup passed, and the disposable PostgreSQL 16 service was stopped.
+- This is synthetic CI rollback/recovery evidence using two isolated loopback databases. It is not a production-derived sanitized snapshot, not a Neon restore, and not an owner-operated production recovery rehearsal. The independent review and owner-approved production-like input requirements remain open.
+
 ## Current status (2026-11-10)
 
-- Runbook specification: documented; not executed.
+- Runbook specification: documented; synthetic CI restore/recovery test executed and passed as recorded above.
 - Approved sanitized production-derived snapshot: NOT PROVIDED / NOT APPROVED.
-- Synthetic fixture restore/rollback rehearsal under this runbook: NOT RUN.
+- Independent sanitization/recovery review: NOT COMPLETED.
 - Known local 2026-11-03 dump: EXCLUDED; do not use.
 - Production Neon restore/migration: NOT AUTHORIZED and NOT PERFORMED.
-- Phase 10 restore/rollback gate: **BLOCKED** pending owner-approved input and isolated rehearsal evidence.
+- Phase 10 restore/rollback gate: **BLOCKED** pending independent review, owner-approved input, and owner-operated isolated production-like rehearsal.
