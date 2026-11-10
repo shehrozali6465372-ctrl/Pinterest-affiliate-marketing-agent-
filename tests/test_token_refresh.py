@@ -305,7 +305,7 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
         pair = credential_vault.get_pinterest_refresh_pair(account_id)
         assert pair["access_token"] == "rotated-access-token-fixture"
         assert pair["refresh_token"] == "rotated-refresh-token-fixture"
-        assert pair["pinterest_user_id"] == "123456789"
+        assert pair["pinterest_user_id"] == pinterest_user_id
 
         with database.connection() as conn:
             row = conn.execute(
