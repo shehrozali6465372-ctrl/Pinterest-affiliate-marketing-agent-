@@ -42,7 +42,7 @@ The operator and reviewer must be different people for the final sign-off. The c
 - [ ] Backup archive is encrypted at rest and in transit; decryption material is handled out-of-band by the approved secret manager.
 - [ ] Sanitization procedure is reviewed before export; post-sanitization inspection is mandatory.
 - [ ] A clean target can be destroyed and recreated without affecting any shared resource.
-- [ ] Exact PR head and migration file set are recorded. For the current branch, migrations 014 and 015 are the Model 2 additions; the repository currently contains 17 numbered migration files because the legacy sequence has two distinct 009-prefixed files. Do not infer ordering from filename sorting alone; use the repository's migration ledger/runner ordering.
+- [ ] Exact PR head and migration file set are recorded. For the current branch, migrations 014 and 015 are the Model 2 additions; the repository currently contains 18 numbered migration files because the legacy sequence has two distinct 009-prefixed files. Do not infer ordering from filename sorting alone; use the repository's migration ledger/runner ordering.
 
 **Abort conditions:** production endpoint/hostname appears in target configuration; any live secret is found; source/target identity is ambiguous; snapshot checksum fails; sanitization is incomplete; unexpected network egress occurs; or a migration attempts destructive/backfill behavior not covered by the approved plan.
 
@@ -107,11 +107,11 @@ The supported recovery exercise is restoration of the known-good pre-upgrade sna
 1. Preserve the upgraded rehearsal database and its logs as evidence until the reviewer accepts the result.
 2. Provision a second clean disposable PostgreSQL target.
 3. Restore the same verified, sanitized pre-upgrade archive into that second target.
-4. Verify the restored migration ledger is the expected pre-upgrade ledger and that Model 2-only objects from migrations 014/015/016 are absent.
+4. Verify the restored migration ledger is the expected pre-upgrade ledger and that Model 2-only objects from migrations 014/015/016/017 are absent.
 5. Verify representative synthetic legacy rows and relationships match the baseline integrity report.
 6. Record measured recovery time. Repeat once if required by the approved RTO target.
 7. Demonstrate that the upgraded rehearsal database and the recovered baseline database are separate targets; no in-place destructive rollback is permitted.
-8. If the application rollback scenario is tested, use the prior application artifact only against a disposable database with additive schema retained. Confirm legacy explicit-column queries still work. Do not drop migration 014/015/016 objects, operation-ledger evidence, or audit data as a rollback shortcut.
+8. If the application rollback scenario is tested, use the prior application artifact only against a disposable database with additive schema retained. Confirm legacy explicit-column queries still work. Do not drop migration 014/015/016/017 objects, operation-ledger evidence, or audit data as a rollback shortcut.
 
 **Important:** A successful disposable restore does not prove Neon PITR, Neon backup retention, owner restore permissions, production RPO/RTO, or production recovery readiness. Those require separate owner-operated evidence from the actual Neon project and approved plan.
 
