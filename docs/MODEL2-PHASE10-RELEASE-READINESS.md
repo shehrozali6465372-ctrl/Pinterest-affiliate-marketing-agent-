@@ -275,7 +275,7 @@ This checklist is the active execution tracker. Do not repeat completed syntheti
 - [ ] Document and verify the application rollback / additive-schema retention procedure against that sanitized clone. Do not drop migrations 014/015 as a rollback shortcut.
 
 ### Gate 2 — Neon backup / PITR and restore access
-- [ ] Record Neon project's backup/PITR availability, retention and recovery-point capabilities from owner-authorized evidence.
+- [x] Record Neon project's backup/PITR availability, retention and recovery-point capabilities from the approved read-only project-settings inspection (2026-11-10; evidence below).
 - [ ] Verify the owner/operator can initiate and complete a restore into an isolated target, without overwriting production.
 - [ ] Record restore owner, escalation path, expected recovery-point objective (RPO) and recovery-time objective (RTO). Do not invent values; owner must approve targets.
 - **Boundary:** no production Neon inspection, restore, branch mutation or database write without separate explicit approval.
@@ -291,7 +291,7 @@ This checklist is the active execution tracker. Do not repeat completed syntheti
 ### Gate 4 — Production access, logging and retention security
 - [x] Complete static application-code review of authentication, authorization boundaries, account scoping, secret redaction and error handling (2026-11-10; evidence below).
 - [ ] Obtain owner-authorized evidence for production service access, database roles, log access, retention and deletion policy.
-- [ ] Record findings and remediate code-owned issues on this feature branch; production configuration changes require separate approval.
+- [x] Record findings and remediate code-owned issues on this feature branch; static review found no additional code-owned fix required (2026-11-10). Production configuration changes require separate approval.
 
 ### Gate 5 — Existing scheduled side effects
 - [ ] Owner decides whether the already-scheduled `main` Affiliate Scheduler Worker may continue to execute jobs before Model 2 go-live.
@@ -395,3 +395,12 @@ Work in gate order. For each gate: inspect existing evidence first; implement on
 - Latest exact-head feature CI remains run `42731770533` at `1e03f196a0380c88aebe2a0b1bb3272273dc6873`: **323 passed, 0 failed, 1 non-blocking warning**, all 16 migrations recorded, fixtures cleaned and disposable PostgreSQL 16 stopped. No source code changed during this review.
 - **Gate 4 static application-code item is closed.** Remaining Gate 4 production evidence is still open: production service/database roles, human access, log-reader permissions, retention and deletion policy. No production settings or logs were accessed or changed in this review.
 - No production DB access/write, secret access/rotation, OAuth refresh, scheduler operation, Pinterest API write, Pin/Board creation, PR, merge or deployment occurred.
+
+
+### Gate 2 and Gate 4 evidence update — read-only Neon recovery settings (2026-11-10)
+
+- Read-only Neon project settings inspection confirmed plan `free_v3` (Free), 6-hour PITR history, no automatic snapshot schedule (not available on Free), and one listed manual snapshot `production-main-pre-restore-rehearsal-20261103`. No SQL, branch creation, restore, configuration change or production data access occurred during that settings inspection.
+- The separate private GitHub backup repository's merged-main restore rehearsal passed in run `42731539863`: checksum verification, GPG decryption and PostgreSQL 16 restore into an isolated disposable container; 12 base tables verified. This is independent backup evidence, not a Neon restore.
+- Gate 2's capability-inventory item is closed. Owner/operator restore execution into an isolated Neon target, restore access/permissions, escalation path and owner-approved RPO/RTO remain open. Keep Neon Free; do not add an automatic-snapshot schedule or upgrade the plan.
+- Gate 4's code-owned remediation item is closed: the static application review found no additional code-owned fix required. Production service/database roles, human access, log-reader permissions, retention and deletion evidence remain open.
+- No production DB writes, restore, branch mutation, secret access/rotation, scheduler change, Pinterest write, deployment or merge occurred.
