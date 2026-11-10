@@ -128,6 +128,7 @@ jobs:
 
               checks = {
                   "credentials": "SELECT count(*) AS n FROM pinterest_credentials WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "pinterest_refresh_operations": "SELECT count(*) AS n FROM pinterest_refresh_operations WHERE account_id LIKE 'pinterest:pb05-test-%'",
                   "profiles": "SELECT count(*) AS n FROM model2_account_profiles WHERE account_id LIKE 'pinterest:test-model2-%'",
                   "niches": "SELECT count(*) AS n FROM model2_niches WHERE slug LIKE 'test-niche-%' OR slug LIKE 'second-primary-%' OR slug LIKE 'repository-primary-%' OR slug LIKE 'concurrent-primary-%'",
                   "mappings": "SELECT count(*) AS n FROM model2_account_niches WHERE account_id LIKE 'pinterest:test-model2-%'",
