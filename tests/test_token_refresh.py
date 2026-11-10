@@ -77,7 +77,7 @@ def test_refresh_endpoint_rotates_and_persists_tokens_without_returning_secrets(
             assert auth == ("client-id", "client-secret")
             assert data["grant_type"] == "refresh_token"
             assert data["refresh_token"] == "old-refresh-secret"
-            assert data["continuous_refresh"] == "true"
+            assert "continuous_refresh" not in data
             return FakeResponse()
 
     monkeypatch.setattr(httpx, "Client", FakeClient)
