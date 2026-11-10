@@ -41,10 +41,12 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:model2-ci-only@127.0.0.1:5432/model2_test
     steps:
       - name: Check out feature branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -98,6 +100,7 @@ jobs:
           tests/test_model2_registry_postgres.py
           tests/test_model2_legacy_upgrade.py
           tests/test_model2_backup_restore.py
+          tests/test_workflow_summary.py
 
       - name: Verify full migration ledger and fixture cleanup
         run: |
