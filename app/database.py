@@ -1169,3 +1169,70 @@ def mark_pinterest_board_operation_failed(
         ).fetchone()
         if row is None:
             raise RuntimeError("Pinterest board operation failure could not be persisted")
+
+
+def claim_pinterest_refresh_operation(*, account_id: str, request_fingerprint: str) -> dict:
+    """Claim one refresh attempt for a specific encrypted-token generation.
+
+    A token-generation fingerprint is derived from the current access and
+    refresh token values; raw token material is never persisted in this ledger.
+    An ambiguous attempt remains blocked for that exact token generation.
+    """
+    with connection() as conn:
+        inserted = conn.execute(
+            """INSERT INTO pinterest_refresh_operations
+                   (account_id, request_fingerprint, status)
+               VALUES (%s, %s, 'in_progress')
+               ON CONFLICT (account_id, request_fingerprint) DO NOTHING
+               RETURNING status""",
+            (account_id, request_fingerprint),
+        ).fetchone()
+        if inserted:
+            return {"status": "acquired"}
+        row = conn.execute(
+            """SELECT status FROM pinterest_refresh_operations
+               WHERE account_id = %s AND request_fingerprint = %s FOR UPDATE""",
+            (account_id, request_fingerprint),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Pinterest refresh operation idempotency row disappeared")
+        return {"status": row["status"]}
+
+
+def complete_pinterest_refresh_operation(*, account_id: str, request_fingerprint: str) -> None:
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE pinterest_refresh_operations
+               SET status = 'succeeded', updated_at = now()
+               WHERE account_id = %s AND request_fingerprint = %s AND status = 'in_progress'
+               RETURNING id""",
+            (account_id, request_fingerprint),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Pinterest refresh operation could not be finalized")
+
+
+def mark_pinterest_refresh_operation_uncertain(*, account_id: str, request_fingerprint: str) -> None:
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE pinterest_refresh_operations
+               SET status = 'uncertain', updated_at = now()
+               WHERE account_id = %s AND request_fingerprint = %s AND status = 'in_progress'
+               RETURNING id""",
+            (account_id, request_fingerprint),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Pinterest refresh operation uncertainty could not be persisted")
+
+
+def mark_pinterest_refresh_operation_failed(*, account_id: str, request_fingerprint: str) -> None:
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE pinterest_refresh_operations
+               SET status = 'failed', updated_at = now()
+               WHERE account_id = %s AND request_fingerprint = %s AND status = 'in_progress'
+               RETURNING id""",
+            (account_id, request_fingerprint),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Pinterest refresh operation failure could not be persisted")
