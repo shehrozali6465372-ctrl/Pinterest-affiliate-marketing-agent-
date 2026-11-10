@@ -563,10 +563,13 @@ def publish_manual_pin(
 @app.post("/integrations/pinterest/operation", dependencies=[Depends(require_credential_ingest_key)])
 def pinterest_account_operation(
     payload: PinterestOperationInput,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> dict[str, object]:
     """Execute a bounded Pinterest API operation using an encrypted Neon credential."""
     from app.credential_vault import get_pinterest_credential, revoke_pinterest_credential
     import httpx
+    import hashlib
+    import json
     operation = payload.operation
     data = payload.payload
     allowed = {
@@ -595,6 +598,8 @@ def pinterest_account_operation(
     method, path, body = allowed[operation]
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
+    if operation == "create_board" and not idempotency_key:
+        raise HTTPException(status_code=422, detail="Idempotency-Key is required for create_board.")
     expected_user_id = str(credential.get("pinterest_user_id") or "")
     if not expected_user_id or payload.account_id != f"pinterest:{expected_user_id}":
         raise HTTPException(status_code=409, detail="Stored Pinterest credential identity does not match the requested account.")
@@ -613,12 +618,76 @@ def pinterest_account_operation(
                     status_code=409,
                     detail="Pinterest token identity does not match the requested account; operation was not sent.",
                 )
+            if operation == "create_board":
+                fingerprint = hashlib.sha256(json.dumps(
+                    {"account_id": payload.account_id, "name": body["name"],
+                     "description": body["description"]},
+                    sort_keys=True, separators=(",", ":"),
+                ).encode()).hexdigest()
+                from app.database import (
+                    claim_pinterest_board_operation,
+                    complete_pinterest_board_operation,
+                    mark_pinterest_board_operation_failed,
+                    mark_pinterest_board_operation_uncertain,
+                )
+                try:
+                    claim = claim_pinterest_board_operation(
+                        account_id=payload.account_id,
+                        idempotency_key=idempotency_key,
+                        request_fingerprint=fingerprint,
+                    )
+                except ValueError as exc:
+                    if str(exc) == "idempotency_key_payload_mismatch":
+                        raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different board data.") from None
+                    raise
+                except Exception:
+                    raise HTTPException(status_code=503, detail="Board operation ledger is unavailable; Pinterest write was not sent.") from None
+                if claim["status"] == "succeeded":
+                    return {"data": claim["result"], "replayed": True}
+                if claim["status"] in {"uncertain", "in_progress"}:
+                    raise HTTPException(status_code=409, detail="Board creation outcome is uncertain or still in progress; automatic retry is blocked pending reconciliation.")
+                if claim["status"] == "failed":
+                    raise HTTPException(status_code=409, detail="This board operation was previously rejected; use a new reviewed operation after resolving the rejection.")
             response = client.request(method, f"{base}{path}", headers=headers, json=body)
-        result = response.json() if response.content else {}
+        try:
+            result = response.json() if response.content else {}
+        except ValueError:
+            if operation == "create_board":
+                mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
+                raise HTTPException(status_code=502, detail="Pinterest board response was unreadable; outcome marked uncertain and will not be retried.") from None
+            raise HTTPException(status_code=502, detail="Pinterest API returned an unreadable response.") from None
     except httpx.HTTPError as exc:
+        if operation == "create_board":
+            try:
+                mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
+            except Exception:
+                # The durable in_progress row itself blocks another provider POST.
+                pass
+            raise HTTPException(status_code=502, detail="Pinterest board request outcome is uncertain; automatic retry is blocked.") from None
         raise HTTPException(status_code=502, detail="Pinterest API request failed.") from exc
     if not response.is_success:
+        if operation == "create_board":
+            try:
+                if response.status_code < 500:
+                    mark_pinterest_board_operation_failed(account_id=payload.account_id, idempotency_key=idempotency_key)
+                else:
+                    mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
+            except Exception:
+                pass
+            if response.status_code >= 500:
+                raise HTTPException(status_code=502, detail="Pinterest board response is ambiguous; automatic retry is blocked.")
         raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail="Pinterest API rejected or could not complete the operation.")
+    if operation == "create_board":
+        try:
+            complete_pinterest_board_operation(
+                account_id=payload.account_id, idempotency_key=idempotency_key, result=result,
+            )
+        except Exception:
+            try:
+                mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
+            except Exception:
+                pass
+            raise HTTPException(status_code=503, detail="Pinterest may have created the board, but durable success could not be confirmed; automatic retry is blocked.") from None
     return {"data": result}
 
 
