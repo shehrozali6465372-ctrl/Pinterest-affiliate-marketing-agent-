@@ -543,7 +543,7 @@ def run_one_due_job() -> dict[str, object]:
                         SELECT count(*) FROM affiliate_pin_jobs same_day
                         WHERE same_day.schedule_id = s.id
                           AND same_day.local_run_date = j.local_run_date
-                          AND same_day.status IN ('processing', 'succeeded')
+                          AND same_day.status IN ('processing', 'succeeded', 'uncertain')
                       ) < s.daily_pin_limit
                     ORDER BY j.run_at, j.id
                     FOR UPDATE OF s SKIP LOCKED
@@ -590,7 +590,7 @@ def run_one_due_job() -> dict[str, object]:
                             SELECT count(*) FROM affiliate_pin_jobs same_day
                             WHERE same_day.schedule_id = s.id
                               AND same_day.local_run_date = j.local_run_date
-                              AND same_day.status IN ('processing', 'succeeded')
+                              AND same_day.status IN ('processing', 'succeeded', 'uncertain')
                         ) < s.daily_pin_limit)
                         OR
                         (s.niche_id IS NOT NULL AND (
