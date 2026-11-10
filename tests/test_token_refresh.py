@@ -22,8 +22,10 @@ def test_refresh_endpoint_requires_service_key(monkeypatch):
 
 def test_refresh_endpoint_rotates_and_persists_tokens_without_returning_secrets(monkeypatch):
     import httpx
-    from app import credential_vault
+    from app import credential_vault, database
 
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: {"status": "acquired"})
+    monkeypatch.setattr(database, "complete_pinterest_refresh_operation", lambda **kwargs: None)
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
     monkeypatch.setattr(
