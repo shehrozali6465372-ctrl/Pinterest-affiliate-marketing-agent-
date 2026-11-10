@@ -714,7 +714,12 @@ def pinterest_account_operation(
             raise HTTPException(status_code=409, detail="Stored Pinterest credential identity is invalid; disconnect was not applied.") from None
         except Exception:
             raise HTTPException(status_code=503, detail="Pinterest credential could not be safely disconnected.") from None
-        return {"disconnected": True}
+        return {
+            "disconnected": True,
+            "local_access_disabled": True,
+            "provider_token_revoked": False,
+            "message": "Pinterest credentials are disabled in this service; Pinterest-side token revocation was not performed.",
+        }
     if operation not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported Pinterest operation.")
     try:
