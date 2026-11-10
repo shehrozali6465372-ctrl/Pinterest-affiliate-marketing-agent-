@@ -531,6 +531,9 @@ This section supersedes earlier references above to the latest feature-branch CI
 - **Legacy Model 1 scheduler quota:** both legacy daily-quota SQL predicates now count `uncertain` jobs alongside `processing` and `succeeded`. This closes a gap where an ambiguous Pin outcome could have failed to consume quota and allowed an extra same-day job. A synthetic regression test covers the last available daily slot.
 - Restore rehearsal documentation and disposable CI cleanup checks now include migrations 016 and 017 and the Pinterest refresh-operation ledger.
 
+
+- **Disconnect semantics:** local disconnect only changes the stored credential status to revoked; it does not call Pinterest's token-revocation endpoint. Pinterest's official Postman collection documents that endpoint as currently supporting system-user tokens only; this integration uses user Authorization Code tokens. The API response now explicitly returns \`local_access_disabled: true\` and \`provider_token_revoked: false\` so the UI cannot imply remote revocation.
+
 #### Exact-head CI evidence
 
 - Python tests run [42909034642](https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42909034642): **445 passed, 1 skipped, 1 non-blocking warning**.
