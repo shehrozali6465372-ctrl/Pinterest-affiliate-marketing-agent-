@@ -36,6 +36,11 @@ jobs:
             exit 1
           fi
 
+      - name: Check out workflow summary helper
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Call the protected Learning Loop endpoint
         shell: bash
         run: |
@@ -67,20 +72,4 @@ jobs:
           PY
             exit 1
           fi
-          python - "$response_file" <<'PY'
-          import json, sys
-          with open(sys.argv[1], encoding="utf-8") as stream:
-              body = json.load(stream)
-          summary = {
-              "ok": body.get("ok"),
-              "pins_checked": body.get("pins_checked"),
-              "snapshots_saved": body.get("snapshots_saved"),
-              "period": body.get("period"),
-              "aggregate_metrics": body.get("aggregate_metrics"),
-              "learning_status": body.get("learning_status"),
-              "model_trained": body.get("model_trained"),
-          }
-          print(json.dumps(summary, separators=(",", ":")))
-          if body.get("ok") is not True:
-              raise SystemExit("Learning Loop completed with one or more failed analytics checks.")
-          PY
+          python scripts/workflow_summary.py learning "$response_file"
