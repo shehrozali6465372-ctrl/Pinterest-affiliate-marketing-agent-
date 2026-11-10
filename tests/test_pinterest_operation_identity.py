@@ -53,7 +53,7 @@ def test_account_operation_rejects_token_identity_mismatch_before_board_write(mo
     client = TestClient(app)
     response = client.post(
         "/integrations/pinterest/operation",
-        headers={"X-Credential-Ingest-Key": "synthetic-hub-key"},
+        headers={"X-Credential-Ingest-Key": "synthetic-hub-key", "Idempotency-Key": "identity-check-001"},
         json={
             "account_id": "pinterest:123456",
             "operation": "create_board",
@@ -88,7 +88,7 @@ def test_account_operation_rejects_mismatched_stored_account_metadata_before_net
     monkeypatch.setattr(httpx, "Client", unexpected_client)
     response = TestClient(app).post(
         "/integrations/pinterest/operation",
-        headers={"X-Credential-Ingest-Key": "synthetic-hub-key"},
+        headers={"X-Credential-Ingest-Key": "synthetic-hub-key", "Idempotency-Key": "identity-check-002"},
         json={
             "account_id": "pinterest:123456",
             "operation": "create_board",
