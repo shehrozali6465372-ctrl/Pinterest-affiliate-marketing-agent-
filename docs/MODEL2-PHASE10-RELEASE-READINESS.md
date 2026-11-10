@@ -543,6 +543,7 @@ This section supersedes earlier references above to the latest feature-branch CI
 
 #### Remaining release gates — unchanged
 
+- Modern Living Hub caller contract has not been verified: the client must send/reuse a stable `Idempotency-Key` for `create_board`, handle `replayed: true`, not automatically retry uncertain `409` outcomes, treat OAuth refresh `409` as reconnect/operator action, and present disconnect as local-only (`provider_token_revoked: false`). The Hub client repository was not included in this PR.
 - No sanitized production-like snapshot restore/rehearsal or owner-verified Neon PITR/restore access, RPO/RTO and escalation evidence.
 - No production credential inventory, approved key rotation/re-encryption, rollback evidence, or complete service-key/log-retention operational review.
 - Existing hourly Affiliate Scheduler Worker and daily Pinterest Learning Loop remain active on main by owner decision. They were not dispatched, paused, resumed or changed in this continuation.
