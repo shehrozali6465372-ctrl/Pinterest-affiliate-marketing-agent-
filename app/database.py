@@ -1085,3 +1085,87 @@ def close_pool() -> None:
     if _pool is not None:
         _pool.close()
         _pool = None
+
+
+def claim_pinterest_board_operation(
+    *, account_id: str, idempotency_key: str, request_fingerprint: str,
+) -> dict:
+    """Claim a board-create key or return its durable terminal/in-flight state.
+
+    An in-progress row is deliberately never lease-stolen: after process death
+    the provider may already have created the board, so retrying is unsafe.
+    """
+    with connection() as conn:
+        inserted = conn.execute(
+            """INSERT INTO pinterest_board_operations
+                   (account_id, idempotency_key, request_fingerprint, status)
+               VALUES (%s, %s, %s, 'in_progress')
+               ON CONFLICT (account_id, idempotency_key) DO NOTHING
+               RETURNING status, result""",
+            (account_id, idempotency_key, request_fingerprint),
+        ).fetchone()
+        if inserted:
+            return {"status": "acquired"}
+        row = conn.execute(
+            """SELECT request_fingerprint, status, result
+               FROM pinterest_board_operations
+               WHERE account_id = %s AND idempotency_key = %s
+               FOR UPDATE""",
+            (account_id, idempotency_key),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Pinterest board operation idempotency row disappeared")
+        if row["request_fingerprint"] != request_fingerprint:
+            raise ValueError("idempotency_key_payload_mismatch")
+        result = row.get("result")
+        if isinstance(result, str):
+            result = json.loads(result)
+        return {"status": row["status"], "result": result}
+
+
+def complete_pinterest_board_operation(
+    *, account_id: str, idempotency_key: str, result: dict,
+) -> None:
+    """Persist the provider response before returning success to the caller."""
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE pinterest_board_operations
+               SET status = 'succeeded', result = %s::jsonb, updated_at = now()
+               WHERE account_id = %s AND idempotency_key = %s AND status = 'in_progress'
+               RETURNING id""",
+            (json.dumps(result), account_id, idempotency_key),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Pinterest board operation could not be finalized")
+
+
+def mark_pinterest_board_operation_uncertain(
+    *, account_id: str, idempotency_key: str,
+) -> None:
+    """Persist an ambiguous provider outcome; the operation must not be replayed."""
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE pinterest_board_operations
+               SET status = 'uncertain', updated_at = now()
+               WHERE account_id = %s AND idempotency_key = %s AND status = 'in_progress'
+               RETURNING id""",
+            (account_id, idempotency_key),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Pinterest board operation uncertainty could not be persisted")
+
+
+def mark_pinterest_board_operation_failed(
+    *, account_id: str, idempotency_key: str,
+) -> None:
+    """Persist a definitive provider rejection without allowing key reuse."""
+    with connection() as conn:
+        row = conn.execute(
+            """UPDATE pinterest_board_operations
+               SET status = 'failed', updated_at = now()
+               WHERE account_id = %s AND idempotency_key = %s AND status = 'in_progress'
+               RETURNING id""",
+            (account_id, idempotency_key),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Pinterest board operation failure could not be persisted")
