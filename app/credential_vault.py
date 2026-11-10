@@ -410,6 +410,41 @@ def get_pinterest_refresh_credential(account_id: str) -> dict[str, Any]:
 
 
 
+def get_pinterest_refresh_pair(account_id: str) -> dict[str, Any]:
+    """Read/decrypt access and refresh tokens from one credential-row snapshot."""
+    with connection() as conn:
+        row = conn.execute(
+            """SELECT account_id, pinterest_user_id, username, access_token_ciphertext,
+                      refresh_token_ciphertext, scope, expires_at, refresh_token_expires_at, status
+               FROM pinterest_credentials WHERE account_id = %s""",
+            (account_id,),
+        ).fetchone()
+    if (
+        not row
+        or row["status"] != "connected"
+        or not row["access_token_ciphertext"]
+        or not row["refresh_token_ciphertext"]
+    ):
+        raise LookupError("Pinterest refresh credential pair is not available")
+    _validate_account_identity(str(row["account_id"]), str(row["pinterest_user_id"]))
+    access_token = _decrypt(
+        bytes(row["access_token_ciphertext"]), f"{account_id}:access".encode(),
+    )
+    refresh_token = _decrypt(
+        bytes(row["refresh_token_ciphertext"]), f"{account_id}:refresh".encode(),
+    )
+    return {
+        "account_id": row["account_id"],
+        "pinterest_user_id": row["pinterest_user_id"],
+        "username": row["username"],
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "scope": row["scope"],
+        "expires_at": row["expires_at"],
+        "refresh_token_expires_at": row["refresh_token_expires_at"],
+    }
+
+
 def _ciphertext_key_id(blob: bytes | memoryview | None) -> str:
     """Return an envelope key ID without decrypting or exposing token material."""
     import re
