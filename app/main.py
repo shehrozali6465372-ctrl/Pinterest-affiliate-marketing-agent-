@@ -333,25 +333,6 @@ def refresh_pinterest_credential(
         raise HTTPException(status_code=503, detail="Pinterest refresh credential lookup failed.") from None
 
     now = datetime.now(timezone.utc)
-    current_expiry = current.get("expires_at")
-    if current_expiry is not None:
-        try:
-            if not isinstance(current_expiry, datetime):
-                current_expiry = datetime.fromisoformat(str(current_expiry).replace("Z", "+00:00"))
-            if current_expiry.tzinfo is None:
-                current_expiry = current_expiry.replace(tzinfo=timezone.utc)
-            else:
-                current_expiry = current_expiry.astimezone(timezone.utc)
-        except (TypeError, ValueError, OverflowError):
-            raise HTTPException(status_code=503, detail="Stored Pinterest access-token expiry is invalid.") from None
-        if current_expiry > now + timedelta(minutes=5):
-            return {
-                "refreshed": False,
-                "already_fresh": True,
-                "account_id": payload.account_id,
-                "expires_at": current_expiry.isoformat(),
-            }
-
     stored_refresh_expiry = stored.get("refresh_token_expires_at")
     if stored_refresh_expiry is not None:
         try:
@@ -385,6 +366,25 @@ def refresh_pinterest_credential(
         raise HTTPException(status_code=409, detail="Stored Pinterest credential account identity is inconsistent.")
     if stored.get("pinterest_user_id") != current.get("pinterest_user_id"):
         raise HTTPException(status_code=409, detail="Stored Pinterest credential user identity is inconsistent.")
+
+    current_expiry = current.get("expires_at")
+    if current_expiry is not None:
+        try:
+            if not isinstance(current_expiry, datetime):
+                current_expiry = datetime.fromisoformat(str(current_expiry).replace("Z", "+00:00"))
+            if current_expiry.tzinfo is None:
+                current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+            else:
+                current_expiry = current_expiry.astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=503, detail="Stored Pinterest access-token expiry is invalid.") from None
+        if current_expiry > now + timedelta(minutes=5):
+            return {
+                "refreshed": False,
+                "already_fresh": True,
+                "account_id": payload.account_id,
+                "expires_at": current_expiry.isoformat(),
+            }
 
     # Hash the current token generation; never persist either raw token in the ledger.
     fingerprint = hashlib.sha256(
