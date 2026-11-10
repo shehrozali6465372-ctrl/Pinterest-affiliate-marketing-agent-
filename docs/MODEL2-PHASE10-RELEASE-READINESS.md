@@ -511,3 +511,9 @@ This section supersedes earlier references above to the latest feature-branch CI
 - All three required PR checks are green for exact head `51d853f`. The timezone regression tests now prove active Model 2 schedule blocks profile timezone change and a paused schedule permits it.
 - A fresh Codex review was requested after the code fix. Its final result is not yet available; do not call the independent review clean until the review receipt/comments are checked.
 - No production database, credentials, OAuth, scheduler dispatch/change, Pinterest API write, Pin/Board, merge or deployment occurred. PR #77 remains open and review-only. Phase 10 remains PRE-RELEASE / BLOCKED.
+
+### Independent Codex review closure — timezone finding (2026-11-10)
+
+- Codex completed a fresh review of `18aa83a325e2c5597dc6c832160de2d467adbcfd`: `has_any_findings=false`, `has_unresolved_findings=false`; receipt states “Didn't find any major issues. Nice work!”.
+- The timezone P2 review thread was explicitly resolved after the guarded timezone change and exact-head CI passed. All four Codex review threads on PR #77 are now resolved.
+- PR #77 remains open for owner review; this is not merge or production-release approval. Phase 10 remains PRE-RELEASE / BLOCKED by the independent production readiness gates documented above.

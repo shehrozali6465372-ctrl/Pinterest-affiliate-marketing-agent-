@@ -1019,3 +1019,11 @@ This is the latest verified feature-branch checkpoint and supersedes earlier not
 - Exact-head CI: Python CI run `42867379931` PASS (**438 passed, 1 skipped, 1 warning**); Python tests run `42867379978` PASS (**438 passed, 1 skipped, 1 warning**); Model 2 PostgreSQL integration run `42867379850` PASS (**347 passed, 1 warning**). PostgreSQL CI also reported no known dependency vulnerabilities, verified all 16 numbered migrations, cleaned Model 2 and synthetic Model 1 fixtures, and stopped disposable PostgreSQL 16.
 - All three required PR checks are green on `51d853f`. Fresh Codex review was requested after the fix; final review status still needs confirmation.
 - PR #77 remains OPEN against `main`, review-only. No merge/deployment, production database or credential changes, OAuth refresh, scheduler operation, Pinterest API write, or real Pin/Board creation occurred. Phase 10 remains PRE-RELEASE / BLOCKED.
+
+
+### PR #77 — independent Codex review clean (2026-11-10)
+
+- Fresh Codex code review of commit `18aa83a325e2c5597dc6c832160de2d467adbcfd` completed with `has_any_findings=false` and `has_unresolved_findings=false`; receipt: “Didn't find any major issues. Nice work!”.
+- The timezone P2 review thread was resolved after implementation and exact-head CI passed. Verified all four review threads in PR #77 are now resolved (two outdated original findings plus pre-publish conflict and timezone findings).
+- PR #77 remains OPEN against `main`; do not merge or deploy without separate explicit authorization. Phase 10 remains PRE-RELEASE / BLOCKED by production snapshot, restore/PITR, credential, access/log-retention, and separate production approval gates.
+- No production DB, credentials, OAuth, scheduler dispatch/change, Pinterest API write, real Pin/Board, merge or deployment was performed.
