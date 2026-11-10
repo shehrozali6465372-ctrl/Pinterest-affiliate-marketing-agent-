@@ -28,20 +28,10 @@ def test_refresh_endpoint_rotates_and_persists_tokens_without_returning_secrets(
     monkeypatch.setattr(database, "complete_pinterest_refresh_operation", lambda **kwargs: None)
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
-    monkeypatch.setattr(
-        credential_vault,
-        "get_pinterest_refresh_credential",
-        lambda account_id: {
-            "account_id": account_id,
-            "pinterest_user_id": "123",
-            "username": "test-user",
-            "refresh_token": "old-refresh-secret",
-            "scope": "pins:read,pins:write",
-        },
-    )
-    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
-        "account_id": account_id, "pinterest_user_id": "123",
-        "access_token": "old-access-secret",
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "old-refresh-secret",
+        "scope": "pins:read,pins:write",
     })
     saved_payloads = []
 
@@ -106,21 +96,11 @@ def test_refresh_preserves_existing_refresh_token_when_provider_omits_rotation(m
     monkeypatch.setattr(database, "complete_pinterest_refresh_operation", lambda **kwargs: None)
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
-    monkeypatch.setattr(
-        credential_vault,
-        "get_pinterest_refresh_credential",
-        lambda account_id: {
-            "account_id": account_id,
-            "pinterest_user_id": "123",
-            "username": "test-user",
-            "refresh_token": "still-valid-refresh-secret",
-            "scope": "pins:read,pins:write",
-            "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
-        },
-    )
-    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
-        "account_id": account_id, "pinterest_user_id": "123",
-        "access_token": "old-access-secret",
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "still-valid-refresh-secret",
+        "scope": "pins:read,pins:write",
+        "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
     })
     saved_payloads = []
 
@@ -174,18 +154,12 @@ def test_expired_refresh_token_is_rejected_before_provider_call(monkeypatch):
     from app import credential_vault
 
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
-    monkeypatch.setattr(
-        credential_vault,
-        "get_pinterest_refresh_credential",
-        lambda account_id: {
-            "account_id": account_id,
-            "pinterest_user_id": "123",
-            "username": "test-user",
-            "refresh_token": "expired-refresh-secret",
-            "scope": "pins:read,pins:write",
-            "refresh_token_expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
-        },
-    )
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "expired-refresh-secret",
+        "scope": "pins:read,pins:write",
+        "refresh_token_expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+    })
     provider_calls = []
 
     class FakeClient:
@@ -213,18 +187,11 @@ def test_malformed_refresh_token_expiry_fails_closed(monkeypatch):
     from app import credential_vault
 
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
-    monkeypatch.setattr(
-        credential_vault,
-        "get_pinterest_refresh_credential",
-        lambda account_id: {
-            "account_id": account_id,
-            "pinterest_user_id": "123",
-            "username": "test-user",
-            "refresh_token": "malformed-expiry-refresh-secret",
-            "scope": "pins:read,pins:write",
-            "refresh_token_expires_at": "not-a-timestamp",
-        },
-    )
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "malformed-expiry-refresh-secret",
+        "scope": "pins:read,pins:write", "refresh_token_expires_at": "not-a-timestamp",
+    })
     provider_calls = []
 
     class FakeClient:
@@ -386,14 +353,13 @@ def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_accoun
         {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
          "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
         {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
-         "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
-        {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
          "access_token": "new-access-token", "expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc)},
     ])
     monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: next(reads))
-    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
         "account_id": account_id, "pinterest_user_id": "123", "username": "test",
-        "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "access_token": "old-access-token", "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
         "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
     })
     stored = []
@@ -453,12 +419,9 @@ def test_refresh_timeout_is_durable_and_retry_is_blocked(monkeypatch):
 
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
-    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
         "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
-        "refresh_token": "old-refresh-secret", "scope": "pins:read",
-    })
-    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
-        "account_id": account_id, "pinterest_user_id": "123", "access_token": "old-access-secret",
+        "access_token": "old-access-secret", "refresh_token": "old-refresh-secret", "scope": "pins:read",
     })
     state = {"status": "acquired"}
     writes = []
@@ -491,12 +454,9 @@ def test_refresh_replays_completed_operation_without_second_provider_post(monkey
 
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
-    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
         "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
-        "refresh_token": "old-refresh-secret", "scope": "pins:read",
-    })
-    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
-        "account_id": account_id, "pinterest_user_id": "123", "access_token": "old-access-secret",
+        "access_token": "old-access-secret", "refresh_token": "old-refresh-secret", "scope": "pins:read",
     })
     state = {"status": "acquired"}
     writes = []
@@ -538,13 +498,9 @@ def test_refresh_endpoint_does_not_refresh_an_already_fresh_access_token(monkeyp
     from app import credential_vault, database
 
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
-    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
         "account_id": account_id, "pinterest_user_id": "123",
-        "refresh_token": "current-refresh-secret",
-    })
-    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
-        "account_id": account_id, "pinterest_user_id": "123",
-        "access_token": "current-access-secret",
+        "access_token": "current-access-secret", "refresh_token": "current-refresh-secret",
         "expires_at": datetime.now(timezone.utc) + timedelta(hours=2),
     })
     monkeypatch.setattr(database, "claim_pinterest_refresh_operation",
@@ -578,9 +534,10 @@ def test_internal_auto_refresh_timeout_is_durable_and_not_retried(monkeypatch):
         "access_token": "old-access-token",
         "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
     })
-    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
         "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
-        "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "access_token": "old-access-token", "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
         "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
     })
     state = {"status": "acquired"}
