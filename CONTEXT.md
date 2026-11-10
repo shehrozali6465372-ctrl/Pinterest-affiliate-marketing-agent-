@@ -959,3 +959,12 @@ This is the latest verified feature-branch checkpoint and supersedes earlier not
 - Local full suite excluding only the two PostgreSQL-admin integration modules: **339 passed, 74 skipped, 1 warning**. Targeted trend-ingest tests: **6 passed**. `compileall` and `git diff --check` passed.
 - Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42731241964
 - No production DB writes, production secret access/rotation, OAuth refresh, Pinterest API write, real Pin/Board, scheduler change, deployment, PR or merge occurred.
+
+
+### Backup recovery and GitHub controls — verified 2026-11-10
+
+- Backup repo PR #2 is merged to `main` at `836a5cdc7a178483d16d56b8a8d52dfa16c0e2c4`; daily retention and restore selection both use GitHub release `publishedAt`.
+- Main-branch restore rehearsal was manually dispatched and passed: run `42731539863`, main SHA `836a5cdc7a178483d16d56b8a8d52dfa16c0e2c4`. It selected release `backup-20261109-085701-42589610843`, verified checksum, GPG-decrypted, restored into isolated PostgreSQL 16 and verified 12 base tables; temporary files/container cleanup passed. This did not touch Neon production.
+- Neon read-only settings: Free plan `free_v3`, 6-hour PITR window, no automatic snapshot schedule (not available on Free), one manual snapshot `production-main-pre-restore-rehearsal-20261103`. No SQL, branch creation, restore or setting change was performed.
+- Neon owner-operated restore, sanitized production-like snapshot migration/rollback, RPO/RTO and production credential rotation remain open.
+- Agent repository main has no branch protection/rulesets. Backup private repository branch protection/rulesets API returns 403 requiring GitHub Pro or public visibility. No settings changed; do not expose private backup repository or upgrade plans without approval.

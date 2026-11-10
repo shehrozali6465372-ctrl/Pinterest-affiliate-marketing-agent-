@@ -362,3 +362,25 @@ Work in gate order. For each gate: inspect existing evidence first; implement on
 - Commit `a4f9c3aafeb67035d4c264cbb3db62e263e372be` uses the canonical fail-closed `require_credential_ingest_key` dependency for `/trend-visuals/run`; the duplicate local guard is removed.
 - Exact-head GitHub Actions run `42731241964`: **323 passed, 0 failed, 1 non-blocking warning** on isolated PostgreSQL 16.15. All 16 migrations recorded, synthetic Model 1/Model 2 fixture cleanup passed, and PostgreSQL service teardown passed.
 - No production DB, credential, Pinterest write, real Pin/Board, scheduler activation, deployment, PR or merge was used.
+
+
+### Backup repository main-branch restore rehearsal — PASS (2026-11-10)
+
+- After PR #2 was merged, manually dispatched `Neon backup restore rehearsal` from backup repository `main` at commit `836a5cdc7a178483d16d56b8a8d52dfa16c0e2c4`.
+- GitHub Actions run `42731539863`: **success**. It selected `backup-20261109-085701-42589610843` by release `publishedAt`, verified the encrypted asset checksum, decrypted the GPG archive, and restored it with PostgreSQL 16 `pg_restore` into an isolated ephemeral PostgreSQL 16 service.
+- Restore verified **12 base tables**, removed temporary restore files and stopped the PostgreSQL service. No Neon production database was restored, overwritten or written.
+- This closes the merged-main encrypted-backup restore rehearsal for the current backup format. It does **not** satisfy the separate sanitized production-like Model 2 snapshot rehearsal or prove an operator can restore a Neon branch/root database.
+- Run: https://github.com/shehrozali6465372-ctrl/pinterest-agent-database-backups/actions/runs/42731539863
+
+### Neon Free recovery configuration — read-only evidence (2026-11-10)
+
+- Owner-authorized read-only project settings inspection confirmed Neon plan `free_v3`, production branch `main`, and a **6-hour PITR history window**.
+- No automatic snapshot schedule is configured; automatic snapshots are not available on the Free plan. One manual snapshot was listed: `production-main-pre-restore-rehearsal-20261103`.
+- No SQL was run; no branch was created; no restore, database write or setting change occurred. Neon remains on Free; no paid upgrade is proposed.
+- The successful GitHub Actions restore above proves encrypted backup recovery into isolated PostgreSQL, not Neon PITR restore access. Owner-operated Neon restore rehearsal, RPO/RTO targets and escalation ownership remain open.
+
+### GitHub repository merge protection — owner policy gate
+
+- Read-only GitHub checks confirm the agent repository `main` branch has no branch protection and no repository rulesets. The authenticated account has repository admin permission, but no settings were changed.
+- The private backup repository's branch-protection/ruleset API reports that the feature requires GitHub Pro or a public repository. Do not make the private backup repository public or upgrade a plan without owner direction.
+- Required owner decision: choose an acceptable merge-control strategy for the private repositories and plan constraints. Until then, green CI does not equal enforced protection against unreviewed or failing-status merges.
