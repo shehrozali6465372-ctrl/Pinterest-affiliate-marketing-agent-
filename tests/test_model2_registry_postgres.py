@@ -1933,14 +1933,31 @@ def test_model2_pre_publish_niche_conflict_does_not_consume_quota_or_block_repla
         model2_db["account_a"], model2_db["niche_a"], daily_limit=1
     )
     with database.connection() as conn:
-        due_jobs = conn.execute(
-            "SELECT id FROM affiliate_pin_jobs WHERE schedule_id = %s ORDER BY id LIMIT 2",
+        first_job = conn.execute(
+            """
+            SELECT id, source_id, local_run_date
+            FROM affiliate_pin_jobs WHERE schedule_id = %s ORDER BY id LIMIT 1
+            """,
             (old_id,),
-        ).fetchall()
-        assert len(due_jobs) == 2
+        ).fetchone()
+        second_job = conn.execute(
+            """
+            INSERT INTO affiliate_pin_jobs
+                (schedule_id, source_id, run_at, local_run_date, daily_slot, idempotency_key)
+            VALUES (%s, %s, now() - interval '30 seconds', %s, 2, %s)
+            RETURNING id
+            """,
+            (
+                old_id,
+                first_job["source_id"],
+                first_job["local_run_date"],
+                f"pre-publish-conflict-quota-{model2_db['suffix']}",
+            ),
+        ).fetchone()
+        due_job_ids = (first_job["id"], second_job["id"])
         conn.execute(
             "UPDATE affiliate_pin_jobs SET run_at = now() - interval '1 minute' WHERE id IN (%s, %s)",
-            (due_jobs[0]["id"], due_jobs[1]["id"]),
+            due_job_ids,
         )
 
     workflow_calls = []
@@ -1968,7 +1985,7 @@ def test_model2_pre_publish_niche_conflict_does_not_consume_quota_or_block_repla
     with database.connection() as conn:
         states = conn.execute(
             "SELECT id, status, safe_error_code FROM affiliate_pin_jobs WHERE id IN (%s, %s) ORDER BY id",
-            (due_jobs[0]["id"], due_jobs[1]["id"]),
+            due_job_ids,
         ).fetchall()
     assert [row["status"] for row in states] == ["failed", "succeeded"]
     assert states[0]["safe_error_code"] == "pre_publish_conflict"
