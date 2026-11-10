@@ -329,26 +329,19 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
         database.close_pool()
 
 
-def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_account_lock(monkeypatch):
+def test_access_token_lookup_refreshes_expiring_token_with_durable_ledger(monkeypatch):
     import httpx
     from app import credential_vault, database
 
-    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: {"status": "acquired"})
+    claim_calls = []
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation",
+                        lambda **kwargs: claim_calls.append(kwargs) or {"status": "acquired"})
     monkeypatch.setattr(database, "complete_pinterest_refresh_operation", lambda **kwargs: None)
 
     monkeypatch.setattr(settings, "pinterest_client_id", "oauth-client-id")
     monkeypatch.setattr(settings, "pinterest_client_secret", "oauth-client-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
 
-    lock_calls = []
-    class FakeConnection:
-        def __enter__(self): return self
-        def __exit__(self, *_args): return False
-        def execute(self, query, params):
-            lock_calls.append((query, params))
-            return self
-
-    monkeypatch.setattr(credential_vault, "connection", lambda: FakeConnection())
     reads = iter([
         {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
          "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
@@ -387,7 +380,9 @@ def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_accoun
     assert result["access_token"] == "new-access-token"
     assert stored[0]["refresh_token"] == "rotated-refresh-token"
     assert stored[0]["access_token"] == "new-access-token"
-    assert lock_calls and lock_calls[0][1] == ("pinterest-token-refresh:pinterest:123",)
+    assert len(claim_calls) == 1
+    assert claim_calls[0]["account_id"] == "pinterest:123"
+    assert len(claim_calls[0]["request_fingerprint"]) == 64
 
 
 def test_expiring_access_token_fails_closed_when_oauth_app_credentials_missing(monkeypatch):
@@ -524,11 +519,6 @@ def test_internal_auto_refresh_timeout_is_durable_and_not_retried(monkeypatch):
     monkeypatch.setattr(settings, "pinterest_client_id", "oauth-client-id")
     monkeypatch.setattr(settings, "pinterest_client_secret", "oauth-client-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
-    class FakeConnection:
-        def __enter__(self): return self
-        def __exit__(self, *_args): return False
-        def execute(self, *_args): return self
-    monkeypatch.setattr(credential_vault, "connection", lambda: FakeConnection())
     monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
         "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
         "access_token": "old-access-token",
