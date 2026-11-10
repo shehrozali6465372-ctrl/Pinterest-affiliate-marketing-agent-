@@ -242,8 +242,7 @@ def _refresh_access_token(account_id: str) -> None:
                     data={
                         "grant_type": "refresh_token",
                         "refresh_token": stored["refresh_token"],
-                        "continuous_refresh": "true",
-                    },
+                        },
                 )
             data = response.json() if response.content else {}
         except (httpx.HTTPError, ValueError):
