@@ -321,22 +321,16 @@ def refresh_pinterest_credential(
 
     try:
         stored = get_pinterest_refresh_credential(payload.account_id)
-        current = _read_access_credential(payload.account_id)
     except LookupError:
         raise HTTPException(status_code=409, detail="No usable Pinterest refresh token is stored; reconnect Pinterest.") from None
     except InvalidTag:
-        raise HTTPException(status_code=503, detail="Stored Pinterest credential failed authenticated decryption.") from None
+        raise HTTPException(status_code=503, detail="Stored Pinterest refresh token failed authenticated decryption.") from None
     except TokenEncryptionConfigurationError:
         raise HTTPException(status_code=503, detail="Pinterest token encryption is not configured correctly.") from None
     except DatabaseConfigurationError:
         raise HTTPException(status_code=503, detail="DATABASE_URL is not configured correctly.") from None
     except Exception:
         raise HTTPException(status_code=503, detail="Pinterest refresh credential lookup failed.") from None
-
-    if stored.get("account_id") != payload.account_id or current.get("account_id") != payload.account_id:
-        raise HTTPException(status_code=409, detail="Stored Pinterest credential account identity is inconsistent.")
-    if stored.get("pinterest_user_id") != current.get("pinterest_user_id"):
-        raise HTTPException(status_code=409, detail="Stored Pinterest credential user identity is inconsistent.")
 
     now = datetime.now(timezone.utc)
     current_expiry = current.get("expires_at")
@@ -373,6 +367,24 @@ def refresh_pinterest_credential(
             raise HTTPException(status_code=503, detail="Stored Pinterest refresh-token expiry is invalid; reconnect the account.") from None
         if stored_refresh_expiry <= now:
             raise HTTPException(status_code=409, detail="Stored Pinterest refresh token has expired; reconnect the account.")
+
+    try:
+        current = _read_access_credential(payload.account_id)
+    except LookupError:
+        raise HTTPException(status_code=409, detail="Pinterest account is not connected.") from None
+    except InvalidTag:
+        raise HTTPException(status_code=503, detail="Stored Pinterest access token failed authenticated decryption.") from None
+    except TokenEncryptionConfigurationError:
+        raise HTTPException(status_code=503, detail="Pinterest token encryption is not configured correctly.") from None
+    except DatabaseConfigurationError:
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured correctly.") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="Pinterest access credential lookup failed.") from None
+
+    if stored.get("account_id") != payload.account_id or current.get("account_id") != payload.account_id:
+        raise HTTPException(status_code=409, detail="Stored Pinterest credential account identity is inconsistent.")
+    if stored.get("pinterest_user_id") != current.get("pinterest_user_id"):
+        raise HTTPException(status_code=409, detail="Stored Pinterest credential user identity is inconsistent.")
 
     # Hash the current token generation; never persist either raw token in the ledger.
     fingerprint = hashlib.sha256(
