@@ -1009,3 +1009,13 @@ This is the latest verified feature-branch checkpoint and supersedes earlier not
 - Added unit coverage in `tests/test_model2_repository.py` and PostgreSQL 16 integration coverage in `tests/test_model2_registry_postgres.py` (active schedule blocks timezone change; pausing schedule allows change). `compileall` and `git diff --check` passed. The connected development device initially had no pytest; isolated virtual-environment setup is underway. CI has not yet verified this change.
 - The previous pre-publish-conflict P2 fix remains implemented and its review thread was resolved. The timezone P2 remains unresolved until the new tests pass and a fresh Codex review confirms the fix.
 - Current changes are uncommitted at the time of this note. Do not merge or deploy. No production DB, credentials, OAuth, scheduler, Pinterest API write, Pin/Board, or production settings were touched. Phase 10 remains PRE-RELEASE / BLOCKED.
+
+
+### PR #77 — timezone conflict fix exact-head CI PASS (2026-11-10)
+
+- Final tested code head: `51d853f2dba9878a97dd5a12e85e5369c2b56a8d` on `feat/model2-open-source-reuse`.
+- `save_account_profile` now reads profile timezone under `FOR UPDATE`, then blocks a timezone change if an active Model 2 schedule exists for that account (`niche_id IS NOT NULL`). Schedule activation locks the same profile row, so activation and timezone changes serialize. Pausing the schedule allows timezone change and schedule replacement.
+- Regression coverage: unit test in `tests/test_model2_repository.py`; PostgreSQL integration test in `tests/test_model2_registry_postgres.py`. The first CI attempt on `2680d35` failed only because two assertion regexes did not match the longer, explicit conflict message; the application raised the expected conflict. Wording was aligned in `51d853f`.
+- Exact-head CI: Python CI run `42867379931` PASS (**438 passed, 1 skipped, 1 warning**); Python tests run `42867379978` PASS (**438 passed, 1 skipped, 1 warning**); Model 2 PostgreSQL integration run `42867379850` PASS (**347 passed, 1 warning**). PostgreSQL CI also reported no known dependency vulnerabilities, verified all 16 numbered migrations, cleaned Model 2 and synthetic Model 1 fixtures, and stopped disposable PostgreSQL 16.
+- All three required PR checks are green on `51d853f`. Fresh Codex review was requested after the fix; final review status still needs confirmation.
+- PR #77 remains OPEN against `main`, review-only. No merge/deployment, production database or credential changes, OAuth refresh, scheduler operation, Pinterest API write, or real Pin/Board creation occurred. Phase 10 remains PRE-RELEASE / BLOCKED.

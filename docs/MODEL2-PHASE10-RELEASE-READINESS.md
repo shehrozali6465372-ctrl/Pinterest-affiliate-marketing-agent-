@@ -502,3 +502,12 @@ This section supersedes earlier references above to the latest feature-branch CI
 - Added a repository unit regression test and a disposable PostgreSQL integration test for rejection while active and successful change after pause. These tests are pending execution in CI; the current connected development device has no preinstalled pytest and local dependency installation is being prepared in an isolated virtual environment.
 - The previous pre-publish-conflict P2 remains fixed and its review thread was resolved. The new timezone finding is not yet resolved; do not call the Codex review clean until a fresh review of the corrected commit is complete.
 - No production DB, live schedule, credentials, OAuth, Pinterest API, Pin/Board, merge or deployment was touched. PR #77 remains review-only; Phase 10 remains PRE-RELEASE / BLOCKED.
+
+### Timezone immutability fix — exact-head CI closure (2026-11-10)
+
+- Final code/test head before this evidence update: `51d853f2dba9878a97dd5a12e85e5369c2b56a8d`.
+- First CI attempt on `2680d35` exposed only two regression-test message-regex mismatches; application behavior reached the intended conflict path. Updated the error wording to be stable and explicit in `51d853f`.
+- Exact-head CI on `51d853f`: Python CI run `42867379931` PASS (**438 passed, 1 skipped, 1 warning**); Python tests run `42867379978` PASS (**438 passed, 1 skipped, 1 warning**); Model 2 PostgreSQL integration run `42867379850` PASS (**347 passed, 1 warning**). The PostgreSQL workflow reported **No known vulnerabilities found**, verified all 16 numbered migrations, confirmed Model 2 and synthetic Model 1 fixture cleanup, and stopped disposable PostgreSQL 16.
+- All three required PR checks are green for exact head `51d853f`. The timezone regression tests now prove active Model 2 schedule blocks profile timezone change and a paused schedule permits it.
+- A fresh Codex review was requested after the code fix. Its final result is not yet available; do not call the independent review clean until the review receipt/comments are checked.
+- No production database, credentials, OAuth, scheduler dispatch/change, Pinterest API write, Pin/Board, merge or deployment occurred. PR #77 remains open and review-only. Phase 10 remains PRE-RELEASE / BLOCKED.
