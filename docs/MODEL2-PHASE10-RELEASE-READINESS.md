@@ -407,7 +407,7 @@ Work in gate order. For each gate: inspect existing evidence first; implement on
 
 ### 2026-11-10 continuation — live runtime, scheduled side effects and backup snapshot classification
 
-- Confirmed the deployed Render service is pinterest-affiliate-marketing-agent, Free plan, one configured instance, auto-deploy from main; latest live deploy dep-dboumq3m5ojs738e1if0 runs Model 1 commit 2fd07669d19e68d73099c9e3f589e2db8ca87078. Model 2 feature branch is now at 1a48d3cb15f1e817a9c5deff6f600f93854de1ea and remains undeployed.
+- Confirmed the deployed Render service is pinterest-affiliate-marketing-agent, Free plan, one configured instance, auto-deploy from main; latest live deploy dep-dboumq3m5ojs738e1if0 runs Model 1 commit 2fd07669d19e68d73099c9e3f589e2db8ca87078. Model 2 feature code remains on the isolated feature branch and is not deployed.
 - Read-only runtime checks from the connected device: GET /health returned HTTP 200; GET /openapi.json returned HTTP 200. / and /ready returned HTTP 404; no readiness route is defined in this deployed Model 1 API. Render logs for 00:00–01:30 UTC contained no application ERROR/WARNING entries and no HTTP 5xx request logs. HTTP request/latency metrics were unavailable in the queried interval; no performance pass is claimed.
 - A second default-branch Affiliate Scheduler Worker run 42726032661 at 00:08:50 UTC on main commit 2fd07669... completed successfully. The safe workflow output was claimed=true, processed=true, job_id=14, status=succeeded. The current scheduler handler returns published and already_published, but the existing workflow output projection omits both. Therefore whether job 14 created a new Pin or observed an already-published result remains UNKNOWN. No manual worker dispatch was issued in this continuation.
 - The scheduled Pinterest Learning Loop run 42611471024 remains a confirmed partial production operation: 17 Pins checked, 16 analytics snapshots saved, ok=false, descriptive evaluation only, model_trained=false. It performed live Pinterest analytics GETs and wrote 16 analytics snapshots to the production database; the failed Pin's safe failure stage was not included in the workflow summary.
@@ -426,3 +426,12 @@ Work in gate order. For each gate: inspect existing evidence first; implement on
 - The new summary helper exposes scheduler published/already_published booleans and Learning Loop aggregate failure counts/stages/statuses, without Pin IDs, affiliate URLs, per-Pin payloads or credentials. Missing pin_results remains unknown rather than fabricated zero. This is workflow observability only; it does not change scheduler cadence, job selection, Pinterest calls or production side effects.
 - Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42737647489
 - This patch is on the feature branch only. No PR, merge, deployment, production database action, workflow pause/resume, Pinterest write or real Pin/Board operation was performed.
+
+
+### Python dependency vulnerability audit — PASS (2026-11-10)
+
+- Added a blocking CI audit using pinned pip-audit 2.10.1 with strict dependency collection and a 15-second socket timeout against requirements.txt.
+- Exact-head run 42738338668 at feature commit f2657d72ba9697cbc595f9ab2b15f7f94eb35abb completed successfully and reported: **No known vulnerabilities found**. The same run passed **328 tests, 0 failed, 1 non-blocking Starlette/httpx deprecation warning**, verified all 16 migrations, confirmed fixture cleanup and stopped disposable PostgreSQL 16.
+- Scope: this audits the dependency set resolved from requirements.txt at run time. The repository does not provide a fully pinned lockfile/SBOM in this workflow, so the result is a point-in-time audit, not a guarantee about future unpinned resolutions or the live Render environment.
+- Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42738338668
+- The feature branch remains undeployed; no production deployment, database action, scheduler change or Pinterest write occurred.
