@@ -360,7 +360,10 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
 
 def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_account_lock(monkeypatch):
     import httpx
-    from app import credential_vault
+    from app import credential_vault, database
+
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: {"status": "acquired"})
+    monkeypatch.setattr(database, "complete_pinterest_refresh_operation", lambda **kwargs: None)
 
     monkeypatch.setattr(settings, "pinterest_client_id", "oauth-client-id")
     monkeypatch.setattr(settings, "pinterest_client_secret", "oauth-client-secret")
@@ -552,3 +555,47 @@ def test_refresh_endpoint_does_not_refresh_an_already_fresh_access_token(monkeyp
     assert response.status_code == 200
     assert response.json()["already_fresh"] is True
     assert response.json()["refreshed"] is False
+
+
+def test_internal_auto_refresh_timeout_is_durable_and_not_retried(monkeypatch):
+    import httpx
+    from app import credential_vault, database
+
+    monkeypatch.setattr(settings, "pinterest_client_id", "oauth-client-id")
+    monkeypatch.setattr(settings, "pinterest_client_secret", "oauth-client-secret")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    class FakeConnection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def execute(self, *_args): return self
+    monkeypatch.setattr(credential_vault, "connection", lambda: FakeConnection())
+    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-token",
+        "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+    })
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
+    })
+    state = {"status": "acquired"}
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: dict(state))
+    monkeypatch.setattr(database, "mark_pinterest_refresh_operation_uncertain",
+                        lambda **kwargs: state.update(status="uncertain"))
+    writes = []
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def post(self, *args, **kwargs):
+            writes.append("POST")
+            raise httpx.ReadTimeout("synthetic timeout after provider dispatch")
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+
+    with pytest.raises(RuntimeError, match="uncertain"):
+        credential_vault.get_pinterest_credential("pinterest:123")
+    assert state["status"] == "uncertain"
+    with pytest.raises(RuntimeError, match="uncertain"):
+        credential_vault.get_pinterest_credential("pinterest:123")
+    assert writes == ["POST"]
