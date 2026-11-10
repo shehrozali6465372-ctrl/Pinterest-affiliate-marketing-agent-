@@ -172,3 +172,72 @@ def test_custom_format_backup_restores_migrated_schema_and_legacy_rows():
     finally:
         for name in reversed(created):
             _drop_database(admin_dsn, name)
+
+
+def test_pre_model2_backup_restores_legacy_schema_after_upgrade_rollback():
+    """Recover a compatible legacy schema from a synthetic pre-upgrade backup."""
+    admin_dsn = _disposable_admin_dsn()
+    suffix = uuid4().hex[:12]
+    source_name = f"model2_rollback_source_{suffix}"
+    recovery_name = f"model2_rollback_recovery_{suffix}"
+    created: list[str] = []
+    try:
+        _create_database(admin_dsn, source_name)
+        created.append(source_name)
+        source_dsn = _database_dsn(admin_dsn, source_name)
+        with psycopg.connect(source_dsn) as conn:
+            conn.execute("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+            legacy_migrations = sorted(path for path in MIGRATIONS.glob("[0-9]*.sql") if path.name[:3].isdigit() and int(path.name[:3]) <= 12)
+            assert len(legacy_migrations) == 13
+            for migration in legacy_migrations:
+                conn.execute(migration.read_text(encoding="utf-8"))
+                conn.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (migration.name,))
+            schedule_id = conn.execute("""INSERT INTO affiliate_publishing_schedules
+                (account_id, timezone, starts_on, ends_on, daily_pin_limit, board_name, board_description, status)
+                VALUES ('rollback-legacy-account', 'UTC', DATE '2026-01-01', DATE '2026-01-30', 5,
+                        'Pre-Model2 Board', 'Synthetic pre-upgrade schedule', 'active') RETURNING id""").fetchone()[0]
+            source_id = conn.execute("""INSERT INTO affiliate_product_sources
+                (schedule_id, product_name, product_details, affiliate_url)
+                VALUES (%s, 'Pre-upgrade product', 'Synthetic legacy source', 'https://example.com/pre-upgrade')
+                RETURNING id""", (schedule_id,)).fetchone()[0]
+            conn.execute("""INSERT INTO affiliate_pin_jobs
+                (schedule_id, source_id, run_at, local_run_date, daily_slot, idempotency_key, status)
+                VALUES (%s, %s, TIMESTAMPTZ '2026-01-02 09:00:00+00', DATE '2026-01-02', 1,
+                        'pre-model2-rollback-job', 'queued')""", (schedule_id, source_id))
+
+        _create_database(admin_dsn, recovery_name)
+        created.append(recovery_name)
+        recovery_dsn = _database_dsn(admin_dsn, recovery_name)
+        with tempfile.TemporaryDirectory(prefix="model2-rollback-backup-") as temp_dir:
+            archive = Path(temp_dir) / "pre-model2.dump"
+            docker_prefix = ["docker", "run", "--rm", "--network", "host", "--volume", f"{temp_dir}:/backup", "--env", "PGPASSWORD=model2-ci-only", "postgres:16"]
+            subprocess.run(docker_prefix + ["pg_dump", "--format=custom", "--no-owner", "--no-privileges", "--file", "/backup/pre-model2.dump", "--dbname", source_dsn], check=True, capture_output=True, text=True, timeout=120)
+            assert archive.is_file() and archive.stat().st_size > 0
+            with psycopg.connect(source_dsn) as upgraded:
+                model2_migrations = sorted(path for path in MIGRATIONS.glob("[0-9]*.sql") if path.name[:3].isdigit() and int(path.name[:3]) >= 13)
+                assert len(model2_migrations) == 3
+                for migration in model2_migrations:
+                    upgraded.execute(migration.read_text(encoding="utf-8"))
+                    upgraded.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (migration.name,))
+                assert upgraded.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 16
+                assert upgraded.execute("""SELECT count(*) FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'affiliate_publishing_schedules'
+                    AND column_name = 'niche_id'""").fetchone()[0] == 1
+            subprocess.run(docker_prefix + ["pg_restore", "--exit-on-error", "--no-owner", "--no-privileges", "--dbname", recovery_dsn, "/backup/pre-model2.dump"], check=True, capture_output=True, text=True, timeout=120)
+
+        with psycopg.connect(recovery_dsn) as recovered:
+            assert [row[0] for row in recovered.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()] == [migration.name for migration in legacy_migrations]
+            assert recovered.execute("""SELECT count(*) FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'affiliate_publishing_schedules'
+                AND column_name = 'niche_id'""").fetchone()[0] == 0
+            assert recovered.execute("""SELECT count(*) FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name IN
+                ('model2_niches', 'model2_account_profiles', 'model2_account_niches', 'affiliate_job_reconciliation_audit')""").fetchone()[0] == 0
+            assert recovered.execute("""SELECT account_id, status, board_name, board_description
+                FROM affiliate_publishing_schedules WHERE account_id = 'rollback-legacy-account'""").fetchone() == (
+                    "rollback-legacy-account", "active", "Pre-Model2 Board", "Synthetic pre-upgrade schedule")
+            assert recovered.execute("""SELECT status, idempotency_key FROM affiliate_pin_jobs
+                WHERE idempotency_key = 'pre-model2-rollback-job'""").fetchone() == ("queued", "pre-model2-rollback-job")
+    finally:
+        for name in reversed(created):
+            _drop_database(admin_dsn, name)
