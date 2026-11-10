@@ -198,15 +198,12 @@ def _refresh_access_token(account_id: str) -> None:
     # also blocks retries after a process crash or ambiguous provider response.
     with connection() as lock_conn:
         lock_conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"pinterest-token-refresh:{account_id}",))
-        current = _read_access_credential(account_id)
+        stored = get_pinterest_refresh_pair(account_id)
+        current = stored
         now = datetime.now(timezone.utc)
         expiry = _as_utc(current.get("expires_at"))
         if expiry is None or expiry > now + timedelta(minutes=5):
             return
-
-        stored = get_pinterest_refresh_credential(account_id)
-        if stored.get("pinterest_user_id") != current.get("pinterest_user_id"):
-            raise RuntimeError("Pinterest access and refresh credential identities do not match")
         refresh_expiry = _as_utc(stored.get("refresh_token_expires_at"))
         if stored.get("refresh_token_expires_at") is not None and (
             refresh_expiry is None or refresh_expiry <= now
