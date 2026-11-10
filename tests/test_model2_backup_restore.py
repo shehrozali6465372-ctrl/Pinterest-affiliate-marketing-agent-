@@ -68,7 +68,7 @@ def test_custom_format_backup_restores_migrated_schema_and_legacy_rows():
                 """
             )
             migrations = sorted(MIGRATIONS.glob("[0-9]*.sql"))
-            assert len(migrations) == 17
+            assert len(migrations) == 18
             for migration in migrations:
                 conn.execute(migration.read_text(encoding="utf-8"))
                 conn.execute(
@@ -215,11 +215,11 @@ def test_pre_model2_backup_restores_legacy_schema_after_upgrade_rollback():
             assert archive.is_file() and archive.stat().st_size > 0
             with psycopg.connect(source_dsn) as upgraded:
                 model2_migrations = sorted(path for path in MIGRATIONS.glob("[0-9]*.sql") if path.name[:3].isdigit() and int(path.name[:3]) >= 13)
-                assert len(model2_migrations) == 4
+                assert len(model2_migrations) == 5
                 for migration in model2_migrations:
                     upgraded.execute(migration.read_text(encoding="utf-8"))
                     upgraded.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (migration.name,))
-                assert upgraded.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 17
+                assert upgraded.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 18
                 assert upgraded.execute("""SELECT count(*) FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = 'affiliate_publishing_schedules'
                     AND column_name = 'niche_id'""").fetchone()[0] == 1
@@ -232,7 +232,7 @@ def test_pre_model2_backup_restores_legacy_schema_after_upgrade_rollback():
                 AND column_name = 'niche_id'""").fetchone()[0] == 0
             assert recovered.execute("""SELECT count(*) FROM information_schema.tables
                 WHERE table_schema = 'public' AND table_name IN
-                ('model2_niches', 'model2_account_profiles', 'model2_account_niches', 'affiliate_job_reconciliation_audit', 'pinterest_board_operations')""").fetchone()[0] == 0
+                ('model2_niches', 'model2_account_profiles', 'model2_account_niches', 'affiliate_job_reconciliation_audit', 'pinterest_board_operations', 'pinterest_refresh_operations')""").fetchone()[0] == 0
             assert recovered.execute("""SELECT account_id, status, board_name, board_description
                 FROM affiliate_publishing_schedules WHERE account_id = 'rollback-legacy-account'""").fetchone() == (
                     "rollback-legacy-account", "active", "Pre-Model2 Board", "Synthetic pre-upgrade schedule")
