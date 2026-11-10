@@ -474,3 +474,12 @@ This section supersedes earlier references above to the latest feature-branch CI
 - Remaining release gates: sanitized production-like snapshot and isolated restore/rollback rehearsal; owner-approved Neon restore access, RPO/RTO and escalation path; production credential inventory and separately approved key rotation/re-encryption; production service/database access and log retention evidence; owner scheduler decision; repository merge-control decision; Render availability/readiness decision; and separate explicit approvals for migration, deployment and scheduler activation.
 
 **Phase 10 remains PRE-RELEASE / BLOCKED.** Green feature-branch CI and successful encrypted backup recovery do not authorize production migration, deployment, credential rotation, scheduler changes or Pinterest publication.
+
+
+### Owner decision — existing production schedules remain active (2026-11-10)
+
+- Owner explicitly decided that the existing main-branch hourly Affiliate Scheduler Worker and daily Pinterest Learning Loop should **remain active**.
+- This records the decision to preserve their current operating state. It is not an instruction to dispatch either workflow, change cron schedules, create/activate Model 2 schedules, or alter production configuration.
+- No workflow was enabled, disabled, paused, resumed or dispatched for this decision. Existing production side effects continue under the already-configured `main` workflows.
+- The existing uncertainty remains: scheduler job 14's wrapper output did not distinguish `published` from `already_published`; its publication outcome remains UNKNOWN. No production ledger or Pinterest verification was performed by recording this decision.
+- The decision does not approve Model 2 merge/deployment, production migrations, credential rotation, database restore, or any new Pinterest publication.
