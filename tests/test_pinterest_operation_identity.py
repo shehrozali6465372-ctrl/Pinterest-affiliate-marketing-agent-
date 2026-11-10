@@ -218,3 +218,25 @@ def test_ambiguous_create_board_timeout_is_marked_uncertain_and_never_retried(mo
     assert second.status_code == 409
     assert "uncertain" in second.json()["detail"].lower()
     assert len(writes) == 1
+
+
+def test_disconnect_reports_local_disable_without_claiming_provider_revocation(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "synthetic-hub-key")
+    from app import credential_vault
+
+    revoked = []
+    monkeypatch.setattr(credential_vault, "revoke_pinterest_credential",
+                        lambda account_id: revoked.append(account_id))
+    def unexpected_client(*args, **kwargs):
+        raise AssertionError("local disconnect must not make an unverified provider revoke request")
+    monkeypatch.setattr(httpx, "Client", unexpected_client)
+
+    response = TestClient(app).post(
+        "/integrations/pinterest/operation",
+        headers={"X-Credential-Ingest-Key": "synthetic-hub-key"},
+        json={"account_id": "pinterest:123456", "operation": "disconnect", "payload": {}},
+    )
+    assert response.status_code == 200
+    assert response.json()["local_access_disabled"] is True
+    assert response.json()["provider_token_revoked"] is False
+    assert revoked == ["pinterest:123456"]
