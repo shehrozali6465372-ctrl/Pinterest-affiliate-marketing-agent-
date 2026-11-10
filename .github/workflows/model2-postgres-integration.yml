@@ -109,6 +109,7 @@ jobs:
           tests/test_model2_backup_restore.py
           tests/test_workflow_summary.py
           tests/test_dependency_boundaries.py
+          tests/test_security_headers.py
 
       - name: Verify full migration ledger and fixture cleanup
         run: |

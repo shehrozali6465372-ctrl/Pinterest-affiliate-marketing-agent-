@@ -15,6 +15,7 @@ from app.config import settings
 from app.auth import require_api_key, require_credential_ingest_key
 from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
 from app.publishing_gateway import publish_pin
+from app.security_headers import SecurityHeadersMiddleware
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ app = FastAPI(
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
     lifespan=lifespan,
 )
+app.add_middleware(SecurityHeadersMiddleware)
 
 from app.workflow import router as workflow_router
 app.include_router(workflow_router)
