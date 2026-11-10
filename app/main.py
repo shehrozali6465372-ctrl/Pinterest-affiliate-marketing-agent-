@@ -300,23 +300,32 @@ def run_pinterest_analytics_integration(payload: PinterestAnalyticsIntegrationIn
 def refresh_pinterest_credential(
     payload: PinterestRefreshInput,
 ) -> dict[str, object]:
-    """Refresh an expired Pinterest access token using server-to-server app credentials."""
+    """Refresh one Pinterest token generation exactly once; ambiguous outcomes fail closed."""
     from datetime import datetime, timedelta, timezone
+    import hashlib
     import httpx
     from cryptography.exceptions import InvalidTag
     from app.credential_vault import (
         TokenEncryptionConfigurationError,
         get_pinterest_refresh_credential,
+        _read_access_credential,
         store_pinterest_credential,
     )
-    from app.database import DatabaseConfigurationError
+    from app.database import (
+        DatabaseConfigurationError,
+        claim_pinterest_refresh_operation,
+        complete_pinterest_refresh_operation,
+        mark_pinterest_refresh_operation_failed,
+        mark_pinterest_refresh_operation_uncertain,
+    )
 
     try:
         stored = get_pinterest_refresh_credential(payload.account_id)
+        current = _read_access_credential(payload.account_id)
     except LookupError:
         raise HTTPException(status_code=409, detail="No usable Pinterest refresh token is stored; reconnect Pinterest.") from None
     except InvalidTag:
-        raise HTTPException(status_code=503, detail="Stored Pinterest refresh token failed authenticated decryption.") from None
+        raise HTTPException(status_code=503, detail="Stored Pinterest credential failed authenticated decryption.") from None
     except TokenEncryptionConfigurationError:
         raise HTTPException(status_code=503, detail="Pinterest token encryption is not configured correctly.") from None
     except DatabaseConfigurationError:
@@ -324,8 +333,31 @@ def refresh_pinterest_credential(
     except Exception:
         raise HTTPException(status_code=503, detail="Pinterest refresh credential lookup failed.") from None
 
-    # Avoid sending a refresh token to Pinterest after its declared expiry.
-    # Null expiry remains supported for older stored credentials; malformed expiry fails closed.
+    if stored.get("account_id") != payload.account_id or current.get("account_id") != payload.account_id:
+        raise HTTPException(status_code=409, detail="Stored Pinterest credential account identity is inconsistent.")
+    if stored.get("pinterest_user_id") != current.get("pinterest_user_id"):
+        raise HTTPException(status_code=409, detail="Stored Pinterest credential user identity is inconsistent.")
+
+    now = datetime.now(timezone.utc)
+    current_expiry = current.get("expires_at")
+    if current_expiry is not None:
+        try:
+            if not isinstance(current_expiry, datetime):
+                current_expiry = datetime.fromisoformat(str(current_expiry).replace("Z", "+00:00"))
+            if current_expiry.tzinfo is None:
+                current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+            else:
+                current_expiry = current_expiry.astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=503, detail="Stored Pinterest access-token expiry is invalid.") from None
+        if current_expiry > now + timedelta(minutes=5):
+            return {
+                "refreshed": False,
+                "already_fresh": True,
+                "account_id": payload.account_id,
+                "expires_at": current_expiry.isoformat(),
+            }
+
     stored_refresh_expiry = stored.get("refresh_token_expires_at")
     if stored_refresh_expiry is not None:
         try:
@@ -335,19 +367,37 @@ def refresh_pinterest_credential(
                 )
             if stored_refresh_expiry.tzinfo is None:
                 stored_refresh_expiry = stored_refresh_expiry.replace(tzinfo=timezone.utc)
+            else:
+                stored_refresh_expiry = stored_refresh_expiry.astimezone(timezone.utc)
         except (TypeError, ValueError, OverflowError):
-            raise HTTPException(
-                status_code=503,
-                detail="Stored Pinterest refresh-token expiry is invalid; reconnect the account.",
-            ) from None
-        if stored_refresh_expiry <= datetime.now(timezone.utc):
-            raise HTTPException(
-                status_code=409,
-                detail="Stored Pinterest refresh token has expired; reconnect the account.",
-            )
+            raise HTTPException(status_code=503, detail="Stored Pinterest refresh-token expiry is invalid; reconnect the account.") from None
+        if stored_refresh_expiry <= now:
+            raise HTTPException(status_code=409, detail="Stored Pinterest refresh token has expired; reconnect the account.")
 
+    # Hash the current token generation; never persist either raw token in the ledger.
+    fingerprint = hashlib.sha256(
+        (payload.account_id + "\0" + str(current["access_token"]) + "\0" + str(stored["refresh_token"])).encode()
+    ).hexdigest()
+    try:
+        claim = claim_pinterest_refresh_operation(
+            account_id=payload.account_id, request_fingerprint=fingerprint,
+        )
+    except Exception:
+        raise HTTPException(status_code=503, detail="Pinterest refresh ledger is unavailable; no OAuth request was sent.") from None
+    if claim["status"] == "succeeded":
+        return {
+            "refreshed": True, "replayed": True, "account_id": payload.account_id,
+            "expires_at": current_expiry.isoformat() if current_expiry else None,
+        }
+    if claim["status"] in {"uncertain", "in_progress"}:
+        raise HTTPException(status_code=409, detail="Pinterest refresh outcome is uncertain or still in progress; automatic retry is blocked. Reconnect or verify the account before another refresh.")
+    if claim["status"] == "failed":
+        raise HTTPException(status_code=409, detail="This Pinterest refresh attempt was rejected; reconnect the account before retrying.")
+
+    request_dispatched = False
     try:
         with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+            request_dispatched = True
             response = client.post(
                 f"{settings.pinterest_api_base_url.rstrip('/')}/oauth/token",
                 auth=(payload.client_id, payload.client_secret),
@@ -359,30 +409,83 @@ def refresh_pinterest_credential(
             )
         token_data = response.json() if response.content else {}
     except (httpx.HTTPError, ValueError):
-        raise HTTPException(status_code=502, detail="Pinterest OAuth token refresh request failed.") from None
+        if request_dispatched:
+            try:
+                mark_pinterest_refresh_operation_uncertain(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+            except Exception:
+                pass
+        raise HTTPException(status_code=502, detail="Pinterest OAuth refresh outcome is uncertain; automatic retry is blocked.") from None
 
-    if not response.is_success or not isinstance(token_data, dict) or not token_data.get("access_token"):
-        status_code = 401 if response.status_code in (400, 401, 403) else 502
-        raise HTTPException(
-            status_code=status_code,
-            detail="Pinterest rejected token refresh. Reconnect the account if the refresh token is invalid or expired.",
-        )
+    if not response.is_success:
+        try:
+            if response.status_code < 500:
+                mark_pinterest_refresh_operation_failed(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+            else:
+                mark_pinterest_refresh_operation_uncertain(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+        except Exception:
+            pass
+        if response.status_code >= 500:
+            raise HTTPException(status_code=502, detail="Pinterest OAuth refresh response is ambiguous; automatic retry is blocked.")
+        status_code = 401 if response.status_code in (400, 401, 403) else response.status_code
+        raise HTTPException(status_code=status_code, detail="Pinterest rejected token refresh. Reconnect the account if the refresh token is invalid or expired.")
 
-    now = datetime.now(timezone.utc)
-    expires_at = (
-        (now + timedelta(seconds=int(token_data["expires_in"]))).isoformat()
-        if token_data.get("expires_in") is not None else None
-    )
+    if not isinstance(token_data, dict) or not token_data.get("access_token"):
+        try:
+            mark_pinterest_refresh_operation_uncertain(
+                account_id=payload.account_id, request_fingerprint=fingerprint,
+            )
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail="Pinterest returned an incomplete refresh response; outcome is uncertain and automatic retry is blocked.")
+
+    try:
+        expires_in = int(token_data["expires_in"])
+        if expires_in <= 0:
+            raise ValueError("expires_in must be positive")
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
+    except (KeyError, TypeError, ValueError, OverflowError):
+        try:
+            mark_pinterest_refresh_operation_uncertain(
+                account_id=payload.account_id, request_fingerprint=fingerprint,
+            )
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail="Pinterest refresh response has no valid access-token lifetime; outcome is uncertain.") from None
+
     refresh_expiry = token_data.get("refresh_token_expires_at")
     if refresh_expiry is not None:
         try:
             refresh_token_expires_at = datetime.fromtimestamp(float(refresh_expiry), timezone.utc).isoformat()
         except (TypeError, ValueError, OverflowError):
-            refresh_token_expires_at = None
+            try:
+                mark_pinterest_refresh_operation_uncertain(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+            except Exception:
+                pass
+            raise HTTPException(status_code=502, detail="Pinterest returned an invalid refresh-token expiry; outcome is uncertain.") from None
     elif token_data.get("refresh_token_expires_in") is not None:
-        refresh_token_expires_at = (
-            now + timedelta(seconds=int(token_data["refresh_token_expires_in"]))
-        ).isoformat()
+        try:
+            refresh_lifetime = int(token_data["refresh_token_expires_in"])
+            if refresh_lifetime <= 0:
+                raise ValueError("refresh lifetime must be positive")
+            refresh_token_expires_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=refresh_lifetime)
+            ).isoformat()
+        except (TypeError, ValueError, OverflowError):
+            try:
+                mark_pinterest_refresh_operation_uncertain(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+            except Exception:
+                pass
+            raise HTTPException(status_code=502, detail="Pinterest returned an invalid refresh-token lifetime; outcome is uncertain.") from None
     else:
         refresh_token_expires_at = stored_refresh_expiry
 
@@ -392,7 +495,6 @@ def refresh_pinterest_credential(
             "pinterest_user_id": stored["pinterest_user_id"],
             "username": stored.get("username") or "",
             "access_token": str(token_data["access_token"]),
-            # Pinterest may omit a rotated refresh token; never erase the still-valid stored one.
             "refresh_token": str(token_data.get("refresh_token") or stored.get("refresh_token") or ""),
             "token_type": str(token_data.get("token_type") or "bearer"),
             "scope": str(token_data.get("scope") or stored.get("scope") or ""),
@@ -400,7 +502,20 @@ def refresh_pinterest_credential(
             "refresh_token_expires_at": refresh_token_expires_at,
         })
     except Exception:
-        raise HTTPException(status_code=503, detail="Pinterest refreshed a token but encrypted persistence could not be confirmed.") from None
+        try:
+            mark_pinterest_refresh_operation_uncertain(
+                account_id=payload.account_id, request_fingerprint=fingerprint,
+            )
+        except Exception:
+            pass
+        raise HTTPException(status_code=503, detail="Pinterest may have rotated the token, but encrypted persistence could not be confirmed; automatic retry is blocked.") from None
+
+    try:
+        complete_pinterest_refresh_operation(
+            account_id=payload.account_id, request_fingerprint=fingerprint,
+        )
+    except Exception:
+        raise HTTPException(status_code=503, detail="Pinterest refreshed and stored the credential, but refresh-ledger finalization could not be confirmed.") from None
 
     return {
         "refreshed": True,
@@ -414,7 +529,6 @@ def refresh_pinterest_credential(
             else refresh_token_expires_at
         ),
     }
-
 
 class ManualPublishInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
