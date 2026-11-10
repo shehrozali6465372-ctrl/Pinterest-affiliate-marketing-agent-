@@ -489,3 +489,50 @@ def test_worker_distinguishes_pre_publish_conflicts_from_ambiguous_409s(
     assert result["status"] == expected_status
     assert finalized[0]["status"] == expected_status
     assert finalized[0]["safe_error_code"] == expected_error
+
+
+def test_legacy_scheduler_quota_counts_uncertain_publications(monkeypatch):
+    """An unknown Pin outcome consumes the daily limit for legacy Model 1 schedules."""
+    from contextlib import contextmanager
+    from app import affiliate_scheduler
+
+    hint = {
+        "schedule_id": 44, "account_id": "pinterest:legacy-123",
+        "niche_id": None, "timezone": "UTC",
+    }
+    schedule = {
+        "id": 44, "account_id": "pinterest:legacy-123", "niche_id": None,
+        "timezone": "UTC", "daily_pin_limit": 1, "status": "active",
+    }
+    observed = []
+
+    class Result:
+        def __init__(self, row=None): self.row = row
+        def fetchone(self): return self.row
+
+    class FakeConnection:
+        def execute(self, query, params=None):
+            if "s.niche_id IS NOT NULL" in query and "SELECT s.id AS schedule_id" in query:
+                return Result(None)
+            if "s.niche_id IS NULL" in query and "SELECT s.id AS schedule_id" in query:
+                observed.append(query)
+                assert "same_day.status IN ('processing', 'succeeded', 'uncertain')" in query
+                return Result(hint)
+            if "SELECT id, account_id, niche_id, timezone, daily_pin_limit" in query:
+                return Result(schedule)
+            if "WITH candidate AS" in query:
+                observed.append(query)
+                assert "same_day.status IN ('processing', 'succeeded', 'uncertain')" in query
+                return Result(None)  # the uncertain publication has consumed the one-slot quota
+            raise AssertionError(f"unexpected SQL in quota test: {query[:120]}")
+
+    @contextmanager
+    def fake_connection():
+        yield FakeConnection()
+
+    monkeypatch.setattr(affiliate_scheduler, "connection", fake_connection)
+    monkeypatch.setattr(affiliate_scheduler, "_quarantine_one_expired_claim", lambda: None)
+    result = affiliate_scheduler.run_one_due_job()
+
+    assert result == {"claimed": False, "processed": False, "reason": "no_due_job"}
+    assert len(observed) == 2
