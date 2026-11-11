@@ -1073,3 +1073,11 @@ This section supersedes any earlier statement that the current production deploy
 - GitHub `main` protection audit: the Agent repository is public but its `main` branch is currently unprotected (no required PR review or status checks). The Hub `main` branch has a required `credential-security` check and admin enforcement, but requires zero approving reviews. No protection settings were changed; owner approval is required before changing repository policy.
 - Phase 10 remains PRE-RELEASE / BLOCKED. Outstanding gates include current sanitized production-like restore/rollback rehearsal, an agreed backup/RPO/RTO/escalation plan, production credential inventory and separately approved rotation/re-encryption, access/log-retention review, exact-head Hub Codex/security review, branch protection, and explicit separate approval for production migration and deployment.
 - No production migration, deployment, credential read/rotation, OAuth refresh, scheduler change, real Pin/Board creation, PR merge or Render configuration change occurred. Model 1 schedules remain active by owner decision.
+
+
+### Hub follow-up — 2026-11-11 (after latest review finding)
+
+- Hub PR #22 received an additional P2 review finding: browser-side pending Board idempotency keys could be cleared after a Hub-level `401`, even though the Agent had not received the request and therefore had no durable operation result.
+- Fixed and pushed as Hub commit `e624fcc3d9a4c242b2174579c07f19986174c178`: browser now clears the pending key only when the Agent explicitly returns `operation_rejected: true`; Hub marks provider/Agent-confirmed definitive rejections as such, while Hub-level `401`, uncertain `409`, and ambiguous 5xx retain the same key. Added regression coverage for a Hub-level 401 (Agent not called) and an Agent-confirmed provider 400.
+- Full local Hub `npm test` and `npm audit --audit-level=moderate` passed after this fix; audit reported 0 vulnerabilities. The Hub Model 2 static contract test passed. The test handoff uses mocked provider/Agent calls; it does not create real Pins or Boards.
+- Hub PR #22 remains DRAFT/OPEN. On exact head `e624fcc`, Vercel Preview and Vercel Preview Comments passed; credential-security CI and fresh Codex code review were still running at the time of this record. Do not merge or deploy until both finish and any new findings are resolved.
