@@ -360,3 +360,724 @@ This checkpoint supersedes earlier Agent PR/branch status entries above where th
 2. Merge PR #62 only when exact-head checks are green and GitHub permits the protected merge. Then close PR #61 as superseded.
 3. Verify the exact Agent Render deployment commit and read-only health/readiness/diagnostic endpoints after merge.
 4. Do not use a live Pin or Board creation as a test. Do not trigger OAuth refresh; PB-05 remains condition-based until natural refresh is due.
+
+
+## Model 2 architecture-first directive — 2026-11-08 (owner instruction; current)
+
+- Owner explicitly directed: **freeze the complete Model 2 architecture first, lock it, and only then implement in that exact order.** Do not continue coding features before architecture approval/freeze.
+- Owner's permanent implementation rule reaffirmed: **never recreate functionality that is already implemented.** Inspect and verify existing code, schemas, routes and tests first; reuse completed Model 1 capabilities; implement only demonstrated gaps. Do not repeat work or create duplicate systems.
+- The detailed architecture baseline is `docs/MODEL2-FOUNDATION.md`. It defines Model 2 objectives, existing Model 1 reuse boundaries, target components/data flow, schema/security rules, explicit exclusions, sequential implementation gates 0–10, and evidence requirements.
+- Current status of architecture document: **FROZEN / LOCKED** per the owner's direct instruction to create and lock the architecture before implementation. Any architecture change requires an explicit owner-approved revision.
+- Existing artifacts in the isolated Model 2 worktree remain draft only:
+  - `migrations/013_model2_account_niche_registry.sql`
+  - `tests/test_model2_registry_migration.py`
+  - `tests/test_model2_registry_postgres.py`
+  - `docs/MODEL2-FOUNDATION.md`
+  These were created before the architecture-first instruction. They must be reviewed against the approved architecture; retain, revise or remove only after review. Do not apply migration 013 to production.
+- Verified current branch/worktree: `feat/model2-open-source-reuse` at the production-main-derived baseline `785efd99849627062c1fff8504d21ca91abfee8e`; four Model 2 draft files are untracked. No commit/push/PR/merge/deploy has occurred in this checkpoint.
+- Runtime tests remain **NOT RUN** in this isolated worktree because pytest/runtime dependencies and PostgreSQL client were unavailable. Earlier static checks passed only; do not report integration tests as passing.
+- Hard boundaries remain: do not touch the owner backup worktree or clean production snapshot; no production DB migration/write, Render deploy, OAuth refresh/rotation, live scheduler run, real Pinterest Pin/Board creation, image hosting, Personal Browser/UCOS Browser integration, or Modern Living Hub coupling.
+- Next permitted work: Phase 1 existing-capability inventory only, following the frozen sequence. Before every implementation item, inspect current code/schema/routes/tests and prove the capability is missing; skip anything already implemented and verified, recording its evidence instead of rebuilding it. Any proposed architecture change requires explicit owner approval.
+
+
+## Mandatory open-source reuse rule — 2026-11-08 (owner hard rule)
+
+- Owner added a permanent hard rule: **when a suitable open-source solution exists and has been verified, use/reuse it. Do not build the same capability from scratch. Implement only the functionality that cannot be satisfied by a verified suitable open-source option or by existing project code.**
+- Apply this rule before every Model 2 implementation phase:
+  1. Inspect the current repository and its existing dependencies/components first.
+  2. Search for a suitable open-source project/library only where a genuine gap remains.
+  3. Verify the candidate's actual repository, current maintenance/activity, release/API compatibility, security posture where evidence is available, dependency/supply-chain implications, and exact license/obligations.
+  4. Prefer existing project code or a compatible, maintained open-source dependency over custom implementation when it meets the requirements.
+  5. If no suitable verified option exists, document the search/evaluation and why candidates fail; then implement only the smallest missing component.
+  6. Add tests and integration adapters around the selected solution; do not fork/rewrite its core functionality unnecessarily.
+- "Open source" alone is not sufficient verification. Do not import code or add a dependency until license compatibility and obligations are reviewed. AGPL-3.0 projects (including Postiz/Postmill references previously reviewed) remain **not approved for code import** unless the owner separately authorizes after license review. Their architecture may be used as reference only.
+- Do not invent a library's capabilities, maintenance status, license, security properties or compatibility. Record sources/versions and evidence; if a candidate cannot be verified, treat it as unverified and do not rely on it.
+- This rule applies alongside the existing no-duplication rule: reuse verified Model 1 functionality first, then verified compatible open-source solutions, and custom-build only the residual gap.
+- Update the frozen architecture's engineering rules and sequential phase gates to require an open-source reuse assessment before custom implementation. This is an owner-directed clarification to the frozen baseline; record it as an approved architecture revision/addendum rather than silently changing scope.
+
+
+## Model 2 Phase 1 — existing capability inventory checkpoint (2026-11-08)
+
+- **Phase 1 source inventory completed** in `docs/MODEL2-PHASE1-INVENTORY.md`. Scope covered current FastAPI routes/auth dependencies, Pydantic models/validation, database helpers/migrations, credential vault, publishing gateway/ledger, workflow, scheduler, Learning Loop/raw analytics, dashboard, dependencies and related tests.
+- Current source baseline is commit `785efd99849627062c1fff8504d21ca91abfee8e` in isolated worktree `/root/restore-staging/Pinterest-Agent-model2-worktree`, branch `feat/model2-open-source-reuse`.
+- Existing capabilities confirmed for reuse: FastAPI routing, Pydantic validation, Psycopg 3 pool/migration abstraction, encrypted OAuth credential vault, canonical publishing gateway and publication ledger, product/content persistence, workflow reservations/checkpoints, draft-first scheduler, raw Pin analytics/Learning Loop, read-only dashboard/diagnostics, and direct Base64 media flow.
+- Genuine Model 2 gaps identified: account profile/ownership authorization; metadata-only connected-credential lookup (current vault getters decrypt and return token material internally); niche taxonomy and account–niche repository/API; explicit niche attribution to content/publications; account+niche learning projection; multi-niche schedule policy; account/niche dashboard isolation; and a true per-user/tenant auth model. Shared API key is service authentication, not proof of human ownership.
+- Existing scheduler has one-active-schedule-per-account uniqueness and no niche dimension. Do not implement multi-niche scheduling until Phase 9 design proves board/account quotas, idempotency and recovery.
+- Open-source assessment: current stack already has suitable verified components (FastAPI MIT, Pydantic MIT, Psycopg 3 LGPL-3.0-only, cryptography Apache-2.0 OR BSD-3-Clause; Python stdlib `zoneinfo`). Reuse these; no new package is currently justified. Official license/source references are recorded in the Phase 1 inventory. Exact resolved dependency tree/SBOM not verified because requirements are ranges and no lockfile was found.
+- Draft migration 013 and its two tests already existed as untracked artifacts before this phase. They are proposals only and require Phase 2 schema review; no Model 2 API/repository implementation exists yet.
+- Test execution: `python3 -m pytest --version` failed with `No module named pytest`; full pytest and PostgreSQL integration tests remain **NOT RUN**. `git diff --check` passed. No production verification was performed.
+- No production DB changes, Render deployment, GitHub commit/push/PR/merge, OAuth operation, Pinterest write, Pin/Board creation, image hosting, or changes to owner backup/clean snapshot occurred.
+- **Next sequence:** Phase 2 schema review only. Review migration 013 against frozen constraints, identify necessary corrections, inspect migration runner/rollback and attribution constraints, and evaluate whether the four proposed tables are sufficient. Do not apply it to production.
+
+
+## Model 2 Phase 2 — schema review checkpoint (2026-11-08)
+
+- Draft migration `013_model2_account_niche_registry.sql` reviewed against frozen architecture and existing migrations. Detailed findings saved in `docs/MODEL2-PHASE2-SCHEMA-REVIEW.md`.
+- **Phase 2 remains IN PROGRESS / NOT CLOSED.** Owner decision A was received and the isolated migration/test draft was revised; runtime verification and remaining exit gates are pending.
+- Remaining implementation constraints:
+  1. Owner selected a single-operator deployment model; shared API key remains service authentication, not a distinct human identity.
+  2. Account profile is not FK-linked to the existing `pinterest_credentials.account_id`; canonical `pinterest:` ID validation is not enforced.
+  3. Revised draft adds immutable publication-to-niche attribution with composite account and niche foreign keys; gateway transaction integration remains future work.
+  4. Revised draft bounds JSONB settings and restricts metrics to existing Learning Loop metric keys and nonnegative numeric/null values.
+  5. Profile timezone only has a length check; reuse existing Python `ZoneInfo` validator.
+  6. Revised draft uses pause/archive states and restrictive foreign keys; credential status remains authoritative in the existing vault.
+  7. Existing Agent trends validators already support US and GB+IE; revised draft reuses that taxonomy.
+  8. Existing scheduler has one active schedule per account and no niche dimension; multi-niche scheduling remains Phase 9 design only.
+- Four static test functions for the revised migration were manually invoked and passed. PostgreSQL test source now covers credential/profile linkage, membership, primary-niche uniqueness, account separation, immutable publication attribution, raw analytics lineage capture, deferred source-count checks and cross-account rejection; real PostgreSQL execution remains pending.
+- Open-source decision: reuse current FastAPI/Pydantic/Psycopg 3/cryptography stack and Python stdlib `zoneinfo`; no new package or ORM is justified. License/source evidence is recorded in `docs/MODEL2-PHASE1-INVENTORY.md`. No external dependency added.
+- Environment: no `psql`, `pg_isready`, `postgres`, or `pytest` executable; system Python 3.11.2 has no pytest. No DB connection or runtime integration test was attempted.
+- No application source code was changed during Phase 2 review; the isolated migration and test drafts were revised after owner decision A. No production DB, Render, GitHub write, OAuth, Pinterest API write, Pin or Board was touched.
+- Owner decision A received: one operator manages multiple Pinterest accounts. No multi-tenant users or synthetic owner identity is introduced.
+- Revised migration 013 and both focused test files remain draft-only. Next: validate migration SQL and static tests, then run PostgreSQL integration only against a verified disposable database. Do not advance to Phase 3 until Phase 2 exit gates pass.
+
+## Model 2 Phase 2 — owner model decision and revised schema draft (2026-11-08)
+
+- Owner selected **A: one owner/operator manages multiple Pinterest accounts**. Model 2 is deployment-scoped to one operator; no multi-tenant users/tenants or synthetic owner IDs will be introduced. Each Pinterest account remains separately scoped by the existing canonical pinterest:<user_id> account ID.
+- Existing shared API key is service authentication only, not proof of a distinct human identity. Do not invent created_by_user_id or claim multi-user isolation. Registry write routes remain behind the existing protected operator/service boundary.
+- Revised only the isolated draft migration 013 and its two tests; updated docs/MODEL2-PHASE2-SCHEMA-REVIEW.md.
+- Revised schema includes: profile FK to existing pinterest_credentials(account_id) with canonical pinterest: prefix validation; active|paused operator profile state (credential status remains authoritative in existing vault); restrictive FKs/no cascaded historical deletion; explicit immutable model2_publication_niche_attributions keyed to exact publication/account/niche mapping; bounded JSONB settings (empty until defined) and metrics (existing four Learning Loop metric keys only); sample_size <= source_snapshot_count; existing US / GB+IE market taxonomy reused.
+- Attribution must be written inside the existing publishing gateway's PostgreSQL reservation transaction before provider network I/O in a later approved implementation phase. Existing raw analytics remain in pin_analytics_snapshots and join through publication_id. No legacy NULL-account publication may be guessed or backfilled.
+- Metadata-only credential existence lookup, gateway attribution integration, timezone validation via existing ZoneInfo, repository/API work, and PostgreSQL integration tests remain future phase work. No app source was modified.
+- git diff --check passed after the edits. Pytest and PostgreSQL migration/integration tests have not been run in this checkpoint. No PostgreSQL connection, production DB mutation, commit/push/PR/merge/deploy, OAuth operation, Pinterest API write, Pin/Board creation, image hosting, or changes to owner backup/clean production snapshot occurred.
+
+- This 2026-11-08 owner-decision checkpoint supersedes the earlier Phase 2 review bullets that said the ownership model was undecided and that attribution did not exist in the draft. Phase 2 is still not closed; schema/runtime verification remains pending.
+
+- Deeper lineage review added a sixth draft table, model2_learning_snapshot_sources. It links each aggregate to exact pin_analytics_snapshots.id, publication, account and niche via composite restrictive FKs. Deferred constraint triggers validate source_snapshot_count equals source rows and sample_size equals distinct attributed publications at transaction commit. Source lineage is immutable. Static test coverage expanded to this lineage contract. This is still an unapplied draft; PostgreSQL execution is pending.
+
+- Further lineage hardening: Model 1's Learning Loop uses ON CONFLICT DO UPDATE for an existing Pinterest Pin/date-range analytics row. The Model 2 source-lineage table now captures the exact JSONB metrics via a BEFORE INSERT trigger, so later Model 1 refreshes cannot rewrite the historical input used by a Model 2 aggregate. PostgreSQL test source now exercises source capture, immutability, deferred count mismatch and cross-account rejection. Test fixture teardown truncates only immutable lineage tables inside the explicitly disposable TEST_DATABASE_URL database and cleans its uniquely named synthetic rows. None of these PostgreSQL tests have been executed locally.
+
+- PostgreSQL test-source review caught and corrected the count-trigger preconditions: membership-only aggregates now declare zero source rows, while the cross-account rejection case also uses zero counts so its expected FK failure is not masked by a deferred count error. The positive lineage test now refreshes a raw analytics row after aggregation and asserts the immutable captured metrics remain unchanged.
+
+- Phase 2 gate clarified: metadata-only credential lookup and gateway attribution integration are future Phase 4/6 implementation requirements, not prerequisites to schema-review closure. Phase 2 itself remains open until migration 013 executes successfully on a verified disposable PostgreSQL 16 database, focused static + PostgreSQL tests pass, test cleanup is verified, a forward-fix recovery plan is documented, and owner accepts the final schema contract. No TEST_DATABASE_URL is configured on the current device, and no pytest/PostgreSQL server binaries are available; no DB was contacted.
+
+### Model 2 Phase 2 — additional source-only audit findings (2026-11-08)
+
+- Re-ran the four static migration test functions directly: **4/4 passed**. Python compilation of both Model 2 test files passed; `git diff --check` passed. These are static/source checks only, not pytest collection or PostgreSQL execution.
+- Additional concurrency review identified an unresolved race in `model2_validate_learning_snapshot_source_counts`: two transactions may concurrently add different source rows to an already-committed learning snapshot. Without serialization on the parent snapshot row, each deferred trigger may count only its own uncommitted row and both transactions could commit, violating the final source count. Required before approval: parent-row serialization with a documented lock order and a real two-connection PostgreSQL regression test. Migration 013 was not changed pending executable verification.
+- The PostgreSQL fixture truncates both immutable lineage tables during cleanup. This is safe only on a dedicated disposable test database with serialized tests; parallel fixtures could erase each other's rows. Before any run, independently verify TEST_DATABASE_URL is disposable and distinct from DATABASE_URL, and run the test file without parallel workers. A parallel-safe cleanup design remains future work if parallel execution is required.
+- Current environment still has no pytest, psql, postgres, initdb, psycopg, psycopg_pool, or SQL parser package; TEST_DATABASE_URL is unset. The `docker` executable is a previously identified udocker wrapper, not verified Docker Engine. No database was contacted and no migration was applied.
+- Phase 2 remains IN PROGRESS. Active isolated worktree only; no application source edits, commit, push, PR, deployment, production DB operation, OAuth action, Pinterest write, Pin/Board creation, or Personal Browser activity.
+
+
+### Model 2 Phase 2 — concurrency serialization draft update (2026-11-08)
+
+- Addressed the source-only concurrency finding in migration 013 draft: added `model2_lock_learning_snapshot_source_parent()` and a `BEFORE INSERT` trigger that obtains `SELECT ... FOR UPDATE` on the parent learning snapshot before accepting a source row. Writers targeting the same snapshot serialize; callers inserting across multiple snapshots should use ascending learning_snapshot_id lock order. This is a draft-level design fix, not a runtime-verified guarantee.
+- Added static regression `test_model2_learning_source_writers_serialize_on_parent_snapshot` and two-connection PostgreSQL regression `test_model2_learning_source_concurrent_inserts_are_serialized`. The runtime test holds writer one open, starts writer two, asserts it blocks, then expects writer two to fail deferred source-count validation after writer one commits.
+- Latest checks: **5/5 static migration test functions manually passed**; `py_compile` passed for both Model 2 test files; `git diff --check` passed. These are source/static checks only.
+- PostgreSQL runtime tests remain NOT RUN. Current environment: `TEST_DATABASE_URL` unset, `DATABASE_URL` unset, pytest/psycopg/psycopg_pool/psql/postgres/initdb unavailable. No DB was contacted. No migration applied.
+- Fixture still uses database-wide TRUNCATE for immutable lineage tables; only run the PostgreSQL file serially on a verified disposable TEST_DATABASE_URL. Parallel-safe fixture cleanup is not implemented.
+- Phase 2 remains IN PROGRESS. Do not advance to Phase 3, production migration, commit/push/PR/merge/deploy, OAuth or Pinterest writes until all Phase 2 gates and owner schema acceptance are complete.
+
+
+### Model 2 Phase 2 — approved test environment provisioning and verification (2026-11-08)
+
+- Owner approved a test-only local PostgreSQL environment. Device inspection: Debian 12 ARM64, root shell with no Linux capabilities, approx. 8.4 GB free disk initially.
+- Installed official PostgreSQL server/client **16.15** from PGDG APT repository; signing key fingerprint verified as `B97B 0AFC AA1A 47F0 44F2 44A0 7FCC 7D46 ACCC 4CF8` (full fingerprint in Phase 2 review). Installed no project dependencies or changed requirements/lockfiles.
+- Created external venv `/root/.venvs/model2-pg16` with pytest 9.2.0, Psycopg 3.3.8, psycopg-pool 3.3.3, Pydantic Settings 2.16.2 and pglast 8.7.
+- Local PostgreSQL cluster creation is not possible in this Android-hosted kernel: initdb repeatedly fails with `could not create shared memory segment: Function not implemented` on `shmget`; kernel SysV shared-memory sysctls are absent and `unshare -Ur` fails with `Invalid argument`. Mmap/huge-pages settings did not resolve it. The package post-install default cluster also failed; `pg_lsclusters` reports no cluster. No PostgreSQL server started and no migration was executed.
+- `DATABASE_URL` and `TEST_DATABASE_URL` were both unset. Tests were run from `/tmp` with secret-bearing environment variables explicitly unset; no repository `.env` file was loaded. No production DB or external provider was contacted.
+- Updated migration 013 concurrency protection: added `source_lock_version BIGINT NOT NULL DEFAULT 0 CHECK (source_lock_version >= 0)` to `model2_learning_snapshots`; the BEFORE INSERT source trigger increments this field via a real parent UPDATE. This serializes READ COMMITTED writers and causes stale REPEATABLE READ/SERIALIZABLE writers to receive serialization failure rather than commit using an old snapshot. Lock ordering for multi-snapshot source writes remains ascending learning_snapshot_id.
+- Expanded two-connection regression test to cover READ COMMITTED (deferred count rejection) and REPEATABLE READ (SerializationFailure). It establishes the second transaction's snapshot before the first commits and observes actual lock wait using `pg_blocking_pids()`. Test is authored but not executed due unavailable local server.
+- Latest actual `pytest -q` on both Model 2 test files: **5 passed, 9 skipped**; all 5 static tests passed, all 9 PostgreSQL integration cases skipped because TEST_DATABASE_URL is unset. This is not an integration-test pass.
+- Both test files `py_compile`: PASS. `pglast 8.7` parsed all **14/14 numbered migration SQL files** and all **5/5 PL/pgSQL functions** in migration 013. `git diff --check`: PASS. Parser success is not live PostgreSQL execution.
+- Phase 2 remains IN PROGRESS / NOT CLOSED. Need a Linux host or CI runner with functional PostgreSQL 16 shared memory/IPC and normal filesystem ownership to run full migration sequence and integration tests against a verified disposable DB. Keep tests serial because fixture teardown globally truncates immutable lineage tables.
+- No commit, push, PR, merge, deploy, production DB action, OAuth operation, Pinterest API write, real Pin/Board creation, or Personal Browser activity occurred. Owner backup worktree and clean production snapshot remain untouched.
+
+- Owner approved a dedicated PostgreSQL 16 GitHub Actions test workflow and push limited to the Model 2 feature branch. Added `.github/workflows/model2-postgres-integration.yml`: push trigger only for `feat/model2-open-source-reuse`, PR target `main`, manual dispatch; ephemeral loopback-only `postgres:16` service/database `model2_test`; `DATABASE_URL` forced empty; TEST_DATABASE_URL target asserted before running the two Model 2 test files. The test fixture invokes `database.run_migrations()` and applies all numbered migrations to that ephemeral DB. No secrets or production service configuration are passed. No PR creation, merge, deployment or production DB operation approved.
+- Local workflow validation: no YAML parser installed yet. Python compile and `git diff --check` pass; local pytest remains 5 passed / 9 skipped because PostgreSQL server cannot start on the Android kernel. GitHub Actions run will be the first actual database execution.
+- CI preparation review found the new concurrency test used suffixed product/pin/board identifiers that exact-match fixture teardown would miss. Updated teardown to prefix-match the test-specific UUID suffix across analytics, publications, products and content versions; added a static regression assertion. Latest local result: **6 static tests passed, 9 PostgreSQL integration tests skipped**; workflow YAML parsed with PyYAML; `git diff --check` passed. The PostgreSQL cases still await GitHub-hosted PostgreSQL 16 execution.
+
+### First GitHub-hosted PostgreSQL 16 run — 2026-11-08
+
+- Workflow commit `2d418fcee3ea12f99b6268b21fddebff5e189536` pushed successfully to only `feat/model2-open-source-reuse`. GitHub Actions run `42497549120` started a healthy PostgreSQL 16 service, passed the loopback-only disposable DB preflight, installed requirements, and executed the Model 2 test files.
+- First real PostgreSQL result: **12 passed, 3 failed**. One expected FK-negative test was masked by primary-niche uniqueness because it attempted a second primary mapping; changed it to `is_primary=FALSE` so it tests the FK independently. Two concurrency cases created a snapshot with expected counts 1/1 and committed before source insertion; deferred count trigger correctly rejected this invalid setup. Corrected test now creates 0/0 snapshot, inserts first source and updates counts to 1/1 in the same first-writer transaction, then lets second writer race under READ COMMITTED or REPEATABLE READ.
+- The 12 other PostgreSQL tests passed on actual PostgreSQL 16. This is not a green run; corrected tests still require a new GitHub Actions execution.
+- Local after-fix checks: 6 static tests passed, 9 PostgreSQL tests skipped (no local server), YAML parse passed, Python compile passed, `git diff --check` passed.
+- Next: push corrected PostgreSQL test and update docs/context only on the same Model 2 feature branch, then inspect the next CI run. Phase 2 remains IN PROGRESS / NOT CLOSED.
+
+- Second GitHub PostgreSQL run `42497741517` on commit `ac731fc6efd540ab9b3373e8bcb73306bbd081f4` returned **12 passed, 3 failed**. Further test-code defects found: the membership test wrongly expected that a second non-primary niche mapping was forbidden (contradicts multi-niche design), and direct Psycopg connections use tuple rows by default, so dict-key indexing prevented the concurrency worker from signaling readiness. Corrected the membership test to prove an explicitly assigned second niche can have a snapshot, while separate test covers one-primary uniqueness; corrected PID/blocker reads to tuple indexing. No migration SQL changed. Latest local: 6 static pass, 9 PostgreSQL skipped; Python compile and diff check pass. Third GitHub run required; Phase 2 remains open.
+
+- Third GitHub PostgreSQL run `42497944796` on commit `eceecc2be3bbc6d93700eb590d27de332a5c2d04` completed successfully: **15 passed, 0 failed, 0 skipped** against disposable PostgreSQL 16.15. This includes 6 static tests + 9 PostgreSQL integration cases, including concurrent source insert regression under READ COMMITTED and REPEATABLE READ. Migration runner executed from the test fixture against a fresh ephemeral DB.
+- Added a final workflow post-test gate to compare the complete schema_migrations ledger with all numbered migration files and assert test fixture cleanup left no synthetic credentials/profiles/niches/mappings/learning/source/attribution/analytics/publication/product/content rows. YAML and embedded Python parse/compile locally. This additional gate has not yet run on GitHub.
+- Phase 2 remains IN PROGRESS until the new ledger/cleanup gate passes, forward-fix recovery plan is documented, and owner accepts the final schema contract. No non-disposable database received migration 013.
+- Documented Phase 2 forward-fix/recovery plan in `docs/MODEL2-PHASE2-SCHEMA-REVIEW.md`: migration runner applies migrations in one pooled-connection transaction and records version after SQL success; SQL failure rolls back uncommitted DDL/ledger changes; no destructive down migration; use fresh ephemeral CI DB, and for any future persistent DB require verified backup/restore rehearsal, isolated clone rehearsal, exact target/approval record, and reviewed forward-fix migration. Restore only if post-backup writes can safely be discarded. No persistent or production DB apply is authorized.
+
+- Final isolated CI gate run `42498159463` on commit `7c83183ba30fad5d4a85687237b6d58c1f46257b` passed on GitHub-hosted PostgreSQL 16.15: **15 passed, 0 failed, 0 skipped** (6 static + 9 PostgreSQL integration tests). Both READ COMMITTED and REPEATABLE READ concurrency regressions passed.
+- Post-test gate verified all **14/14 numbered migration files** are recorded in schema_migrations and zero synthetic test leftovers remain across credentials, profiles, niches, mappings, learning snapshots, sources, attributions, analytics, publications, products and content versions. Database target was loopback-only ephemeral `model2_test`; DATABASE_URL empty; service destroyed at job end.
+- Phase 2 technical gates satisfied, including full migration execution, focused tests, concurrency, cleanup and forward-fix recovery plan. Phase 2 remains awaiting explicit owner acceptance of final schema contract before Phase 3. No persistent DB/production migration authorized.
+
+### Model 2 Phase 2 — final schema accepted; Phase 2 closed (2026-11-09)
+
+- Owner explicitly approved the final Model 2 Phase 2 schema contract on 2026-11-09.
+- **Phase 2 is CLOSED / ACCEPTED.** The reviewed six-table additive registry, account–niche mapping rules, immutable publication attribution, exact raw analytics lineage capture, metric constraints, concurrency protection and deferred count invariants are accepted.
+- Technical evidence remains GitHub Actions run `42498273839` on commit `82d18765bc92451d8411b81406ef420f1836712b`: PostgreSQL 16.15, **15 passed / 0 failed / 0 skipped**, all 14 numbered migrations recorded, and zero synthetic fixture rows left after cleanup. Workflow: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42498273839
+- Acceptance closes the schema-design phase only. It does **not** authorize applying migration 013 to Neon or another persistent/shared DB, production backfill, PR creation, merge, deployment, OAuth/provider actions, or Pinterest writes. No real Pin/Board was created.
+- Next phase under the frozen architecture: **Phase 3 — Domain Contracts**. Follow `docs/MODEL2-FOUNDATION.md`; specify entities, invariants, state transitions and typed boundaries before implementation. Continue reusing Model 1 publisher, credential vault, publication ledger, scheduler, raw analytics and Learning Loop; do not duplicate them.
+- Active Model 2 worktree remains `/root/restore-staging/Pinterest-Agent-model2-worktree`, branch `feat/model2-open-source-reuse`. Owner backup worktree and clean production snapshot remain untouched. No commit, push, PR, merge or deployment was performed to record this approval.
+
+### Model 2 Phase 3 — Domain Contracts started (2026-11-09)
+
+- Phase 2 was formally closed after explicit owner schema acceptance; see `docs/MODEL2-PHASE2-SCHEMA-REVIEW.md` section 18.
+- Started Phase 3 in accordance with the frozen phase order. New artifacts: `app/model2_domain.py`, `tests/test_model2_domain.py`, and `docs/MODEL2-PHASE3-DOMAIN-CONTRACTS.md`.
+- Reuse assessment: existing Pydantic v2 is sufficient for typed contracts; existing stdlib `zoneinfo` validation in `app/affiliate_scheduler.py` is reused; existing region taxonomy `US|GB+IE` is reused from `app/trends.py` and `app/trend_visuals.py`. No new dependency/library added.
+- Added pure, side-effect-free contracts for canonical Pinterest account IDs, lowercase kebab-case niche slugs, account profile metadata/status/timezone, niche metadata/region/status, and account–niche assignment state/primary/settings rules. They do not perform DB, vault, Pinterest, OAuth or provider calls.
+- Initial focused domain suite: **22 passed**. Full local repository suite: **283 passed, 56 skipped, 1 non-blocking warning**. PostgreSQL integration tests skipped because DB environment variables are unset; no DB was contacted. Python compilation and `git diff --check` passed. Full combined Model 2 test run and final Phase 3 contract/security review are still pending; Phase 3 remains IN PROGRESS.
+- Primary uniqueness across multiple mappings remains a database/repository transaction invariant (Phase 4), not something a single input model can establish. Account connection and authorization also remain repository checks; the domain model does not claim either.
+- No migration, DB connection, credential access, OAuth/provider operation, Pinterest write, real Pin/Board, PR, commit, push, merge or deployment occurred. Active isolated worktree only; owner backup and clean production snapshot remain untouched.
+
+- Contract cross-check caught and corrected one subtle schema mismatch: migration 013's partial unique index counts only `is_primary=TRUE AND status='active'`, so a paused mapping may retain its primary flag. The initial Phase 3 validator was stricter than the approved schema; it was removed and a regression test now preserves the intended paused/reactivation semantics.
+- Combined latest local test run after correction: **28 passed, 9 skipped**. The 9 skipped cases are PostgreSQL integration tests because `TEST_DATABASE_URL` was explicitly unset; the 28 passing cases include 22 domain tests and 6 static migration tests. Full local repository suite: **283 passed, 56 skipped, 1 non-blocking warning**. PostgreSQL integration tests skipped because DB environment variables are unset; no DB was contacted. Python compilation and `git diff --check` passed. No DB was contacted.
+
+
+### Model 2 Phase 3 — Domain Contracts CLOSED (2026-11-09)
+
+- Phase 3 is formally closed; full contract/schema/security review is in `docs/MODEL2-PHASE3-DOMAIN-CONTRACTS.md` section 7.
+- Implemented pure Pydantic v2 contracts in `app/model2_domain.py`: canonical account IDs, bounded lowercase niche slugs, account profile metadata/status/timezone, niche metadata/region/status, and account–niche assignment fields/settings.
+- Reused existing Pydantic and stdlib `zoneinfo`; reused Model 1 `US|GB+IE` regions. No new project dependency or dependency-manifest change.
+- Final full repository suite: **204 passed, 27 skipped, 1 warning** (22.05s). All 27 skips were database integration gates because `DATABASE_URL`, `TEST_DATABASE_URL` and `PB10_TEST_DATABASE_URL` were unset. No database was contacted. The one non-blocking warning is Starlette's existing httpx/TestClient deprecation notice.
+- Focused Model 2 tests: **37 passed, 9 skipped** (the PostgreSQL integration tests intentionally skipped locally). Boundary coverage includes strict types, canonical account identity, slug grammar/length, timezone validity, supported region values, paused-primary behavior and closed settings contract.
+- Runtime packages required for full tests were installed only in isolated `/root/.venvs/model2-pg16` from existing `requirements.txt`; repository dependency files were not modified.
+- Security review: domain contracts contain no secrets or human actor identity; account ID validation does not establish connection or caller authorization. Phase 4 must enforce account existence and authorization in the repository/service boundary using a metadata-only credential query; do not call token-decrypting/refreshing `get_pinterest_credential` for existence checks.
+- No production DB, migration, OAuth/provider operation, Pinterest write, real Pin/Board, PR, commit, push, merge or deployment occurred.
+- **Next: Phase 4 — Repository Layer.** Its first task is to inspect and document existing transaction/pool patterns and the credential-vault metadata lookup boundary before writing repository code.
+
+
+### Model 2 Phase 4 — Repository Layer IN PROGRESS (2026-11-09)
+
+- Phase 3 Domain Contracts are formally closed; evidence is in `docs/MODEL2-PHASE3-DOMAIN-CONTRACTS.md` section 7.
+- Phase 4 inventory and implementation are documented in `docs/MODEL2-PHASE4-REPOSITORY-LAYER.md`.
+- Reused existing Psycopg 3 pool/connection/transaction pattern in `app/database.py`; no second pool or persistence framework.
+- Added metadata-only credential helper `pinterest_account_is_connected_in_transaction` in `app/credential_vault.py`. It selects only account_id for connected state with `FOR SHARE`; it does not read ciphertext, decrypt, refresh OAuth, or call Pinterest.
+- Added `app/model2_repository.py` for profile create/update/read/list, niche create/update/read/list, account–niche assignment upsert, and account-scoped assignment listing. Writes use one connection/transaction. Account profile row locking serializes assignment and primary-niche updates; archive/pause transitions retain rows and pause active mappings.
+- Added `tests/test_model2_repository.py` unit coverage and seven PostgreSQL integration cases in `tests/test_model2_registry_postgres.py` for metadata-only onboarding, revoked credential reactivation refusal, primary swap/account isolation, niche archival, archived-niche assignment rejection, and concurrent primary selection.
+- Updated the dedicated GitHub Actions workflow to run domain, repository, migration and PostgreSQL tests, and expanded post-test fixture cleanup checks for the new test niches.
+- Local focused Model 2 test run: **51 passed, 16 skipped** (16 PostgreSQL integration cases skipped because TEST_DATABASE_URL is unset).
+- Full repository run after implementation: **218 passed, 34 skipped, 1 warning**. Database integration gates intentionally skipped; no DATABASE_URL, TEST_DATABASE_URL or PB10_TEST_DATABASE_URL was set. No DB was contacted.
+- The 7 new PostgreSQL repository scenarios still require the dedicated disposable PostgreSQL 16 GitHub Actions run. Phase 4 is NOT closed until that CI evidence and cleanup gate pass.
+- No production DB, migration, provider/OAuth action, Pin/Board, commit, push, PR, merge or deployment has occurred for Phase 4 at this checkpoint.
+
+
+### Model 2 Phase 4 — Repository Layer CLOSED (2026-11-09)
+
+- Phase 4 is formally closed; final evidence and review are in \`docs/MODEL2-PHASE4-REPOSITORY-LAYER.md\` section 8.
+- Commit \`20109276ad9ce5f3c6b9844b74aa57c23d37e660\` was pushed only to \`feat/model2-open-source-reuse\`.
+- Authoritative GitHub Actions run **42526560689** succeeded: **67 passed, 0 failed, 0 skipped** on disposable PostgreSQL 16.15. Run link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42526560689
+- All 14 numbered migrations were recorded; post-test cleanup verified zero fixture rows across Model 2 registry/learning tables and synthetic Model 1 publication/analytics/product/content tables. The ephemeral PostgreSQL service was stopped.
+- Phase 4 reused the existing Psycopg pool/transaction boundary. Credential-state validation is metadata-only (\`SELECT account_id ... status='connected' FOR SHARE\`); no token/ciphertext read, decryption or OAuth refresh. Assignment writes lock the account profile row; CI proved concurrent primary selection leaves exactly one active primary. Profile pause and niche archive pause mappings without deleting history. Listing is scoped by exact account ID.
+- Local full repository suite after Phase 4 implementation: **218 passed, 34 skipped, 1 warning**. CI provides the actual PostgreSQL integration coverage.
+- No Neon/production DB, migration, OAuth/provider action, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
+- **Next: Phase 5 — Protected Registry API.** Reuse existing fail-closed service API-key authentication and router registration; do not invent human actor IDs or multi-tenant ownership. Test auth failure, account scoping, state conflicts, and absence of provider writes.
+
+### Model 2 Phase 5 — Protected Registry API IN PROGRESS (2026-11-09)
+
+- Phase 4 is formally closed; PostgreSQL CI evidence is GitHub Actions run 42526560689 (67 passed, 0 failed, 0 skipped; 14 migrations recorded; zero test fixtures left).
+- Phase 5 design and current implementation are documented in docs/MODEL2-PHASE5-PROTECTED-API.md.
+- Added shared fail-closed service-key dependency app/auth.py; app.main.require_api_key imports/re-exports it and require_configured_api_key remains a compatibility alias. Existing Model 1 API tests pass after this auth consolidation.
+- Added app/model2_registry.py, a protected /model2 router using the Phase 3 domain contracts and Phase 4 repositories only. Endpoints cover account profiles, niches and account–niche assignments; no delete, provider, OAuth or publishing endpoint.
+- Response models are explicit allowlists with extra="forbid". Request validation enforces path/body identity equality and explicit lifecycle fields on PUT to prevent accidental reactivation/default resets.
+- Added tests/test_model2_registry_api.py for authentication, canonical IDs, path/body mismatch, state/error mapping, response safety, exact account scoping and no publisher invocation.
+- Focused API/domain/repository run: 64 passed, 1 warning. Existing Model 1 API regression suite: 40 passed, 1 warning. Full repository suite: 237 passed, 34 skipped, 1 warning. Database tests skipped locally because DB env vars are unset.
+- Dedicated GitHub Actions workflow has been expanded to run Model 2 API tests and existing Model 1 API regressions alongside the disposable PostgreSQL tests. CI for the new Phase 5 changes is pending.
+- Phase 5 is NOT closed until feature-branch CI passes on the exact API commit and verifies no provider/production side effects.
+
+### Model 2 Phase 5 — Protected Registry API CLOSED (2026-11-09)
+
+- Phase 5 is formally closed; final evidence is in docs/MODEL2-PHASE5-PROTECTED-API.md section 7.
+- Commit b16511de0fa15d9ac07f5dc2e201eadb231b6d25 was pushed only to feat/model2-open-source-reuse.
+- Authoritative GitHub Actions run 42527370397 succeeded: 127 passed, 0 failed, 1 non-blocking Starlette/httpx deprecation warning. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42527370397
+- All 14 numbered migrations recorded; post-test cleanup found zero fixture rows; ephemeral PostgreSQL 16.15 service stopped.
+- Shared fail-closed API-key auth is in app/auth.py and reused by app.main. Model 2 routes use only Phase 3 domain contracts and Phase 4 repositories; all routes protected, path/body IDs matched, lifecycle updates explicit, response allowlists forbid unapproved fields. No provider/Pinterest/publishing side effects.
+- Local full suite: 238 passed, 34 skipped, 1 warning. CI executed all PostgreSQL tests.
+- No Neon/production DB, migration, OAuth/provider action, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
+- Next: Phase 6 — Niche Context Integration. Inspect the existing workflow/content-generation path first; add only optional validated niche context, preserving existing Model 1 behavior when no niche context is supplied.
+
+
+### Model 2 Phase 6 — Niche Context Integration IN PROGRESS (2026-11-09)
+
+- Phase 5 is closed. Phase 6 implementation details are in docs/MODEL2-PHASE6-NICHE-CONTEXT.md.
+- Existing Model 1 workflow/content generator and single publishing gateway are reused; no second workflow or publisher.
+- Added optional niche_id to the existing workflow. With no niche_id, the original Model 1 request fingerprint, prompt content, prompt version pin-content-v1, generator arguments and gateway arguments are preserved.
+- With niche_id, the workflow requires the exact active account profile + assignment + niche, sends bounded structured metadata as untrusted descriptive context to the existing DeepSeek prompt, includes the metadata snapshot in the workflow fingerprint, and records prompt version pin-content-v2-niche-context.
+- Existing publication reservation transaction now locks profile, assignment, niche and connected credential metadata, then inserts the existing pin_publications row and immutable Model 2 attribution in the same transaction before Pinterest POST /pins. No token decryption/refresh is added.
+- Existing failed attributed publications preserve and revalidate their niche on retry. Explicit niche retry may attribute a failed legacy reservation; succeeded/pending/unknown legacy publications without attribution cannot be backfilled. Mismatched niche retry and inactive assignment/credential are blocked before Pinterest POST.
+- Added workflow/gateway/prompt tests, repository tests, and disposable PostgreSQL attribution/retry tests. CI workflow includes these new tests.
+- Focused local suite: 40 passed. Full local suite: 256 passed, 43 skipped, 1 warning. All local DB skips are expected because database env vars are unset; no database was contacted locally.
+- Phase 6 remains IN PROGRESS until GitHub Actions disposable PostgreSQL integration and cleanup checks pass on the exact feature commit. No real Pin/Board, provider/OAuth action, production DB/migration, PR, merge or deployment.
+
+
+### Model 2 Phase 6 — Niche Context Integration CLOSED (2026-11-09)
+
+- Phase 6 formally closed. Evidence: docs/MODEL2-PHASE6-NICHE-CONTEXT.md section 8.
+- Commit f8700286cd286a4601bc3d5afcf40500584fafef pushed only to feat/model2-open-source-reuse.
+- GitHub Actions run 42531360160 succeeded: 162 passed, 0 failed, 0 skipped, 1 non-blocking deprecation warning. Link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42531360160
+- All 14 numbered migrations recorded; fixture cleanup verified zero Model 2 and synthetic Model 1 rows; ephemeral PostgreSQL service removed.
+- No-context Model 1 workflow behavior regression-tested. Niche context is optional, exact-account scoped, active-state checked, bounded and treated as untrusted descriptive data. Fingerprint includes niche metadata snapshot and niche prompt version is distinct.
+- Existing publishing gateway and ledger reused; immutable attribution is reserved atomically before Pinterest POST. Legacy success/pending/unknown rows without attribution cannot be backfilled; inactive/mismatched cases block.
+- Local full suite: 256 passed, 43 skipped, 1 warning. CI executed the disposable PostgreSQL integration suite with no skips.
+- No real Pin/Board, Pinterest API write, OAuth refresh, production DB/migration, PR, merge or deployment occurred.
+- Next: Phase 7 — Niche Analytics Projection. Reuse Model 1 raw analytics and immutable Model 2 publication attribution, preserve exact source lineage, missing metrics remain unknown (not zero), read-only descriptive aggregates only.
+
+
+### Model 2 Phase 7 — Niche Analytics Projection IN PROGRESS (2026-11-09)
+
+- Phase 6 is formally closed. Phase 7 design and implementation checkpoint: docs/MODEL2-PHASE7-NICHE-ANALYTICS.md.
+- Reuses existing pin_analytics_snapshots, pin_publications, immutable model2_publication_niche_attributions, model2_learning_snapshots and model2_learning_snapshot_sources. No new migration, raw analytics table, dependency, ML framework or provider integration.
+- Added app/model2_learning.py with exact account+niche+period projection, four-metric completeness-aware aggregation, immutable source lineage, idempotent same-period behavior, and protected POST/GET endpoints registered in app.main.
+- Only confirmed succeeded publications with matching Pinterest Pin ID and exact niche attribution are included. Current paused/archived mapping state does not erase historical evidence.
+- Source analytics/publication rows are locked FOR SHARE through transaction; trigger captures exact raw JSONB values. Missing metrics remain NULL, not zero. No eligible raw rows returns insufficient_data without storing an empty snapshot.
+- Added unit/API tests and PostgreSQL tests for attribution/account/period isolation, source capture, Model 1 raw refresh immutability, idempotency, pending publication exclusion and historical paused/archived evidence.
+- Local focused projection/API tests: 18 passed, 28 PostgreSQL tests skipped. Full local suite: 274 passed, 48 skipped, 1 warning. Local DB variables are unset; no database was contacted.
+- CI workflow includes all new projection tests. Phase 7 remains open until exact-head GitHub Actions PostgreSQL integration and fixture cleanup pass.
+- No production DB/migration, provider/OAuth action, Pinterest write, Pin/Board, PR, merge or deployment.
+
+
+### Model 2 Phase 7 — Niche Analytics Projection IN PROGRESS (2026-11-09)
+
+- Phase 6 is formally closed and pushed to feat/model2-open-source-reuse at commit 96a2338. Phase 6 CI evidence: run 42531360160, commit f8700286cd286a4601bc3d5afcf40500584fafef, 162 passed, 0 failed, 0 skipped; all 14 migrations recorded and fixture cleanup verified.
+- Phase 7 implementation is documented in docs/MODEL2-PHASE7-NICHE-ANALYTICS.md.
+- Added app/model2_learning.py with protected projection/read APIs, exact account+niche+period filtering, successful publication and matching Pinterest Pin ID checks, immutable source lineage, idempotency and descriptive metric aggregation.
+- Missing/null metric values remain unknown (not zero); any incomplete source makes that metric aggregate NULL. Unsupported keys, booleans, non-numeric, negative and non-finite values are rejected.
+- Raw analytics/publication rows are locked FOR SHARE during source selection; migration 013 source trigger captures exact raw metrics into immutable lineage.
+- Local full suite: 274 passed, 48 skipped, 1 non-blocking warning. PostgreSQL tests skipped because local database env vars are unset; no database was contacted.
+- GitHub Actions Phase 7 disposable PostgreSQL gate and cleanup verification remain pending. Do not close Phase 7 until exact feature-branch head CI passes. No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
+
+
+### Model 2 Phase 7 — Niche Analytics Projection CLOSED (2026-11-09)
+
+- Phase 7 formally closed. Evidence: docs/MODEL2-PHASE7-NICHE-ANALYTICS.md section 8.
+- Feature branch commit f918c6bfe4cf55113216f9bdc71f2f614397649f. GitHub Actions run 42532367227 succeeded: 186 passed, 0 failed, 0 skipped in selected test step. Link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42532367227
+- All 14 migrations recorded; fixture cleanup verified zero Model 2 and synthetic Model 1 rows; disposable PostgreSQL container stopped.
+- Projection includes only successful exact-account/exact-Pin publications with immutable niche attribution and exact period bounds; raw analytics/publication rows locked FOR SHARE; source metrics captured immutably.
+- Missing/null metric stays unknown, not zero. Distinct publication count and raw source-row count are separately tracked. Same-period is idempotent; empty period returns insufficient_data; historical paused/archived attribution remains readable.
+- Local full suite: 274 passed, 48 skipped, 1 non-blocking warning; local database tests skipped because no DB env vars.
+- No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
+- Next: Phase 8 — extend existing authenticated read-only dashboard with account profiles, niche assignments and evidence-backed aggregates. No new frontend/auth/pipeline.
+
+
+### Model 2 Phase 8 — Read-only Dashboard IN PROGRESS (2026-11-09)
+
+- Phase 7 formally closed. CI run 42532367227, commit f918c6bfe4cf55113216f9bdc71f2f614397649f: 186 passed, 0 failed, 0 skipped; all 14 migrations and cleanup verified.
+- Phase 8 design/implementation details: docs/MODEL2-PHASE8-READONLY-DASHBOARD.md.
+- Reused existing app/dashboard.py, session auth and embedded HTML; added authenticated GET /dashboard/api/model2 and a read-only account/niche/evidence panel. No new frontend or auth system.
+- Displays account profile, canonical ID, statuses/timezone, niche/region/primary mapping, successful attributed publication count, snapshot count and latest evidence period/metrics. NULL renders as Unknown. Paused/archived states and profiles without niche assignments remain visible.
+- Uses to_regclass compatibility check so a pre-migration database retains existing Model 1 dashboard behavior. SQL is read-only and does not invoke publisher, scheduler, generator, OAuth or token decryption.
+- Focused dashboard tests: 7 passed. Full local suite: 279 passed, 49 skipped, 1 non-blocking warning. Local PostgreSQL tests skipped because DB env vars are unset.
+- Phase 8 exact-head GitHub Actions disposable PostgreSQL gate pending; do not close before it passes. No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
+
+
+### Model 2 Phase 8 — Read-only Dashboard CLOSED (2026-11-09)
+
+- Phase 8 formally closed. Evidence: docs/MODEL2-PHASE8-READONLY-DASHBOARD.md section 7.
+- Feature branch commit fa8805027578689277103a891cfebffd4c0781a3. GitHub Actions run 42532785414 succeeded: 194 passed, 0 failed, 0 skipped. Link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42532785414
+- All 14 migrations recorded; fixture cleanup verified; disposable PostgreSQL container stopped.
+- Existing signed dashboard session reused. Model 2 read-only API/UI displays profiles, mappings, statuses, successful attributed publication counts and persisted learning evidence; no token/affiliate URL/session secret returned.
+- Pre-013 compatibility verified through to_regclass check; Model 1 dashboard remains available when Model 2 schema absent. No write/provider/scheduler/generation/OAuth side effects.
+- Local full suite: 279 passed, 49 skipped, 1 non-blocking warning.
+- No production DB/migration, provider/OAuth action, real Pin/Board, PR, merge or deployment.
+- Next: Phase 9 — account-aware scheduling design only. Do not modify/activate live scheduler until design is separately reviewed and approved.
+
+
+### Model 2 Phase 9 — Account-aware Scheduling CLOSED (2026-11-09)
+
+- Owner explicitly approved the recommended design: one active schedule per Pinterest account, one explicit niche per Model 2 schedule; multiple niche assignments remain allowed, simultaneous active niche schedules are deferred.
+- Design and implementation checkpoint: `docs/MODEL2-PHASE9-ACCOUNT-AWARE-SCHEDULING.md`. Frozen architecture remains `docs/MODEL2-FOUNDATION.md`.
+- Added `migrations/014_model2_account_aware_scheduling.sql`: nullable `niche_id` preserves legacy Model 1 schedules; composite FK to exact account+niche mapping; canonical Model 2 account ID check; quota indexes; database immutability trigger for activated schedule configuration. No existing schedule/job rows are backfilled or rewritten.
+- Extended `CreateScheduleInput` with optional strict positive `niche_id`. Model 2 draft creation and activation require active profile, exact active assignment, active niche, profile timezone match and connected credential metadata. Credential query selects status only; no ciphertext/token access, decryption or OAuth refresh.
+- Activation rejects a replacement while any earlier schedule for that account has queued/processing jobs. Pause cancels queued jobs and leaves in-flight jobs visible. Existing one-active-schedule-per-account index remains.
+- Worker passes exact schedule `niche_id` through the existing `ProductWorkflowInput`; Model 1 legacy NULL-niche schedule behavior remains. Existing workflow/gateway remains the only publication path.
+- Model 2 account-wide quota counts processing/succeeded jobs across all schedules for the same account using actual `locked_at`/`finished_at` timestamps with `run_at` fallback, account profile timezone and DST-aware local-day boundaries. Model 2 worker claims serialize on the account profile row before schedule/job locks. Legacy NULL-niche quota behavior remains per schedule/local date.
+- Added PostgreSQL integration tests for account+niche isolation, timezone mismatch, paused assignment, revoked credential metadata, processing-job replacement guard, prior-schedule event-time quota, exact niche pass-through, schedule immutability and concurrent worker quota. Added DST unit tests and scheduler tests to dedicated disposable PostgreSQL CI.
+- Local focused run: **17 passed, 38 skipped, 1 non-blocking Starlette/httpx warning**. PostgreSQL integration tests skipped because `TEST_DATABASE_URL` is unset; no database was contacted locally. Full local repository suite: **283 passed, 56 skipped, 1 non-blocking warning**. PostgreSQL integration tests skipped because DB environment variables are unset; no DB was contacted. Python compilation and `git diff --check` passed.
+- Superseded by the final closure checkpoint at the end of this section: exact-head PostgreSQL CI passed 212 tests; all 15 migrations and cleanup verified.
+- No production/shared DB migration, live scheduler execution, provider/OAuth action, real Pin/Board, PR, merge or deployment. Workflow is mocked in tests; no real Pinterest publishing occurs.
+
+
+### Model 2 Phase 9 — FINAL CLOSURE (2026-11-09)
+
+- Phase 9 is formally closed for isolated feature-branch implementation and verification. Owner approved one active schedule per Pinterest account, with explicit niche attribution for Model 2 schedules.
+- Final code head: `761204b7e5d09cce6eb5f26543602702d5db606a`; follow-up GitHub Actions run `42536328716` succeeded: **212 passed, 0 failed, 1 non-blocking warning** on disposable PostgreSQL 16.15.
+- CI recorded all 15 numbered migrations, verified Model 2 and synthetic Model 1 fixtures cleaned, and completed container shutdown. The run included concurrent same-account quota serialization, independent different-account claims, retry idempotency-key preservation and uncertain-outcome quarantine tests.
+- Final local full suite: **283 passed, 56 skipped, 1 non-blocking warning**. Local DB tests were skipped because DB environment variables are unset; PostgreSQL evidence is the CI run above.
+- No production/shared DB migration, live scheduler execution, provider/OAuth action, real Pin/Board, PR, merge or deployment occurred or is authorized. These require separate approval.
+
+
+### Model 2 Phase 10 — Release Readiness PRE-RELEASE / BLOCKED (2026-11-09)
+
+- Started Phase 10 after Phase 9 closure. Review document: `docs/MODEL2-PHASE10-RELEASE-READINESS.md`.
+- Security review identified a quota safety gap: scheduler `uncertain` outcomes may represent an already-created Pin. Hardening now counts `uncertain` in Model 2 account quota, blocks replacement while any unresolved uncertain job exists, and prevents automatic completion of schedules with uncertain jobs. Legacy Model 1 quota semantics remain unchanged. Regression test added. Exact-head CI pending.
+- Uncertain job reconciliation is not implemented in this phase; fail-closed behavior can leave an account blocked. A documented/tested operator reconciliation path is a release blocker. Do not edit production job statuses or assume an uncertain Pin was not created.
+- Existing `.github/workflows/affiliate-scheduler-worker.yml` runs hourly and invokes deployed `/affiliate-scheduler/run-due`; it is a real publication side-effect trigger, not a dry-run. It was not run or changed. Model 2 activation and worker execution require separate explicit owner approval.
+- Migration 014 was applied only in disposable PostgreSQL CI. Production-like sanitized snapshot migration rehearsal, backup/restore rehearsal and schema rollback are not verified. Proposed safe rollback retains the additive schema; dropping migration 014 is not approved.
+- Shared API key remains service authentication, not human identity or multi-tenant isolation. Worker timing is best-effort hourly, at most one job per invocation.
+- R1 fail-closed hardening implemented in `app/affiliate_scheduler.py` and migration 014: Model 2 counts `uncertain` as quota-consuming; uncertain jobs block schedule replacement and automatic completion. Added PostgreSQL integration test and static migration-index assertion. Local full suite: **283 passed, 57 skipped, 1 non-blocking warning**; local DB integration skips are due unset DB environment variables.
+- Exact-head CI commit `5f818fa5adb5e3c45b1bd8f52d17926ae2ca2d8e`, run `42536949741`: **213 passed, 0 failed, 1 warning** on disposable PostgreSQL 16.15; all 15 migrations recorded, fixture cleanup verified and PostgreSQL container stopped.
+- Phase 10 remains PRE-RELEASE / BLOCKED by missing tested uncertain-job reconciliation/runbook and production-like migration/restore rehearsal, plus explicit owner approvals for production migration, deployment and scheduler activation. No production DB migration, live scheduler action, provider/OAuth action, real Pin/Board, PR, merge or deployment occurred or is authorized.
+
+
+### Model 2 Phase 10 — Scheduler Job Reconciliation IMPLEMENTED / FEATURE-BRANCH VERIFIED (2026-11-09)
+
+- Implemented the uncertain scheduler-job operator reconciliation path on `feat/model2-open-source-reuse`; this closes the reconciliation implementation/runbook blocker for isolated feature-branch readiness.
+- Added `migrations/015_affiliate_job_reconciliation_audit.sql`: one audit row per scheduler job, bounded evidence, outcome/Pin-ID consistency checks, append-only UPDATE/DELETE trigger.
+- Added read-only `GET /affiliate-scheduler/jobs/{job_id}/reconciliation?account_id=...` and authenticated `POST /affiliate-scheduler/jobs/{job_id}/reconcile` in `app/affiliate_scheduler.py`; database logic is in `app/database.py`.
+- Reconciliation is account-checked and transactionally locks Model 2 profile → niche → assignment → schedule → job. It resolves the scheduler's exact idempotency key through product/content/publication lineage, verifies account and immutable niche attribution, rejects ambiguous/mismatched candidates, and atomically writes publication ledger (when present), scheduler job and audit.
+- The reconciliation path never calls Pinterest, refreshes OAuth, invokes the workflow, generates content/media, creates a Board or publishes a Pin. Read-only inspection also performs no provider call.
+- Success requires exactly one matching publication ledger row and a verified Pin ID. A missing ledger cannot be marked succeeded. Confirmed absence requires explicit `confirm_pin_absent=true`; job and existing publication become terminal failed. The same idempotency key is never requeued.
+- Regression coverage: unknown publication success; stale vs recent pending; no-ledger confirmed absence and no-ledger success rejection; multiple candidates; account mismatch; missing/wrong Model 2 niche attribution; legacy Model 1 linkage; repeated reconciliation; append-only audit; transaction rollback on job-update failure.
+- Operator instructions: `docs/MODEL2-SCHEDULER-RECONCILIATION-RUNBOOK.md`. Design/implementation evidence: `docs/MODEL2-SCHEDULER-RECONCILIATION-DESIGN.md`. Phase 10 release scorecard updated in `docs/MODEL2-PHASE10-RELEASE-READINESS.md`.
+- Latest exact-head commit `7c9b3484b73f43d40da492038569b0c28b12ad43`, GitHub Actions run `42539115679`: **230 passed, 0 failed, 1 non-blocking warning** on disposable PostgreSQL 16.15. Includes authenticated API tests and read-only PostgreSQL inspection coverage. All **16** numbered migrations recorded; Model 2 and synthetic Model 1 fixture cleanup verified; ephemeral PostgreSQL service stopped. Link: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42539115679
+- The earlier intermediate CI failures were corrected (fixture content-version values, JSONB parameter casts, missing test niche attribution, synthetic fixture cleanup predicates). The final exact-head run above passed tests and cleanup.
+- Phase 10 remains PRE-RELEASE / BLOCKED: sanitized production-like migration rehearsal and backup/restore/rollback rehearsal for migrations 014 and 015 are not verified; separate owner approval remains required for production migration, deployment and live scheduler activation. No PR, merge, production migration/deployment, scheduler run, real Pinterest Pin or Board creation occurred.
+
+
+### Phase 10 security follow-up — 2026-11-09
+
+- Reconciliation audit table hardening: added a statement-level TRUNCATE trigger in migration 015 in addition to existing UPDATE/DELETE row trigger. PostgreSQL CI now checks TRUNCATE rejection; fixture teardown deletes only its own account-scoped rows instead of truncating the audit table.
+- Security limitation documented: shared X-API-Key authenticates the service request, not an individual human operator. Current audit evidence is caller-supplied text, not non-repudiable identity proof. Never store credentials or sensitive personal data in evidence. DB owner/superuser can bypass/disable triggers; this is not tamper-proof against privileged administrators.
+- Pending verification: rerun the exact feature-branch PostgreSQL CI after this change. No production migration/deployment, PR/merge, scheduler activation, or Pinterest Pin/Board action.
+
+
+### Reconciliation authentication hardening — 2026-11-09
+
+- Removed the scheduler module's duplicate API-key dependency and reused the canonical `app.auth.require_api_key` dependency. This avoids drift between scheduler and general service authentication; the dependency remains fail-closed (503 if no key is configured, 401 for absent/invalid key).
+- Added API regression coverage for both reconciliation GET and POST routes when the service key is unconfigured and when an invalid key is supplied. These tests are included in the PostgreSQL integration workflow's explicit test list via `tests/test_affiliate_scheduler.py`.
+- Feature-branch CI must pass on the resulting exact HEAD before this hardening is considered verified. No production access, merge, deployment, scheduler activation, Pinterest Pin or Board creation.
+
+
+### Authentication refactor CI correction — 2026-11-09
+
+- First CI attempt after centralizing scheduler auth failed during pytest collection: six modules hit a `NameError` because six existing route decorators still referenced the old `require_scheduler_key` symbol.
+- Root cause was an incomplete symbol replacement, not an authentication logic failure. All six remaining decorator references were replaced with the canonical `app.auth.require_api_key` dependency.
+- The failed run was `42540264184` at commit `0f57fb1`; it did not execute the test suite because collection failed. A new exact-head CI run is required before claiming verification.
+
+
+### Disposable CI audit teardown correction — 2026-11-09
+
+- The next CI run passed Python dependency setup and the disposable PostgreSQL target guard, but failed during PostgreSQL fixture teardown: the append-only trigger correctly rejected test cleanup DELETEs, and retained audit foreign keys then prevented synthetic publication deletion.
+- Corrected only the PostgreSQL test fixture teardown: inside a transaction against the workflow-guarded disposable CI database, disable user triggers on the audit table, delete only rows for that fixture's three synthetic account IDs, and re-enable triggers before commit. A failure rolls back the cleanup and trigger state. Production application code and migration protections are unchanged.
+- CI run `42540384478` exposed the teardown failure. New exact-head CI run required for verification.
+
+
+### Latest exact-head verification — 2026-11-09
+
+- CI run `42540493098` completed **successfully** on commit `98e9ce9ccb3ca2c7549caaffe56ddc4e6998f2ca`.
+- PostgreSQL 16.15 integration workflow: **235 passed, 0 failed, 1 warning**.
+- All 16 numbered migrations were recorded in the disposable PostgreSQL test database.
+- CI verified all Model 2 fixtures and synthetic Model 1 fixture rows were cleaned. Disposable PostgreSQL container teardown completed; workflow conclusion was success.
+- This run includes the centralized scheduler authentication refactor, GET/POST missing/invalid API-key regression tests, append-only audit UPDATE/DELETE/TRUNCATE protections, and the transaction-scoped disposable-CI fixture teardown.
+- Warning observed: Starlette TestClient/httpx deprecation and GitHub Actions Node.js 20 deprecation notices; no test failures. These warnings are maintenance items, not test failures.
+- No production database migration, deployment, merge, PR, live scheduler activation, Pinterest Pin, or Board was performed.
+
+
+### Populated legacy migration rehearsal added — 2026-11-09
+
+- Added `tests/test_model2_legacy_upgrade.py`, which creates a separate database only on the workflow-guarded loopback PostgreSQL 16 CI service, applies all 14 SQL migration files numbered 001–013 (there are two distinct 009 files), inserts a synthetic populated legacy Model 1 schedule/source/queued job, then applies migrations 014 and 015.
+- The test asserts the legacy schedule remains `niche_id IS NULL`, its active status, board metadata and queued job/idempotency lineage are preserved, the existing one-active-schedule index remains, and legacy schedule update semantics still work.
+- The temporary database is dropped with FORCE in a finally block. The test explicitly refuses DATABASE_URL or any non-loopback/non-CI target.
+- Added this test to the Model 2 PostgreSQL CI workflow. CI result is pending; do not call the rehearsal passed until its run is green.
+- This synthetic populated upgrade test is not a sanitized production clone and does not replace a production-like restore/rollback rehearsal.
+
+
+### Populated legacy upgrade rehearsal — CI PASS (2026-11-09)
+
+- GitHub Actions run `42540730785` completed successfully on commit `3ba1ef15d910039aa98f7f876760e209c2d2b44d`.
+- Test suite result: **236 passed, 0 failed, 1 warning**.
+- New `tests/test_model2_legacy_upgrade.py` passed: on a separately created disposable PostgreSQL 16 database, migrations 001–013 were applied, a synthetic active legacy Model 1 schedule/source/queued job were inserted, then migrations 014–015 were applied. The test verified legacy schedule `niche_id=NULL`, active status, board metadata, queued job/idempotency lineage, retained one-active-schedule index and legacy schedule update semantics.
+- Temporary upgrade database was dropped in the test's finally block. The main disposable CI database recorded all 16 migration files and all test fixtures were cleaned. Container teardown completed and workflow conclusion was success.
+- This materially improves migration compatibility evidence but remains synthetic. Sanitized production-like snapshot rehearsal, backup/restore and production rollback rehearsal remain open.
+
+
+### Trusted Hub authentication hardening — 2026-11-09
+
+- Centralized the separate `X-Credential-Ingest-Key` check in `require_credential_ingest_key`; it is intentionally distinct from the general `X-API-Key` because it protects the Modern Living Hub server-to-server boundary.
+- The dependency now fails closed with HTTP 503 when the credential-ingest key is not configured, and HTTP 401 when a caller omits or supplies an invalid key.
+- Applied the dependency at the FastAPI route boundary for credential ingestion, OAuth refresh, bounded Pinterest account operations, analytics ingestion, and manual publishing. Removed repeated inline checks from the credential, refresh and operation handlers.
+- Added regression tests proving missing configuration blocks credential storage, OAuth refresh, and the Pinterest `create_board` operation before any side effect; invalid keys return 401 for all three. These tests use synthetic values and do not call Pinterest, create a real Board, or publish a Pin.
+- Also added missing-key fail-closed coverage for diagnostics and analytics learning routes, and centralized the end-to-end workflow route on `app.auth.require_api_key`.
+- Exact feature-branch CI run `42542035022` passed on commit `3011674c990df91fc611742199676b31c4c0c0dd`; the PostgreSQL integration job, static/integration tests, migration-ledger verification, fixture cleanup, and container teardown all completed successfully.
+- This verifies service-key enforcement in CI only. Shared service keys still do not identify individual humans or provide per-operator authorization/non-repudiation. Secret rotation, log-redaction review, sanitized production-like restore/rollback rehearsal, and owner approval remain release gates.
+- No production database was accessed or changed. No PR, merge, deployment, live scheduler activation, real Pinterest Board, or real Pin was performed.
+
+
+### Workflow provider-error redaction — CI PASS (2026-11-09)
+
+- Security review found the end-to-end workflow logged raw ImageGenerationError and ContentGenerationError messages; provider exception text can contain request/provider details and must not be treated as safe log content.
+- Updated app/workflow.py to log only the exception class for image/content generation failures. Image-generation HTTP responses now return a fixed generic message rather than exposing the raw provider exception. Existing content-generation response was already generic.
+- Added regression tests injecting synthetic secret-marker strings into both provider exceptions. Tests assert the marker is absent from both HTTP responses and captured application logs, while the exception class remains observable for diagnostics.
+- Exact-head PostgreSQL CI run 42545788592 passed on commit cfc7f96956a0ebf69e978eaf4e504f7de69994c0. The workflow, isolated database guard, test job, migration-ledger/fixture-cleanup verification, and disposable PostgreSQL teardown all completed successfully.
+- Review of DeepSeek logging found only bounded metadata (HTTP status, provider code, response content type/size, duration and provider request ID); no request headers, API keys, prompt content or response bodies are logged. Cloudflare image-generation logging emits status/provider codes only. Other reviewed operational modules contain no raw token/credential logging statements.
+- This is a targeted code/log review plus synthetic regression coverage, not an exhaustive secret scan of all Git history or a production log-retention/access-control audit. Secret rotation and operational access review remain release gates.
+- No production DB access/change, PR, merge, deployment, scheduler activation, Pinterest API write, real Pin or Board creation occurred.
+
+
+### Account identity binding hardening — implementation committed, CI pending (2026-11-09)
+
+- `app/credential_vault.py` now requires every stored credential's `account_id` to equal `pinterest:<pinterest_user_id>` before encryption or database access. Access-token and refresh-token reads repeat the metadata check before decryption, so mismatched legacy rows fail closed.
+- `/integrations/pinterest/operation` now checks the stored canonical account/user-ID relationship and performs a read-only Pinterest `GET /user_account` identity preflight before the requested operation. A token whose actual Pinterest user ID differs is rejected before a `create_board` request can be sent.
+- Synthetic regression tests added in `tests/test_credential_vault_identity.py` and `tests/test_pinterest_operation_identity.py`. The PostgreSQL CI workflow's explicit pytest list was updated to include both test files. The tests use synthetic credentials and mocked HTTP responses; they do not create a real Pinterest Board or Pin.
+- Commits: `e15cbe97b768686146ba25a20dad793e7fbabd53` (vault binding), `9350aae02e5e83b65cd2435801dcb88d2f21af5e` (vault tests), `17135d057fa234101b1b54e0eccf3b7f6e837e24` (operation preflight), `7fcf5243f454cd82ba82d6a0c5ffc74bce1a29e4` (operation tests), and `6809b546098f804373744d4c066f8017ef73a68b` (CI test inclusion).
+- **CI status:** not yet independently verified for this latest change set. The previous exact-head successful run `42545907875` predates these commits and must not be represented as covering them.
+- **Remaining encryption lifecycle blocker:** the vault still uses one configured `PINTEREST_TOKEN_ENCRYPTION_KEY` and does not persist a key identifier or support a key ring / re-encryption rotation workflow. Replacing the key without first re-encrypting all stored access and refresh ciphertext can make existing credentials undecryptable. Do not rotate this key until a versioned migration/rotation design and rollback-tested implementation are completed.
+- **Account authorization model:** API and Hub-ingest credentials remain shared service credentials for the documented single-owner model; they are not per-user identity or tenant authorization. The new checks bind the stored OAuth token to its Pinterest account metadata and actual Pinterest identity; they do not introduce multi-tenant RBAC.
+- No production database, production secret, OAuth refresh, Pinterest write, real Pin/Board, scheduler activation, PR, merge, or deployment was used for this work.
+
+
+### Versioned Pinterest credential encryption — implementation committed, CI pending (2026-11-09)
+
+- Added optional key-ring settings: `PINTEREST_TOKEN_ENCRYPTION_KEYS` (JSON map of safe key IDs to base64-encoded 32-byte AES keys) and `PINTEREST_TOKEN_ENCRYPTION_ACTIVE_KEY_ID`. Existing `PINTEREST_TOKEN_ENCRYPTION_KEY` remains supported for backward compatibility.
+- New credential writes use a versioned AES-256-GCM envelope containing a format version and key ID. AAD remains bound to `<account_id>:access` or `<account_id>:refresh`.
+- Reads support both the previous legacy `nonce || ciphertext` format and versioned envelopes. Old versioned key IDs must remain in the configured ring until all ciphertext encrypted under those keys has been migrated.
+- Added operator-only `reencrypt_pinterest_credential(account_id)` maintenance primitive. It locks one credential row, validates canonical account identity, decrypts access/refresh tokens in memory, re-encrypts them under the active key and updates the same row in one DB transaction. It does not call Pinterest and is not exposed as an HTTP endpoint.
+- Added synthetic tests for envelope parsing, active-key writes, retained old-key reads after active-key change, legacy ciphertext compatibility, missing-key fail-closed behavior, wrong-key authentication failure, invalid key-ring configuration, and one-row re-encryption. CI workflow explicitly includes `tests/test_credential_vault_keyring.py`.
+- `.env.example` documents the new optional settings. No real key values were added.
+- **CI status:** latest keyring and account-identity changes have not yet been independently verified by a completed workflow run. Do not call this production-verified.
+- **Safe rotation procedure (not executed):** (1) take and verify a restorable database backup; (2) configure key ring with the original key under ID `legacy` and a newly generated key under a new ID, with the new ID active; (3) deploy only after separate approval and verify reads; (4) run the one-account re-encryption primitive for every credential row, including revoked rows with ciphertext; (5) verify all stored ciphertext envelopes reference only the new active key and can be decrypted; (6) retain the old key through a defined rollback window; (7) remove the old key only after backup/restore and rollback procedures prove it is no longer needed. The function has not been run against production or any live database.
+- **Important:** never change `PINTEREST_TOKEN_ENCRYPTION_KEY` to a new value while legacy ciphertext remains unless the original key is retained as the `legacy` key-ring entry. Missing old keys fail closed and can make old tokens unrecoverable.
+- No production DB, secret, OAuth refresh, Pinterest write, scheduler activation, Pin/Board creation, deployment, PR or merge occurred.
+
+
+### Security follow-up — keyring, identity preflight, and canonical ingest auth CI PASS (2026-11-09)
+
+**Supersedes the earlier same-day note that the vault had no key ring.** Versioned key-ring support and a per-account re-encryption primitive are now implemented on the feature branch. A full credential inventory migration, production key rotation, restore rehearsal, and key-removal verification are still not performed.
+
+- The vault now writes versioned AES-256-GCM envelopes with key IDs and supports retained-key decryption. Legacy nonce-prefixed ciphertext remains readable when its original key is retained as the `legacy` key-ring entry (or through the legacy environment variable).
+- Added operator-only `reencrypt_pinterest_credential(account_id)`; it re-encrypts one account's access and optional refresh ciphertext in one row transaction, without contacting Pinterest. It has only been exercised with synthetic data in CI; it has not been run against a live or production database.
+- The one-row re-encryption update uses separate SQL paths when refresh ciphertext is absent/present, avoiding ambiguous PostgreSQL parameter typing.
+- Centralized `require_credential_ingest_key` in `app/auth.py`; both the main API and Pinterest Trends ingestion now use the same fail-closed behavior (503 when unconfigured, 401 for a wrong key). The previous Trends-local guard returned 401 for both cases and is removed.
+- Credential disconnect now maps missing/invalid stored identity to safe 404/409/503 responses and fails closed before reporting success.
+- Added synthetic test modules: `tests/test_credential_vault_keyring.py`, `tests/test_trend_ingest_auth.py`, plus earlier `tests/test_credential_vault_identity.py` and `tests/test_pinterest_operation_identity.py`. All four are included in the explicit PostgreSQL CI test list.
+- **Exact-head CI PASS:** run `42549027659`, commit `0b621fd7a133d8809123917b5365199c0893bd8d`. All steps passed: isolated disposable DB guard, static and PostgreSQL test suite, full migration-ledger/fixture cleanup checks, and PostgreSQL container teardown. This is synthetic CI evidence, not production DB evidence.
+- Rotation remains a controlled operational task, not complete: keep the original key in the `legacy` slot, configure the new key as active, re-encrypt every credential row (including revoked rows with ciphertext), verify all ciphertext key IDs and decryption, retain old keys for rollback, and only remove old keys after a tested backup/restore and rollback window. No key was generated, changed, rotated, or used against production.
+- No production DB, production secret, live OAuth refresh, Pinterest write, scheduler activation, real Pin/Board creation, deployment, PR or merge occurred.
+
+
+
+### Disposable PostgreSQL backup/restore rehearsal — implementation pushed, CI running (2026-11-09)
+
+- Added `tests/test_model2_backup_restore.py`: creates uniquely named source and restore databases only on the loopback GitHub Actions PostgreSQL 16 service; applies all 16 numbered migrations; inserts synthetic legacy schedule/source/job rows; creates a PostgreSQL custom-format `pg_dump`; restores with `pg_restore` into a separate empty database; verifies the complete migration ledger, preserved legacy rows, nullable Model 2 niche field, and required migration triggers; then drops both temporary databases.
+- Updated `.github/workflows/model2-postgres-integration.yml` to install PostgreSQL 16 client tools and include the backup/restore test in the explicit pytest suite.
+- Exact feature-branch commit: `dcf2926b09c50867bd60ee90f8f7ee175b022679`.
+- The first attempt failed before pytest because Ubuntu 26.04 did not provide the version-pinned `postgresql-client-16` package. The generic host client then proved incompatible: PostgreSQL 18 `pg_restore` emitted `SET transaction_timeout`, unsupported by the PostgreSQL 16 server. These were harness compatibility failures, not migration/application regressions.
+- Corrected the rehearsal to run `pg_dump` and `pg_restore` from the same `postgres:16` Docker image used by the disposable PostgreSQL service.
+- **Exact implementation CI PASS:** run `42594318912`, commit `b38e66180a336d04e61f5439ea05e7c1d61c5981`; **265 passed, 0 failed, 1 warning**. All 16 migrations were recorded, fixture cleanup passed, and the PostgreSQL service was stopped. This is synthetic disposable backup/restore evidence only, not a sanitized production snapshot or Neon restore proof.
+- Updated `docs/MODEL2-PHASE10-RELEASE-READINESS.md` with the scope and CI evidence. Production-like sanitized snapshot rehearsal and operational restore/rollback remain open.
+- This rehearsal is synthetic and isolated. It does not access Neon, production credentials, real Pinterest, Render, or the scheduled worker. It does not authorize production migration, deployment, scheduler activation, PR/merge, or Pin/Board creation.
+
+
+### Read-only credential key inventory — implementation and exact-head CI PASS (2026-11-09)
+
+- Added `pinterest_credential_encryption_inventory()` in `app/credential_vault.py`. It scans all credential rows, including revoked rows, and returns aggregate counts of access/refresh ciphertext by key ID, legacy ciphertext, absent refresh ciphertext, malformed envelope and invalid canonical account identity.
+- This is metadata-only: it never decrypts tokens, returns account identifiers, calls Pinterest, or exposes an HTTP endpoint.
+- Added a synthetic test proving revoked rows are included and the inventory does not invoke token decryption.
+- Exact-head CI PASS: run `42594679834`, commit `8738194e9715278f835da665b6a58348ccaa7086`; **266 passed, 0 failed, 1 warning**. All 16 migrations recorded, fixture cleanup passed, and PostgreSQL service teardown passed.
+- This is a read-only rotation-preflight primitive only. No batch re-encryption, production key rotation, production DB access, OAuth refresh, scheduler activation, Pin/Board creation, PR, merge or deployment occurred.
+- Updated `docs/MODEL2-PHASE10-RELEASE-READINESS.md` with the verified implementation and its limitations.
+
+
+
+### Current authoritative checkpoint — credential inventory, identity preflight and lock-order hardening (2026-11-09)
+
+This section supersedes older entries above that describe the keyring, credential inventory, account-identity guard, or backup/restore rehearsal as pending.
+
+- **Credential keyring:** versioned AES-256-GCM envelope with key IDs; legacy nonce-prefixed ciphertext remains readable when the original key is retained. Optional JSON keyring and active key ID are implemented. Operator-only one-row re-encryption primitive is implemented and synthetic-tested.
+- **Read-only key inventory:** `pinterest_credential_encryption_inventory()` counts ciphertext formats/key IDs across all credential statuses, including revoked rows; counts malformed envelopes and canonical identity mismatches. It never decrypts tokens, returns account IDs, or calls Pinterest. Synthetic test and CI passed.
+- **Canonical identity guard:** the metadata-only connected-credential helper now reads `account_id` and `pinterest_user_id`, verifies exact `pinterest:<pinterest_user_id>` binding, and fails closed on mismatch. Model 2 scheduler draft/activation/worker preflight uses this same guard. Tests cover mismatch and no-token-read behavior.
+- **Publication lock ordering:** publication reservation now locks Model 2 profile → niche → assignment → connected-credential metadata before publication advisory lock/row. This removes the inverse lock order identified between failed-publication retries and scheduler reconciliation. Attributed retries must provide their explicit niche ID; un-attributed legacy Model 1 retries remain supported.
+- **Exact code CI PASS:** run `42611158364`, commit `739b1ae70d3b7a3b01ac7644a34f14f235ab0ecc`: **269 passed, 0 failed, 1 warning**. All 16 migrations recorded; fixture cleanup and PostgreSQL teardown passed.
+- **Backup/restore CI PASS:** run `42594318912` verified custom-format `pg_dump` and `pg_restore` between two isolated PostgreSQL 16 databases, preserving synthetic legacy schedule/source/job rows, all 16 migration records and required triggers. This is not a production-like snapshot or Neon restore proof.
+- Updated `docs/MODEL2-SCHEDULER-RECONCILIATION-DESIGN.md` and `docs/MODEL2-PHASE10-RELEASE-READINESS.md` with the current lock order, CI evidence and limitations.
+- **Still NOT DONE:** production key rotation; batch re-encryption of every credential row; production credential-key inventory; sanitized production-like backup/restore; Neon backup/PITR and owner-operated rollback rehearsal; production access/log-retention review.
+- Branch is still feature-only. No production DB/secrets, live OAuth refresh, scheduler activation, Pinterest write, real Pin/Board, PR, merge or deployment occurred.
+
+
+
+### Scheduler deadlock hardening and main-branch scheduled-run discovery — 2026-11-09
+
+- Review found an additional lock-order inversion in `run_one_due_job`: bulk stale-job quarantine and schedule-completion updates acquired job/schedule locks before the Model 2 account-profile lock; post-workflow finalization also updated the job before acquiring the schedule lock. These paths could deadlock against reconciliation, which locks profile → niche → assignment → schedule → job.
+- Added `_lock_scheduler_job_context`, which re-reads a non-locking routing hint and then locks Model 2 profile → niche → assignment → schedule → job, rechecking account/schedule/job linkage.
+- Stale-claim quarantine now processes one candidate in its own transaction, acquires locks in the canonical order, and rechecks status and age before marking it uncertain. Removed the bulk schedule-completion sweep; normal terminal transitions already call the schedule completion helper while holding the schedule lock.
+- Post-workflow success, failure, uncertain, and retry-queue transitions now use `_finalize_claimed_job`, which rechecks that the job remains processing and updates it only after account/schedule/job locks are held. If safe finalization cannot be proven, the API returns 503 and does not claim that the scheduler ledger was updated.
+- Added `tests/test_affiliate_scheduler_lock_order.py` for lock ordering, stale-state rechecks and protection against overwriting a job that is no longer processing. The explicit PostgreSQL CI list includes the new test module.
+- First CI attempt exposed two test-fixture mismatches (the existing worker test's fake connection did not implement the new finalizer, and one assertion matched the wrong SQL fragment). Both test fixtures were corrected; this was not a production test or Pin action.
+- **Exact-head CI PASS:** run `42611981311`, commit `3562ef346ec03e6b31815aef4dfb1b9f3c2f0cfe`: **274 passed, 0 failed, 1 warning**. All 16 numbered migrations were recorded, fixture cleanup passed, and PostgreSQL teardown passed.
+- Branch comparison at this checkpoint: `feat/model2-open-source-reuse` is 149 commits ahead of `main`, 0 behind. No PR/merge/deployment was created by this work.
+
+### Operational correction — scheduled workflows on main are already executing (2026-11-09)
+
+**This section supersedes earlier same-day notes that stated no live scheduler execution had occurred.** The earlier statements were not accurate for the pre-existing default-branch cron workflows.
+
+- Read-only GitHub Actions inspection found scheduled runs on `main` for both `.github/workflows/affiliate-scheduler-worker.yml` and `.github/workflows/pinterest-learning-loop.yml`. These were triggered by GitHub's `schedule` event; the assistant did not dispatch or trigger them.
+- Affiliate Scheduler Worker run `42581914921` (2026-11-09 07:51 UTC) successfully called the Render production endpoint `POST /affiliate-scheduler/run-due`. Its safe workflow output reported `claimed=true`, `processed=true`, `job_id=13`, `status=succeeded`. The wrapper intentionally logged neither `published` nor Pinterest Pin ID, so the log alone cannot establish whether this created a new Pin or returned an already-published result. Do not claim either outcome without an authorized read-only production ledger check.
+- Pinterest Learning Loop run `42611471024` (2026-11-09 11:44 UTC) called the Render production `POST /learning-loop/run` endpoint. Its response reported `ok=false`, `pins_checked=17`, `snapshots_saved=16`, `learning_status=analytics_ingested_descriptive_evaluation_only`, and `model_trained=false`. This is evidence of live analytics ingestion and database snapshot writes, not Pin publishing.
+- The scheduler workflow's cron is `7 * * * *`; the learning-loop workflow also has a scheduled trigger. Both files are present on `main`. Scheduled workflow runs exist in GitHub Actions history. No workflow was triggered, dispatched, disabled, or modified on `main` during this continuation.
+- **Human decision required:** because the pre-existing default-branch workflows are already scheduled, owner must decide whether to disable the live Affiliate Scheduler Worker and/or Learning Loop until separately approved. The feature branch remains unmerged and undeployed; no change to `main` or production automation was made.
+- **Unresolved live publication question:** job 13's success output is insufficient to prove whether a new Pin was created. A production publication-ledger check or suitably redacted Render request log is needed, with explicit owner approval. No production database was accessed by the assistant.
+- No manual scheduler run, OAuth refresh, production DB query, real Pin/Board creation, deployment, PR, or merge was performed by the assistant.
+
+
+
+### Latest branch checkpoint after scheduler lock-order correction (2026-11-09)
+
+- Latest feature branch HEAD: `97acb108300e69845f49ec9b9c7eaa30efb79979`.
+- Exact-HEAD GitHub Actions run `42612357576` passed at that HEAD: **274 passed, 0 failed, 1 warning**. All 16 numbered migrations were recorded; Model 2 and synthetic Model 1 fixture cleanup passed; PostgreSQL teardown passed.
+- The code-bearing scheduler lock-order correction was tested at commit `3562ef346ec03e6b31815aef4dfb1b9f3c2f0cfe` in run `42611981311` with the same **274 passed** result. The later commits through `97acb108300e69845f49ec9b9c7eaa30efb79979` only updated CONTEXT/readiness/design documentation; the exact-head CI run also passed.
+- Branch comparison: 152 commits ahead of `main`, 0 behind. No PR for this feature branch, merge, deployment, production migration, production DB access, or production secret changes were performed by the assistant.
+- The active default-branch scheduled workflows and the unresolved publication outcome of worker job 13 are recorded in the operational correction section above. Owner decision is required before changing or disabling production workflows; an authorized read-only production ledger/log inspection is required to establish whether job 13 created a new Pin.
+
+
+### Follow-up read-only Pinterest verification hardening (2026-11-09)
+
+- Added `list_boards_read_only` and `resolve_board_id_read_only` in `app/pinterest.py`: GET-only bounded pagination, malformed/repeated cursor rejection, complete-pagination requirement, and exactly-one case-insensitive exact board-name match. No Board creation.
+- Added `get_pinterest_credential_read_only` in `app/credential_vault.py` and changed the existing publication verification endpoint to use it. This path rejects expired/unknown-expiry credentials and must never invoke OAuth refresh.
+- Added unit coverage for board pagination/resolution, no-refresh credential handling and the connection-scoped legacy publication reconciliation helper. The feature branch's existing atomic scheduler-job reconciliation implementation remains authoritative; these helpers do not replace it.
+- Local test runtime `/tmp/pinterest-phase10-venv`; latest-base full suite and updated disposable PostgreSQL CI must be rerun after this integration. No production database, OAuth refresh, Pin/Board write, scheduler dispatch, or deployment.
+- Latest-base local verification after integrating the read-only helpers: **336 passed, 74 skipped, 1 non-blocking Starlette/httpx warning**. The two PostgreSQL backup/legacy-upgrade integration modules were excluded locally because no disposable `TEST_DATABASE_URL` can be provided on this runtime; the remaining DB-gated tests skipped normally. `APP_API_KEY` was set to a disposable local test value and no production credentials were used.
+- Fixed an existing manual-publish auth test fixture to configure a dummy credential-ingest key before asserting a missing header returns 401; production fail-closed auth behavior was not changed.
+- Exact-head GitHub Actions verification for commit `9a5c6f056f17449f6111b1d6e098775cfa363fa3`, run `42644496929`: **320 passed, 0 failed, 1 non-blocking warning** on the isolated PostgreSQL 16 service. All 16 numbered migrations were recorded, Model 2 and synthetic Model 1 fixtures were cleaned, and the PostgreSQL service was stopped. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42644496929
+- This CI verifies the read-only Board pagination/resolver tests, no-refresh credential tests, reconciliation helper tests and the existing atomic scheduler reconciliation suite. It is synthetic CI only; no live Pinterest account, OAuth refresh, Pin/Board write, production DB, scheduler dispatch or deployment was used.
+
+
+### Model 2 Phase 10 continuation — exact-head verification and current release gate (2026-11-09)
+
+This is the latest verified feature-branch checkpoint and supersedes earlier notes that identify `9a5c6f0` as the latest HEAD or say the read-only Pinterest verification follow-up still awaits CI.
+
+- Canonical worktree: `/root/restore-staging/Pinterest-Agent-model2-worktree` on the currently online Remote Desktop device `localhost`.
+- Branch: `feat/model2-open-source-reuse`; exact HEAD `369239ec8e5ed7a7fadcd39cc86a041f8dd98bef`; clean working tree at verification; 155 commits ahead of `origin/main`, 0 behind.
+- Exact-head GitHub Actions run `42644694242` completed successfully for commit `369239ec8e5ed7a7fadcd39cc86a041f8dd98bef`. Test step: **320 passed, 0 failed, 1 non-blocking Starlette/httpx warning**. All 16 numbered migrations were recorded; synthetic Model 2 and Model 1 fixture cleanup passed; disposable PostgreSQL 16 container teardown passed. The workflow explicitly verifies a loopback-only disposable `TEST_DATABASE_URL` and keeps `DATABASE_URL` empty.
+- Local full-suite attempt without `TEST_DATABASE_URL`: **336 passed, 74 skipped, 2 failed only because** `tests/test_model2_backup_restore.py` and `tests/test_model2_legacy_upgrade.py` deliberately assert that `TEST_DATABASE_URL` must be supplied and must never fall back to `DATABASE_URL`. These are environment-guard failures, not test assertions against application behavior. Re-running while excluding those two PostgreSQL-admin integration modules produced **336 passed, 74 skipped, 1 non-blocking warning**. The two excluded modules are included and passed in exact-head CI on the isolated PostgreSQL 16 service.
+- Additional local checks on this exact HEAD: `python -m compileall -q app tests` PASS; `git diff --check` PASS; 16 numbered migrations present.
+- Read-only source audit found application logging uses bounded metadata/exception type rather than raw provider exception text in the inspected content, media and workflow paths. This is not an exhaustive historical secret scan or production log-retention/access-control audit.
+- No code changes were needed for this continuation: the read-only Board resolver, no-refresh credential reader, atomic uncertain-job reconciliation, versioned credential keyring, identity checks and scheduler lock-order hardening were already implemented and are covered by the exact-head CI run. Do not recreate them.
+- **Still blocked for production release:** sanitized production-like snapshot migration/backup/restore/rollback rehearsal; Neon backup/PITR and owner-operated restore access verification; production credential inventory and approved key rotation/re-encryption; production access/log-retention review; owner decision on existing main-branch scheduled worker/Learning Loop side effects; separate explicit approvals for migration, deployment and scheduler activation.
+- Existing main-branch scheduled workflows were already executing as documented above. Do not dispatch, pause, resume, or otherwise modify them without owner approval. Job 13's production publication outcome was previously verified only through an explicitly approved read-only ledger query; no further production query is authorized by this checkpoint.
+- No production DB writes, secret access/rotation, OAuth refresh, Pinterest API writes, real Pin/Board creation, merge, PR, deployment or scheduler dispatch occurred during this continuation.
+
+
+### Model 2 Phase 10 — trusted-Hub trend-ingest auth CI closure (2026-11-10)
+
+- Commit `a4f9c3aafeb67035d4c264cbb3db62e263e372be` on `feat/model2-open-source-reuse` replaces the duplicate `/trend-visuals/run` credential-ingest guard with the canonical shared fail-closed guard.
+- Exact-head GitHub Actions run `42731241964`: **323 passed, 0 failed, 1 non-blocking Starlette/httpx warning**. Disposable PostgreSQL 16.15 only; loopback target guard passed; all 16 numbered migrations recorded; Model 2 and synthetic Model 1 fixture cleanup passed; PostgreSQL service stopped. Includes backup/restore and populated legacy-upgrade integration tests.
+- Local full suite excluding only the two PostgreSQL-admin integration modules: **339 passed, 74 skipped, 1 warning**. Targeted trend-ingest tests: **6 passed**. `compileall` and `git diff --check` passed.
+- Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42731241964
+- No production DB writes, production secret access/rotation, OAuth refresh, Pinterest API write, real Pin/Board, scheduler change, deployment, PR or merge occurred.
+
+
+### Backup recovery and GitHub controls — verified 2026-11-10
+
+- Backup repo PR #2 is merged to `main` at `836a5cdc7a178483d16d56b8a8d52dfa16c0e2c4`; daily retention and restore selection both use GitHub release `publishedAt`.
+- Main-branch restore rehearsal was manually dispatched and passed: run `42731539863`, main SHA `836a5cdc7a178483d16d56b8a8d52dfa16c0e2c4`. It selected release `backup-20261109-085701-42589610843`, verified checksum, GPG-decrypted, restored into isolated PostgreSQL 16 and verified 12 base tables; temporary files/container cleanup passed. This did not touch Neon production.
+- Neon read-only settings: Free plan `free_v3`, 6-hour PITR window, no automatic snapshot schedule (not available on Free), one manual snapshot `production-main-pre-restore-rehearsal-20261103`. No SQL, branch creation, restore or setting change was performed.
+- Neon owner-operated restore, sanitized production-like snapshot migration/rollback, RPO/RTO and production credential rotation remain open.
+- Agent repository main has no branch protection/rulesets. Backup private repository branch protection/rulesets API returns 403 requiring GitHub Pro or public visibility. No settings changed; do not expose private backup repository or upgrade plans without approval.
+
+
+### Gate 4 static application security review — closed (2026-11-10)
+
+- Rechecked fail-closed API-key and credential-ingest guards, Model 2 registry/learning router protection, canonical account/niche SQL scoping, Pinterest identity preflight, operational route protections, and inspected logging/error-handling paths. No new application-code authorization bypass was identified in the inspected paths.
+- Confirmed the owner-approved model remains one operator managing multiple Pinterest accounts. `X-API-Key` is service authentication, not per-human RBAC or tenant identity; no synthetic human/tenant identity is introduced.
+- Inspected content, media and workflow logs use bounded metadata/exception types rather than raw provider exception text. This does not establish production log access/retention controls or constitute a historical full-log scan.
+- Marked Gate 4's static application-code review complete in `docs/MODEL2-PHASE10-RELEASE-READINESS.md`. Production service/database roles, human access, log-reader permissions, retention and deletion policy remain owner-evidence blockers.
+- No code changes were made. Latest exact-head CI remains run `42731770533` at `1e03f196a0380c88aebe2a0b1bb3272273dc6873`: 323 passed, 0 failed, 1 non-blocking warning; all 16 migrations recorded, fixtures cleaned and disposable PostgreSQL 16 stopped.
+- No production DB access/write, production secret access/rotation, OAuth refresh, scheduler operation, Pinterest API write, real Pin/Board creation, PR, merge or deployment occurred.
+
+
+### Synthetic backup rollback/recovery CI — verified 2026-11-10
+
+- Continued from exact feature-branch HEAD `1a6994af4be17e2c866f85ecda30ecb74e279a5c`; no completed implementation was repeated. Added `test_pre_model2_backup_restores_legacy_schema_after_upgrade_rollback` to `tests/test_model2_backup_restore.py`.
+- The test creates a synthetic pre-Model-2 baseline using all 13 migration files numbered 001–012 (both 009 files included), inserts a legacy schedule/source/queued job, captures a PostgreSQL 16 custom-format backup, advances the source through migrations 013–015, and restores the baseline archive into a separate disposable recovery database. It verifies the old migration ledger, no `niche_id` or Model 2-only registry/reconciliation tables, and preserved legacy rows. Recovery uses backup restore, not unsafe down SQL.
+- Commit `d57473554942972cdc45d52e987f8d7539cedae0` pushed to `feat/model2-open-source-reuse`. Exact-head CI run `42834166667` passed: **338 passed, 0 failed, 1 non-blocking warning**; all 16 migrations recorded; synthetic fixture cleanup passed; disposable PostgreSQL 16 stopped. Run: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42834166667
+- Worktree was clean and branch synchronized with origin at this code commit. Runbook and Phase 10 readiness docs were updated with exact evidence and limitations.
+- **Phase 10 remains BLOCKED / PRE-RELEASE.** This is synthetic CI recovery only, not a sanitized production-derived snapshot, not Neon restore/PITR evidence, and not owner-operated production recovery. Independent review, owner-approved input, Neon restore access/RPO/RTO, production credential inventory/rotation, production access/log-retention evidence, and separate migration/deployment/scheduler approvals remain open.
+- No production DB, credentials, OAuth refresh, scheduler activation/dispatch, Pinterest write, real Pin/Board, merge, or deployment occurred.
+
+
+### PR #77 — Codex review follow-up: distinguish pre-publish conflicts (2026-11-10)
+
+- PR: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/pull/77. Branch `feat/model2-open-source-reuse`; base `main`. Latest exact head: `f98691eb1f10a2c830a3e58534dc5991ba8ad76e`; PR remains OPEN. Do not merge or deploy without separate owner approval.
+- Codex re-review of `de82be8` identified a P2: definite pre-Pinterest-POST `409` for inactive niche/account was incorrectly classified as `uncertain`, consuming quota and blocking schedule replacement. The earlier keyring-only encryption and prompt-injection P2 findings were also fixed on `de82be8`.
+- Fix in `5b6e0f3`: workflow emits machine-readable `niche_assignment_inactive` for missing/inactive account-niche mapping; scheduler classifies only HTTP 409 with `niche_assignment_inactive` or `niche_account_not_connected` as `failed` with `pre_publish_conflict`. Generic/ambiguous 409 and 502 remain `uncertain`; 502 is never downgraded by a code field. Regression tests cover all four classification cases.
+- Added disposable PostgreSQL integration coverage proving a pre-publish failure does not consume account quota, a subsequent due job proceeds within the limit, and schedule replacement is not blocked by that failed job. The first CI run exposed two test-fixture issues (one insufficient job fixture; then an unnecessary pause after the schedule had already become completed). Both were corrected in `90e512c` and `f98691e`; no production code regression was indicated by those test failures.
+- Latest exact-head CI for `f98691e`: Model 2 PostgreSQL integration run `42845977735` PASS; Python tests run `42845977770` PASS; Python CI/security/dependency run `42845977842` PASS. All three checks target the same exact head. Run links: https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42845977735 ; https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42845977770 ; https://github.com/shehrozali6465372-ctrl/Pinterest-affiliate-marketing-agent-/actions/runs/42845977842
+- Local full suite excluding only the two PostgreSQL-admin modules: **359 passed, 75 skipped, 1 existing Starlette/httpx warning**. The new disposable PostgreSQL integration case was exercised by GitHub Actions PostgreSQL 16, not local runtime. Focused unit/workflow tests: **5 passed**; `compileall` and `git diff --check` passed.
+- The three original Codex P2 review threads were resolved after verifying the respective fixes in code and tests. A fresh Codex re-review of exact head `f98691e` was triggered and is **still running**; do not call the independent review clean until its final status is checked.
+- All workflow tests mock Pinterest publication. No real Pin/Board, production DB action, OAuth refresh, scheduler dispatch/change, merge or deployment occurred. Phase 10 remains PRE-RELEASE / BLOCKED by separate production evidence and owner-approval gates.
+
+
+### PR #77 — latest Codex review and timezone conflict fix in progress (2026-11-10)
+
+- Codex review of exact commit `3316814507155c83f885be8787799b442978e20a` completed and found one new P2: profile timezone changes could diverge from an active immutable Model 2 schedule, causing worker 409s and queued jobs to remain unprocessed.
+- Implemented a guarded timezone update in `app/model2_repository.py`: existing profile timezone is read while holding the profile row `FOR UPDATE` lock; when the timezone differs, the repository checks for an active Model 2 schedule (`niche_id IS NOT NULL`) and rejects the update with `Model2ConflictError`. Schedule activation already locks the same profile row, serializing these operations and closing the race. Paused schedules allow the timezone change and replacement flow.
+- Added unit coverage in `tests/test_model2_repository.py` and PostgreSQL 16 integration coverage in `tests/test_model2_registry_postgres.py` (active schedule blocks timezone change; pausing schedule allows change). `compileall` and `git diff --check` passed. The connected development device initially had no pytest; isolated virtual-environment setup is underway. CI has not yet verified this change.
+- The previous pre-publish-conflict P2 fix remains implemented and its review thread was resolved. The timezone P2 remains unresolved until the new tests pass and a fresh Codex review confirms the fix.
+- Current changes are uncommitted at the time of this note. Do not merge or deploy. No production DB, credentials, OAuth, scheduler, Pinterest API write, Pin/Board, or production settings were touched. Phase 10 remains PRE-RELEASE / BLOCKED.
+
+
+### PR #77 — timezone conflict fix exact-head CI PASS (2026-11-10)
+
+- Final tested code head: `51d853f2dba9878a97dd5a12e85e5369c2b56a8d` on `feat/model2-open-source-reuse`.
+- `save_account_profile` now reads profile timezone under `FOR UPDATE`, then blocks a timezone change if an active Model 2 schedule exists for that account (`niche_id IS NOT NULL`). Schedule activation locks the same profile row, so activation and timezone changes serialize. Pausing the schedule allows timezone change and schedule replacement.
+- Regression coverage: unit test in `tests/test_model2_repository.py`; PostgreSQL integration test in `tests/test_model2_registry_postgres.py`. The first CI attempt on `2680d35` failed only because two assertion regexes did not match the longer, explicit conflict message; the application raised the expected conflict. Wording was aligned in `51d853f`.
+- Exact-head CI: Python CI run `42867379931` PASS (**438 passed, 1 skipped, 1 warning**); Python tests run `42867379978` PASS (**438 passed, 1 skipped, 1 warning**); Model 2 PostgreSQL integration run `42867379850` PASS (**347 passed, 1 warning**). PostgreSQL CI also reported no known dependency vulnerabilities, verified all 16 numbered migrations, cleaned Model 2 and synthetic Model 1 fixtures, and stopped disposable PostgreSQL 16.
+- All three required PR checks are green on `51d853f`. Fresh Codex review was requested after the fix; final review status still needs confirmation.
+- PR #77 remains OPEN against `main`, review-only. No merge/deployment, production database or credential changes, OAuth refresh, scheduler operation, Pinterest API write, or real Pin/Board creation occurred. Phase 10 remains PRE-RELEASE / BLOCKED.
+
+
+### PR #77 — independent Codex review clean (2026-11-10)
+
+- Fresh Codex code review of commit `18aa83a325e2c5597dc6c832160de2d467adbcfd` completed with `has_any_findings=false` and `has_unresolved_findings=false`; receipt: “Didn't find any major issues. Nice work!”.
+- The timezone P2 review thread was resolved after implementation and exact-head CI passed. Verified all four review threads in PR #77 are now resolved (two outdated original findings plus pre-publish conflict and timezone findings).
+- PR #77 remains OPEN against `main`; do not merge or deploy without separate explicit authorization. Phase 10 remains PRE-RELEASE / BLOCKED by production snapshot, restore/PITR, credential, access/log-retention, and separate production approval gates.
+- No production DB, credentials, OAuth, scheduler dispatch/change, Pinterest API write, real Pin/Board, merge or deployment was performed.
+
+
+### Production state verification — 2026-11-11 (read-only)
+
+This section supersedes any earlier statement that the current production deployment or migration ledger had not been inspected. It records read-only verification only.
+
+#### Current live deployments
+
+- Render service `pinterest-affiliate-marketing-agent` is configured to auto-deploy from `main`; its latest live deploy is commit `2fd07669d19e68d73099c9e3f589e2db8ca87078` (Model 1). The service is on the Free plan, Oregon region, one instance, with no HTTP `healthCheckPath` configured. The public `/health` endpoint returned HTTP 200 and `{"status":"ok","service":"pinterest-affiliate-model-1"}`. The `/readiness` endpoint returned HTTP 401 because it requires `X-API-Key`; authenticated readiness was not tested and no production API key was read.
+- Modern Living Hub Render service remains on `main` commit `e0bc46154a211639349ad48f9da42879bd51d42d`. `/api/health` returned HTTP 200 with safe configuration booleans; the production Vercel `/pinterest.html` returned HTTP 200. The root `/health` path is not implemented (404); `/api/health` is the actual Hub health route.
+- Model 2 feature branch is **not deployed**. Green CI on PR #77 is not production deployment evidence.
+
+#### Production database migration ledger
+
+- Read-only query of the production `pinterest_affiliate` database's `schema_migrations` ledger returned migrations **001–012 only** (including both separately named 009 migrations).
+- The feature branch contains migrations **013–017**. None of 013, 014, 015, 016 or 017 is recorded as applied in the production ledger. This is a hard deployment blocker: do not deploy the Model 2 application before a sanitized production-like migration rehearsal, a verified backup/restore/rollback plan, and separately approved production migration.
+- The query selected only migration version and applied timestamp metadata. No credential rows, token ciphertext, token plaintext, account data or publication records were selected. No SQL write, migration, branch restore or database setting change was performed.
+
+#### Hub integration contract progress
+
+- The previous Hub caller-contract blocker now has an implementation on `modern-living-hub` draft PR #22: https://github.com/shehrozali6465372-ctrl/modern-living-hub/pull/22 (branch `fix/model2-board-idempotency-contract`, initially committed as `12b681c`). It requires/forwards stable Board idempotency keys, handles `replayed: true`, blocks blind retries for uncertain outcomes, exposes OAuth-refresh uncertainty, and states local-only disconnect as `provider_token_revoked: false`.
+- Hub local `npm test` passed, `npm audit --audit-level=moderate` reported 0 vulnerabilities, and PR #22 credential-security, Vercel and preview-comment checks passed. PR #22 remains draft, open, unreviewed, unmerged and undeployed. Its implementation is not yet part of the production Hub `main`/Render deployment.
+- Therefore the Hub caller-contract gate is **implemented in a draft PR but not yet closed for production**. It must be reviewed, merged and deployed before Model 2 release.
+
+#### Current PR / CI state
+
+- Agent PR #77 remains OPEN and NOT MERGED. Exact feature head at this verification: `6f9560d3cdf06f96e40e8cde7c0148edb7e384f4`. Model 2 PostgreSQL integration, Python tests and Python CI/security checks all report SUCCESS for this exact head. The PR has no recorded review decision; the existing Codex review receipts are on older commits. A fresh `@codex review` was requested after this check; do not treat it as complete until a receipt or findings for the current exact head are inspected.
+- Hub PR #22 remains DRAFT and OPEN. Exact head at this verification: `12b681c0cd50b50de9b44e054d0593bfbfe8d987`. Credential-security, Vercel and Vercel Preview Comments checks all report SUCCESS. A fresh `@codex review` was requested; no review result is recorded yet.
+
+#### Release boundary
+
+- Model 1 hourly Affiliate Scheduler Worker and daily Pinterest Learning Loop remain active by owner decision; no workflow was dispatched, paused, resumed or modified.
+- No production migration, production deployment, credential read/rotation, OAuth refresh, scheduler activation/change, Pinterest API write, real Pin or Board creation, PR merge or Render configuration change occurred.
+- **Phase 10 remains PRE-RELEASE / BLOCKED.** Required gates still include production-like snapshot/restore/rollback rehearsal, Neon restore/PITR and owner RPO/RTO/escalation evidence, credential inventory and separately approved rotation/re-encryption, production access/log-retention evidence, fresh exact-head independent review, and separate explicit approvals for migration, deployment and scheduler activation.
+
+
+### Follow-up release evidence — 2026-11-11
+
+- Hub integration PR #22 is now at `modern-living-hub` commit `1ed10a114fd43544a27769aa932fba18bd958002` (branch `fix/model2-board-idempotency-contract`), still DRAFT/OPEN. The implementation forwards stable Board `Idempotency-Key` values, handles replay and uncertain Board outcomes, distinguishes ambiguous OAuth refresh failures from ordinary Agent outages, and explicitly reports local-only disconnect (`provider_token_revoked: false`).
+- Hub's Codex review on earlier commits found two P2 issues: (1) ambiguous refresh 5xx/transport outcomes were not surfaced; (2) ordinary account-operation 5xx could be mislabeled as a refresh outcome. Fixes are in `dfaa0ff`, `fadf56d`, and `1ed10a1`; both review threads were replied to and resolved. The latest CodeX review for `1ed10a1` is running at the time of this update. Do not treat independent review as complete until its receipt is checked.
+- Hub local `npm test` passes after the latest code changes (mocked Agent/provider calls only); `npm audit --audit-level=moderate` previously reported 0 vulnerabilities; Vercel Preview and `credential-security` CI passed on the preceding commit, and Vercel Preview passed on `1ed10a1` while its credential-security run was still in progress at the time of this note. No real Pinterest writes occurred.
+- Neon production project metadata: `history_retention_seconds=21600` (6 hours); one manual snapshot exists, created 2026-11-03 and named `production-main-pre-restore-rehearsal-20261103`, with source branch `restore-rehearsal-20261103 (1)`. This is not evidence of a current automated backup schedule for main. Neon Free permits a maximum 6-hour history window and does not include scheduled backup schedules; see https://neon.com/docs/introduction/history-window and https://neon.com/docs/introduction/plans.
+- Render Agent API service is on the Free compute plan, tracks `main`, and has no configured `healthCheckPath`. `/health` returned 200 and identifies Model 1; `/readiness` returned 401 because it requires `X-API-Key`, so authenticated readiness was not tested and no key was read. Render explicitly says Free web services should not be used for production; they spin down after 15 minutes idle and take about one minute to wake: https://render.com/docs/free.
+- GitHub `main` protection audit: the Agent repository is public but its `main` branch is currently unprotected (no required PR review or status checks). The Hub `main` branch has a required `credential-security` check and admin enforcement, but requires zero approving reviews. No protection settings were changed; owner approval is required before changing repository policy.
+- Phase 10 remains PRE-RELEASE / BLOCKED. Outstanding gates include current sanitized production-like restore/rollback rehearsal, an agreed backup/RPO/RTO/escalation plan, production credential inventory and separately approved rotation/re-encryption, access/log-retention review, exact-head Hub Codex/security review, branch protection, and explicit separate approval for production migration and deployment.
+- No production migration, deployment, credential read/rotation, OAuth refresh, scheduler change, real Pin/Board creation, PR merge or Render configuration change occurred. Model 1 schedules remain active by owner decision.
+
+
+### Hub follow-up — 2026-11-11 (after latest review finding)
+
+- Hub PR #22 received an additional P2 review finding: browser-side pending Board idempotency keys could be cleared after a Hub-level `401`, even though the Agent had not received the request and therefore had no durable operation result.
+- Fixed and pushed as Hub commit `e624fcc3d9a4c242b2174579c07f19986174c178`: browser now clears the pending key only when the Agent explicitly returns `operation_rejected: true`; Hub marks provider/Agent-confirmed definitive rejections as such, while Hub-level `401`, uncertain `409`, and ambiguous 5xx retain the same key. Added regression coverage for a Hub-level 401 (Agent not called) and an Agent-confirmed provider 400.
+- Full local Hub `npm test` and `npm audit --audit-level=moderate` passed after this fix; audit reported 0 vulnerabilities. The Hub Model 2 static contract test passed. The test handoff uses mocked provider/Agent calls; it does not create real Pins or Boards.
+- Hub PR #22 remains DRAFT/OPEN. On exact head `e624fcc`, Vercel Preview and Vercel Preview Comments passed; credential-security CI and fresh Codex code review were still running at the time of this record. Do not merge or deploy until both finish and any new findings are resolved.

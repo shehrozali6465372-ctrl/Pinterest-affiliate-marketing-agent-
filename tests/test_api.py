@@ -356,6 +356,22 @@ def test_publish_routes_fail_closed_without_configured_api_key(monkeypatch):
     assert "authentication is not configured" in shorthand_route.json()["detail"]
 
 
+def test_workflow_route_uses_canonical_fail_closed_api_auth(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", None)
+    response = unauthenticated_client.post(
+        "/workflow/publish-product",
+        json={
+            "product_name": "Test product",
+            "product_details": "Test details",
+            "affiliate_url": "https://example.com/item",
+            "account_id": "pinterest:test-account",
+        },
+        headers={"Idempotency-Key": "workflow-auth-test-123"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "API authentication is not configured."
+
+
 def test_legacy_publish_routes_are_retired_and_never_call_gateway(monkeypatch):
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     import app.main as main_module
@@ -470,11 +486,62 @@ def test_end_to_end_publish_checks_pinterest_before_generating_image(monkeypatch
 
 
 
-def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(monkeypatch):
-    from fastapi import HTTPException
+def test_end_to_end_image_provider_error_is_redacted_from_response_and_logs(monkeypatch, caplog):
+    import logging
+    import app.workflow as workflow
+    from app.media_generation import ImageGenerationError
+
+    secret_marker = "provider-secret-token-marker"
+    monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
+    monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
+    _stub_generation_reservation(monkeypatch, workflow)
+    monkeypatch.setattr(
+        workflow,
+        "get_pinterest_credential",
+        lambda account_id: {"access_token": "test-token", "pinterest_user_id": "test-account"},
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_pinterest_request",
+        lambda method, path, token, **kwargs: (
+            200,
+            {"id": "test-account"} if path == "/user_account" else {
+                "items": [{"id": "board-test", "name": "Modern Living Hub | Kitchen & Home Organization"}]
+            },
+        ),
+    )
+
+    def fail_image(**kwargs):
+        raise ImageGenerationError(f"provider rejected request; {secret_marker}")
+
+    monkeypatch.setattr(workflow, "generate_pin_image", fail_image)
+    with caplog.at_level(logging.ERROR, logger="app.workflow"):
+        response = client.post(
+            "/workflow/publish-product",
+            json={
+                "product_name": "Test spice rack",
+                "product_details": "Three-tier kitchen organizer.",
+                "affiliate_url": "https://example.com/affiliate",
+                "account_id": "pinterest:test-account",
+            },
+            headers={
+                "X-API-Key": "private-test-api-key",
+                "Idempotency-Key": "image-error-redaction-123",
+            },
+        )
+
+    assert response.status_code == 503
+    assert secret_marker not in response.text
+    assert secret_marker not in caplog.text
+    assert "exception_type=ImageGenerationError" in caplog.text
+
+
+def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(monkeypatch, caplog):
+    import logging
     import app.workflow as workflow
     from app.content_generation import ContentGenerationError
 
+    secret_marker = "content-provider-secret-marker"
     monkeypatch.setattr(settings, "app_api_key", "private-test-api-key")
     monkeypatch.setattr(workflow, "get_product_by_idempotency_key", lambda key: None)
     _stub_generation_reservation(monkeypatch, workflow)
@@ -490,7 +557,7 @@ def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(
     })
 
     def fail_generation(**kwargs):
-        raise ContentGenerationError("provider temporarily unavailable")
+        raise ContentGenerationError(f"provider temporarily unavailable {secret_marker}")
 
     persistence_calls = []
     monkeypatch.setattr(workflow, "generate_pin_content", fail_generation)
@@ -499,21 +566,25 @@ def test_end_to_end_content_generation_failure_does_not_consume_idempotency_key(
         lambda **kwargs: persistence_calls.append(kwargs),
     )
 
-    response = client.post(
-        "/workflow/publish-product",
-        json={
-            "product_name": "Copco 3-Tier Spice Rack Organizer",
-            "product_details": "Three-tier spice rack organizer.",
-            "affiliate_url": "https://example.com/affiliate",
-            "account_id": "pinterest:test-account",
-        },
-        headers={
-            "X-API-Key": "private-test-api-key",
-            "Idempotency-Key": "request-key-content-fail",
-        },
-    )
+    with caplog.at_level(logging.ERROR, logger="app.workflow"):
+        response = client.post(
+            "/workflow/publish-product",
+            json={
+                "product_name": "Copco 3-Tier Spice Rack Organizer",
+                "product_details": "Three-tier spice rack organizer.",
+                "affiliate_url": "https://example.com/affiliate",
+                "account_id": "pinterest:test-account",
+            },
+            headers={
+                "X-API-Key": "private-test-api-key",
+                "Idempotency-Key": "request-key-content-fail",
+            },
+        )
     assert response.status_code == 503
     assert "saved image will be reused" in response.json()["detail"]
+    assert secret_marker not in response.text
+    assert secret_marker not in caplog.text
+    assert "exception_type=ContentGenerationError" in caplog.text
     assert persistence_calls == []
 
 
@@ -640,6 +711,24 @@ def test_live_diagnostics_requires_api_key_and_never_runs_without_auth(monkeypat
     )
     response = unauthenticated_client.post("/diagnostics/run", json={"account_id": "pinterest:test-account"})
     assert response.status_code == 401
+
+
+def test_diagnostics_and_learning_routes_fail_closed_when_api_key_is_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", None)
+
+    diagnostics_response = unauthenticated_client.post(
+        "/diagnostics/run",
+        json={"account_id": "pinterest:test-account"},
+    )
+    learning_response = unauthenticated_client.post(
+        "/learning-loop/run",
+        json={"account_id": "pinterest:test-account"},
+    )
+
+    assert diagnostics_response.status_code == 503
+    assert learning_response.status_code == 503
+    assert diagnostics_response.json()["detail"] == "API authentication is not configured."
+    assert learning_response.json()["detail"] == "API authentication is not configured."
 
 
 def test_live_diagnostics_runs_read_only_pinterest_and_reports_side_effect_guard(monkeypatch):
@@ -1012,6 +1101,107 @@ def test_readiness_rejects_present_but_invalid_encryption_key(monkeypatch):
     assert body["pinterest_token_encryption_key_valid"] is False
     assert body["pinterest_account_workflow_configured"] is False
     assert "present-but-not-valid-base64" not in str(body)
+
+
+def test_credential_ingest_accepts_keyring_only_encryption_configuration(monkeypatch):
+    import base64
+    import app.credential_vault as credential_vault
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "configured-ingest-test-key")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_key", None)
+    encoded_key = base64.b64encode(b"k" * 32).decode("ascii")
+    monkeypatch.setattr(settings, "pinterest_token_encryption_keys", json.dumps({"active": encoded_key}))
+    monkeypatch.setattr(settings, "pinterest_token_encryption_active_key_id", "active")
+    monkeypatch.setattr(
+        credential_vault,
+        "store_pinterest_credential",
+        lambda payload: {
+            "account_id": payload["account_id"],
+            "pinterest_user_id": payload["pinterest_user_id"],
+            "status": "connected",
+            "updated_at": None,
+        },
+    )
+
+    response = client.post(
+        "/integrations/pinterest/credentials",
+        json={
+            "account_id": "pinterest:test-user",
+            "pinterest_user_id": "test-user",
+            "access_token": "synthetic-token",
+        },
+        headers={"X-Credential-Ingest-Key": "configured-ingest-test-key"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["stored"] is True
+
+
+def test_trusted_hub_routes_fail_closed_when_ingest_auth_is_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", None)
+    credential_payload = {
+        "account_id": "pinterest:test-account",
+        "pinterest_user_id": "test-user",
+        "access_token": "synthetic-test-token",
+    }
+    refresh_payload = {
+        "account_id": "pinterest:test-account",
+        "client_id": "synthetic-client-id",
+        "client_secret": "synthetic-client-secret",
+    }
+    operation_payload = {
+        "account_id": "pinterest:test-account",
+        "operation": "create_board",
+        "payload": {"name": "Synthetic test board"},
+    }
+
+    responses = [
+        client.post("/integrations/pinterest/credentials", json=credential_payload),
+        client.post("/integrations/pinterest/refresh", json=refresh_payload),
+        client.post("/integrations/pinterest/operation", json=operation_payload),
+    ]
+
+    assert [response.status_code for response in responses] == [503, 503, 503]
+    assert all(
+        response.json()["detail"] == "Credential-ingest authentication is not configured."
+        for response in responses
+    )
+
+
+def test_trusted_hub_routes_reject_invalid_ingest_key_before_side_effects(monkeypatch):
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "configured-ingest-test-key")
+    headers = {"X-Credential-Ingest-Key": "wrong-ingest-test-key"}
+    responses = [
+        client.post(
+            "/integrations/pinterest/credentials",
+            json={
+                "account_id": "pinterest:test-account",
+                "pinterest_user_id": "test-user",
+                "access_token": "synthetic-test-token",
+            },
+            headers=headers,
+        ),
+        client.post(
+            "/integrations/pinterest/refresh",
+            json={
+                "account_id": "pinterest:test-account",
+                "client_id": "synthetic-client-id",
+                "client_secret": "synthetic-client-secret",
+            },
+            headers=headers,
+        ),
+        client.post(
+            "/integrations/pinterest/operation",
+            json={
+                "account_id": "pinterest:test-account",
+                "operation": "create_board",
+                "payload": {"name": "Synthetic test board"},
+            },
+            headers=headers,
+        ),
+    ]
+
+    assert [response.status_code for response in responses] == [401, 401, 401]
 
 
 def test_analytics_integration_route_requires_service_credential(monkeypatch):

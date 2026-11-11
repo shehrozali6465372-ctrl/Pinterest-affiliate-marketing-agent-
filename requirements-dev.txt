@@ -1,0 +1,2 @@
+# Test-only dependencies; install alongside requirements.txt for development/CI.
+pytest>=9.0.3,<10.0

@@ -31,6 +31,11 @@ jobs:
             exit 1
           fi
 
+      - name: Check out workflow summary helper
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Claim and process at most one due job
         shell: bash
         run: |
@@ -59,9 +64,4 @@ jobs:
           PY
             exit 1
           fi
-          python - "$response_file" <<'PY'
-          import json, sys
-          body = json.load(open(sys.argv[1], encoding="utf-8"))
-          safe = {key: body.get(key) for key in ("claimed", "processed", "job_id", "status", "reason", "http_status")}
-          print(json.dumps(safe, separators=(",", ":")))
-          PY
+          python scripts/workflow_summary.py scheduler "$response_file"

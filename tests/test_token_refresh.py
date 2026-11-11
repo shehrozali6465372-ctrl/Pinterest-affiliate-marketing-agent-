@@ -22,21 +22,17 @@ def test_refresh_endpoint_requires_service_key(monkeypatch):
 
 def test_refresh_endpoint_rotates_and_persists_tokens_without_returning_secrets(monkeypatch):
     import httpx
-    from app import credential_vault
+    from app import credential_vault, database
 
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: {"status": "acquired"})
+    monkeypatch.setattr(database, "complete_pinterest_refresh_operation", lambda **kwargs: None)
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
-    monkeypatch.setattr(
-        credential_vault,
-        "get_pinterest_refresh_credential",
-        lambda account_id: {
-            "account_id": account_id,
-            "pinterest_user_id": "123",
-            "username": "test-user",
-            "refresh_token": "old-refresh-secret",
-            "scope": "pins:read,pins:write",
-        },
-    )
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "old-refresh-secret",
+        "scope": "pins:read,pins:write",
+    })
     saved_payloads = []
 
     def store(payload):
@@ -71,7 +67,7 @@ def test_refresh_endpoint_rotates_and_persists_tokens_without_returning_secrets(
             assert auth == ("client-id", "client-secret")
             assert data["grant_type"] == "refresh_token"
             assert data["refresh_token"] == "old-refresh-secret"
-            assert data["continuous_refresh"] == "true"
+            assert "continuous_refresh" not in data
             return FakeResponse()
 
     monkeypatch.setattr(httpx, "Client", FakeClient)
@@ -94,22 +90,18 @@ def test_refresh_endpoint_rotates_and_persists_tokens_without_returning_secrets(
 
 def test_refresh_preserves_existing_refresh_token_when_provider_omits_rotation(monkeypatch):
     import httpx
-    from app import credential_vault
+    from app import credential_vault, database
 
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: {"status": "acquired"})
+    monkeypatch.setattr(database, "complete_pinterest_refresh_operation", lambda **kwargs: None)
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
-    monkeypatch.setattr(
-        credential_vault,
-        "get_pinterest_refresh_credential",
-        lambda account_id: {
-            "account_id": account_id,
-            "pinterest_user_id": "123",
-            "username": "test-user",
-            "refresh_token": "still-valid-refresh-secret",
-            "scope": "pins:read,pins:write",
-            "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
-        },
-    )
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "still-valid-refresh-secret",
+        "scope": "pins:read,pins:write",
+        "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
+    })
     saved_payloads = []
 
     def store(payload):
@@ -162,18 +154,12 @@ def test_expired_refresh_token_is_rejected_before_provider_call(monkeypatch):
     from app import credential_vault
 
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
-    monkeypatch.setattr(
-        credential_vault,
-        "get_pinterest_refresh_credential",
-        lambda account_id: {
-            "account_id": account_id,
-            "pinterest_user_id": "123",
-            "username": "test-user",
-            "refresh_token": "expired-refresh-secret",
-            "scope": "pins:read,pins:write",
-            "refresh_token_expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
-        },
-    )
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "expired-refresh-secret",
+        "scope": "pins:read,pins:write",
+        "refresh_token_expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+    })
     provider_calls = []
 
     class FakeClient:
@@ -201,18 +187,11 @@ def test_malformed_refresh_token_expiry_fails_closed(monkeypatch):
     from app import credential_vault
 
     monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
-    monkeypatch.setattr(
-        credential_vault,
-        "get_pinterest_refresh_credential",
-        lambda account_id: {
-            "account_id": account_id,
-            "pinterest_user_id": "123",
-            "username": "test-user",
-            "refresh_token": "malformed-expiry-refresh-secret",
-            "scope": "pins:read,pins:write",
-            "refresh_token_expires_at": "not-a-timestamp",
-        },
-    )
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "malformed-expiry-refresh-secret",
+        "scope": "pins:read,pins:write", "refresh_token_expires_at": "not-a-timestamp",
+    })
     provider_calls = []
 
     class FakeClient:
@@ -242,8 +221,10 @@ def test_malformed_refresh_token_expiry_fails_closed(monkeypatch):
 def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgres(monkeypatch):
     """Exercise the real vault + refresh endpoint against disposable PostgreSQL; Pinterest is mocked."""
     import base64
+    import hashlib
     import os
     import uuid
+    from concurrent.futures import ThreadPoolExecutor
     import httpx
     from app import credential_vault, database
 
@@ -253,7 +234,9 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
     monkeypatch.setattr(database, "_pool", None)
     database.run_migrations()
 
-    account_id = f"pinterest:pb05-test-{uuid.uuid4().hex}"
+    pinterest_user_id = f"pb05-test-{uuid.uuid4().hex}"
+    account_id = f"pinterest:{pinterest_user_id}"
+    concurrency_account_id = f"pinterest:pb05-test-concurrency-{uuid.uuid4().hex}"
     encryption_key = base64.b64encode(bytes(range(32))).decode("ascii")
     assert len(base64.b64decode(encryption_key)) == 32
     monkeypatch.setattr(settings, "pinterest_token_encryption_key", encryption_key)
@@ -263,14 +246,34 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
     try:
         credential_vault.store_pinterest_credential({
             "account_id": account_id,
-            "pinterest_user_id": "pb05-test-user",
-            "username": "pb05-test-user",
+            "pinterest_user_id": pinterest_user_id,
+            "username": pinterest_user_id,
             "access_token": "old-access-token-fixture",
             "refresh_token": "old-refresh-token-fixture",
             "scope": "user_accounts:read,pins:read",
             "expires_at": "2026-10-01T00:00:00+00:00",
             "refresh_token_expires_at": "2030-01-01T00:00:00+00:00",
         })
+
+        # Two concurrent callers for one token generation must yield exactly
+        # one provider-write claim; the other caller observes in_progress.
+        concurrency_fingerprint = hashlib.sha256(b"synthetic-concurrent-refresh-generation").hexdigest()
+        def claim_concurrent_refresh(_):
+            return database.claim_pinterest_refresh_operation(
+                account_id=concurrency_account_id,
+                request_fingerprint=concurrency_fingerprint,
+            )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            concurrent_claims = list(executor.map(claim_concurrent_refresh, range(2)))
+        assert sorted(item["status"] for item in concurrent_claims) == ["acquired", "in_progress"]
+        database.mark_pinterest_refresh_operation_uncertain(
+            account_id=concurrency_account_id,
+            request_fingerprint=concurrency_fingerprint,
+        )
+        assert database.claim_pinterest_refresh_operation(
+            account_id=concurrency_account_id,
+            request_fingerprint=concurrency_fingerprint,
+        )["status"] == "uncertain"
 
         class FakeResponse:
             content = b'{"access_token":"rotated-access-token-fixture"}'
@@ -322,49 +325,57 @@ def test_refresh_endpoint_persists_rotated_tokens_encrypted_on_disposable_postgr
         assert refresh["refresh_token"] == "rotated-refresh-token-fixture"
         assert access["expires_at"] is not None
         assert refresh["refresh_token_expires_at"] is not None
+        pair = credential_vault.get_pinterest_refresh_pair(account_id)
+        assert pair["access_token"] == "rotated-access-token-fixture"
+        assert pair["refresh_token"] == "rotated-refresh-token-fixture"
+        assert pair["pinterest_user_id"] == pinterest_user_id
 
         with database.connection() as conn:
             row = conn.execute(
                 "SELECT access_token_ciphertext, refresh_token_ciphertext FROM pinterest_credentials WHERE account_id = %s",
                 (account_id,),
             ).fetchone()
+            ledger = conn.execute(
+                "SELECT status, request_fingerprint FROM pinterest_refresh_operations WHERE account_id = %s",
+                (account_id,),
+            ).fetchone()
         assert bytes(row["access_token_ciphertext"]) != b"rotated-access-token-fixture"
         assert bytes(row["refresh_token_ciphertext"]) != b"rotated-refresh-token-fixture"
+        assert ledger["status"] == "succeeded"
+        assert len(ledger["request_fingerprint"]) == 64
+        assert "old-access-token-fixture" not in ledger["request_fingerprint"]
+        assert "old-refresh-token-fixture" not in ledger["request_fingerprint"]
     finally:
         with database.connection() as conn:
+            conn.execute("DELETE FROM pinterest_refresh_operations WHERE account_id IN (%s, %s)", (account_id, concurrency_account_id))
             conn.execute("DELETE FROM pinterest_credentials WHERE account_id = %s", (account_id,))
         database.close_pool()
 
 
-def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_account_lock(monkeypatch):
+def test_access_token_lookup_refreshes_expiring_token_with_durable_ledger(monkeypatch):
     import httpx
-    from app import credential_vault
+    from app import credential_vault, database
+
+    claim_calls = []
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation",
+                        lambda **kwargs: claim_calls.append(kwargs) or {"status": "acquired"})
+    monkeypatch.setattr(database, "complete_pinterest_refresh_operation", lambda **kwargs: None)
 
     monkeypatch.setattr(settings, "pinterest_client_id", "oauth-client-id")
     monkeypatch.setattr(settings, "pinterest_client_secret", "oauth-client-secret")
     monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
 
-    lock_calls = []
-    class FakeConnection:
-        def __enter__(self): return self
-        def __exit__(self, *_args): return False
-        def execute(self, query, params):
-            lock_calls.append((query, params))
-            return self
-
-    monkeypatch.setattr(credential_vault, "connection", lambda: FakeConnection())
     reads = iter([
-        {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
-         "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
         {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
          "access_token": "old-access-token", "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc)},
         {"account_id": "pinterest:123", "pinterest_user_id": "123", "username": "test",
          "access_token": "new-access-token", "expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc)},
     ])
     monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: next(reads))
-    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_credential", lambda account_id: {
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
         "account_id": account_id, "pinterest_user_id": "123", "username": "test",
-        "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "access_token": "old-access-token", "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
         "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
     })
     stored = []
@@ -392,7 +403,9 @@ def test_access_token_lookup_refreshes_expiring_token_with_rotation_under_accoun
     assert result["access_token"] == "new-access-token"
     assert stored[0]["refresh_token"] == "rotated-refresh-token"
     assert stored[0]["access_token"] == "new-access-token"
-    assert lock_calls and lock_calls[0][1] == ("pinterest-token-refresh:pinterest:123",)
+    assert len(claim_calls) == 1
+    assert claim_calls[0]["account_id"] == "pinterest:123"
+    assert len(claim_calls[0]["request_fingerprint"]) == 64
 
 
 def test_expiring_access_token_fails_closed_when_oauth_app_credentials_missing(monkeypatch):
@@ -416,3 +429,147 @@ def test_non_expiring_access_token_does_not_trigger_refresh(monkeypatch):
     })
     monkeypatch.setattr(credential_vault, "_refresh_access_token", lambda account_id: pytest.fail("unexpected refresh"))
     assert credential_vault.get_pinterest_credential("pinterest:123")["access_token"] == "legacy-token"
+
+
+def test_refresh_timeout_is_durable_and_retry_is_blocked(monkeypatch):
+    import httpx
+    from app import credential_vault, database
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "old-refresh-secret", "scope": "pins:read",
+    })
+    state = {"status": "acquired"}
+    writes = []
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: dict(state))
+    monkeypatch.setattr(database, "mark_pinterest_refresh_operation_uncertain",
+                        lambda **kwargs: state.update(status="uncertain"))
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def post(self, *args, **kwargs):
+            writes.append("POST")
+            raise httpx.ReadTimeout("synthetic timeout after dispatch")
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    payload = {"account_id": "pinterest:123", "client_id": "client-id", "client_secret": "client-secret"}
+    first = client.post("/integrations/pinterest/refresh", headers=HEADERS, json=payload)
+    assert first.status_code == 502
+    assert state["status"] == "uncertain"
+    second = client.post("/integrations/pinterest/refresh", headers=HEADERS, json=payload)
+    assert second.status_code == 409
+    assert "uncertain" in second.json()["detail"].lower()
+    assert writes == ["POST"]
+
+
+def test_refresh_replays_completed_operation_without_second_provider_post(monkeypatch):
+    import httpx
+    from app import credential_vault, database
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-secret", "refresh_token": "old-refresh-secret", "scope": "pins:read",
+    })
+    state = {"status": "acquired"}
+    writes = []
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: dict(state))
+    monkeypatch.setattr(database, "complete_pinterest_refresh_operation",
+                        lambda **kwargs: state.update(status="succeeded"))
+    monkeypatch.setattr(credential_vault, "store_pinterest_credential", lambda payload: {
+        "account_id": payload["account_id"], "updated_at": datetime.now(timezone.utc),
+    })
+
+    class FakeResponse:
+        content = b'{"access_token":"new-access-secret"}'
+        is_success = True
+        status_code = 200
+        def json(self):
+            return {"access_token": "new-access-secret", "refresh_token": "new-refresh-secret",
+                    "expires_in": 1800, "refresh_token_expires_in": 86400}
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def post(self, *args, **kwargs):
+            writes.append("POST")
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    payload = {"account_id": "pinterest:123", "client_id": "client-id", "client_secret": "client-secret"}
+    first = client.post("/integrations/pinterest/refresh", headers=HEADERS, json=payload)
+    assert first.status_code == 200
+    second = client.post("/integrations/pinterest/refresh", headers=HEADERS, json=payload)
+    assert second.status_code == 200
+    assert second.json()["replayed"] is True
+    assert writes == ["POST"]
+
+
+def test_refresh_endpoint_does_not_refresh_an_already_fresh_access_token(monkeypatch):
+    import httpx
+    from datetime import timedelta
+    from app import credential_vault, database
+
+    monkeypatch.setattr(settings, "pinterest_credential_ingest_key", "ingest-test-secret")
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123",
+        "access_token": "current-access-secret", "refresh_token": "current-refresh-secret",
+        "expires_at": datetime.now(timezone.utc) + timedelta(hours=2),
+    })
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation",
+                        lambda **kwargs: pytest.fail("fresh token must not claim a refresh operation"))
+    class FakeClient:
+        def __init__(self, *args, **kwargs): raise AssertionError("no OAuth HTTP client should be created")
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    response = client.post(
+        "/integrations/pinterest/refresh", headers=HEADERS,
+        json={"account_id": "pinterest:123", "client_id": "client-id", "client_secret": "client-secret"},
+    )
+    assert response.status_code == 200
+    assert response.json()["already_fresh"] is True
+    assert response.json()["refreshed"] is False
+
+
+def test_internal_auto_refresh_timeout_is_durable_and_not_retried(monkeypatch):
+    import httpx
+    from app import credential_vault, database
+
+    monkeypatch.setattr(settings, "pinterest_client_id", "oauth-client-id")
+    monkeypatch.setattr(settings, "pinterest_client_secret", "oauth-client-secret")
+    monkeypatch.setattr(settings, "pinterest_api_base_url", "https://api.pinterest.com/v5")
+    monkeypatch.setattr(credential_vault, "_read_access_credential", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-token",
+        "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+    })
+    monkeypatch.setattr(credential_vault, "get_pinterest_refresh_pair", lambda account_id: {
+        "account_id": account_id, "pinterest_user_id": "123", "username": "test-user",
+        "access_token": "old-access-token", "refresh_token": "old-refresh-token", "scope": "pins:read",
+        "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
+        "refresh_token_expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
+    })
+    state = {"status": "acquired"}
+    monkeypatch.setattr(database, "claim_pinterest_refresh_operation", lambda **kwargs: dict(state))
+    monkeypatch.setattr(database, "mark_pinterest_refresh_operation_uncertain",
+                        lambda **kwargs: state.update(status="uncertain"))
+    writes = []
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def post(self, *args, **kwargs):
+            writes.append("POST")
+            raise httpx.ReadTimeout("synthetic timeout after provider dispatch")
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+
+    with pytest.raises(RuntimeError, match="uncertain"):
+        credential_vault.get_pinterest_credential("pinterest:123")
+    assert state["status"] == "uncertain"
+    with pytest.raises(RuntimeError, match="uncertain"):
+        credential_vault.get_pinterest_credential("pinterest:123")
+    assert writes == ["POST"]

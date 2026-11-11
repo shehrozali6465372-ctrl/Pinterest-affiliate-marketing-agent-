@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import logging
 import uuid
@@ -13,7 +12,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
-from app.content_generation import ContentGenerationError, GeneratedContent, generate_pin_content
+from app.auth import require_api_key
+from app.content_generation import (
+    ContentGenerationError, GeneratedContent, NICHE_PROMPT_VERSION,
+    NichePromptContext, PROMPT_VERSION, generate_pin_content,
+)
 from app.credential_vault import get_pinterest_credential
 from app.database import (
     begin_publish_attempt, create_product_with_content_version,
@@ -25,13 +28,12 @@ from app.database import (
 from app.media_generation import ImageGenerationError, generate_pin_image
 from app.pinterest import image_media_source
 from app.publishing_gateway import publish_pin
+from app.model2_repository import (
+    Model2ConflictError, Model2NotFoundError, get_active_account_niche_context,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflow", tags=["end-to-end"])
-
-def _require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    if not settings.app_api_key or not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
 
 
 class ProductWorkflowInput(BaseModel):
@@ -39,6 +41,7 @@ class ProductWorkflowInput(BaseModel):
     product_details: str = Field(min_length=1, max_length=10000)
     affiliate_url: str = Field(min_length=8, max_length=4096)
     account_id: str = Field(min_length=1, max_length=200)
+    niche_id: int | None = Field(default=None, gt=0, strict=True)
     board_name: str = Field(default="Modern Living Hub | Kitchen & Home Organization", min_length=1, max_length=100)
     board_description: str = Field(default="Kitchen organization, practical home finds, and home decor inspiration.", max_length=500)
 
@@ -114,20 +117,47 @@ def _ensure_board(token: str, name: str, description: str = "") -> str:
     raise HTTPException(status_code=422, detail="The requested Pinterest board does not exist on this connected account. Create it in Pinterest, then retry; this workflow does not create boards.")
 
 
-@router.post("/publish-product", dependencies=[Depends(_require_api_key)])
+@router.post("/publish-product", dependencies=[Depends(require_api_key)])
 def publish_product_end_to_end(
     payload: ProductWorkflowInput,
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> dict[str, object]:
     """Reserve provider work, checkpoint reusable outputs, persist, then publish one Pin."""
-    request_fingerprint = hashlib.sha256(json.dumps({
+    fingerprint_payload = {
         "product_name": payload.product_name,
         "product_details": payload.product_details,
         "affiliate_url": payload.affiliate_url,
         "account_id": payload.account_id,
         "board_name": payload.board_name,
         "board_description": payload.board_description,
-    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    }
+    niche_context = None
+    if payload.niche_id is not None:
+        try:
+            niche_context = NichePromptContext.model_validate(
+                get_active_account_niche_context(payload.account_id, payload.niche_id)
+            )
+        except (Model2NotFoundError, Model2ConflictError):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "niche_assignment_inactive",
+                    "message": "The requested account-to-niche assignment is missing or inactive; no Pin request was sent.",
+                },
+            ) from None
+        except Exception:
+            raise HTTPException(
+                status_code=503,
+                detail="Niche context could not be verified; no provider or Pinterest request was sent.",
+            ) from None
+        # Include the exact context snapshot so metadata changes cannot silently
+        # reuse a previous generation reservation under the same idempotency key.
+        fingerprint_payload["niche_id"] = niche_context.niche_id
+        fingerprint_payload["niche_context"] = niche_context.model_dump()
+
+    request_fingerprint = hashlib.sha256(json.dumps(
+        fingerprint_payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
     try:
         existing = get_product_by_idempotency_key(idempotency_key)
     except Exception as exc:
@@ -215,8 +245,14 @@ def publish_product_end_to_end(
             )
         except ImageGenerationError as exc:
             _release_generation_lease_safely(idempotency_key, lease_token)
-            logger.error("workflow stage=image_generation outcome=failed detail=%s", str(exc)[:180])
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            logger.error(
+                "workflow stage=image_generation outcome=failed exception_type=%s",
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Image generation failed; retry with the same Idempotency-Key after checking provider configuration.",
+            ) from None
         except Exception as exc:
             _release_generation_lease_safely(idempotency_key, lease_token)
             logger.error("workflow stage=image_checkpoint outcome=failed exception_type=%s", type(exc).__name__)
@@ -232,11 +268,14 @@ def publish_product_end_to_end(
             raise HTTPException(status_code=503, detail="Cached generated content is invalid; lease released. Retry with the same Idempotency-Key after the checkpoint is repaired.") from exc
     else:
         try:
-            generated, model_id = generate_pin_content(
-                product_name=payload.product_name,
-                product_details=payload.product_details,
-                image_url=media["image_url"],
-            )
+            generation_kwargs = {
+                "product_name": payload.product_name,
+                "product_details": payload.product_details,
+                "image_url": media["image_url"],
+            }
+            if niche_context is not None:
+                generation_kwargs["niche_context"] = niche_context
+            generated, model_id = generate_pin_content(**generation_kwargs)
             save_workflow_generation_content(
                 idempotency_key=idempotency_key, lease_token=lease_token,
                 generated_content={
@@ -246,7 +285,10 @@ def publish_product_end_to_end(
             )
         except ContentGenerationError as exc:
             _release_generation_lease_safely(idempotency_key, lease_token)
-            logger.error("workflow stage=content_generation outcome=failed detail=%s", str(exc)[:180])
+            logger.error(
+                "workflow stage=content_generation outcome=failed exception_type=%s",
+                type(exc).__name__,
+            )
             raise HTTPException(status_code=503, detail="Content generation failed; the saved image will be reused on retry with the same Idempotency-Key.") from exc
         except Exception as exc:
             _release_generation_lease_safely(idempotency_key, lease_token)
@@ -264,7 +306,9 @@ def publish_product_end_to_end(
             lease_token=lease_token,
             provider="deepseek",
             model_id=model_id,
-            prompt_version="pin-content-v1",
+            prompt_version=(
+                NICHE_PROMPT_VERSION if niche_context is not None else PROMPT_VERSION
+            ),
             pin_idea=generated.pin_idea,
             title=generated.title,
             description=generated.description,
@@ -280,14 +324,17 @@ def publish_product_end_to_end(
         _release_generation_lease_safely(idempotency_key, lease_token)
         raise HTTPException(status_code=503, detail="Atomic product/content persistence failed; no Pinterest Pin was intentionally published. Cached provider outputs remain available for retry with the same Idempotency-Key.") from exc
 
-    result = publish_pin(
-        product_id=product["id"], content_version_id=content["id"],
-        board_id=board_id, account_id=payload.account_id,
-        access_token=token, title=content["title"],
-        description=content["description"], alt_text=content["alt_text"],
-        media_source=image_media_source(media["image_url"]),
-        destination_url=payload.affiliate_url,
-    )
+    publish_kwargs = {
+        "product_id": product["id"], "content_version_id": content["id"],
+        "board_id": board_id, "account_id": payload.account_id,
+        "access_token": token, "title": content["title"],
+        "description": content["description"], "alt_text": content["alt_text"],
+        "media_source": image_media_source(media["image_url"]),
+        "destination_url": payload.affiliate_url,
+    }
+    if niche_context is not None:
+        publish_kwargs["niche_id"] = niche_context.niche_id
+    result = publish_pin(**publish_kwargs)
     if result.get("already_published"):
         return {
             **result,

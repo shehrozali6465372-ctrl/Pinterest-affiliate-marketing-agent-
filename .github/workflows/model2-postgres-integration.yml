@@ -1,0 +1,152 @@
+name: Model 2 PostgreSQL integration
+
+on:
+  push:
+    branches:
+      - feat/model2-open-source-reuse
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model2-postgres-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  model2-postgres:
+    name: Model 2 migrations and PostgreSQL tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: model2_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: model2-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d model2_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      DATABASE_URL: ""
+      TEST_DATABASE_URL: postgresql://postgres:model2-ci-only@127.0.0.1:5432/model2_test
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Audit Python dependencies for known vulnerabilities
+        run: |
+          python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
+          pip-audit --requirement requirements.txt --requirement requirements-dev.txt --strict --timeout 15 --progress-spinner off
+
+      - name: Verify isolated disposable database target
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          assert os.environ.get("DATABASE_URL", "") == "", "DATABASE_URL must remain unset/empty in this job"
+          target = urlparse(os.environ["TEST_DATABASE_URL"])
+          assert target.scheme == "postgresql"
+          assert target.hostname in {"127.0.0.1", "localhost"}
+          assert target.port == 5432
+          assert target.path == "/model2_test"
+          assert target.username == "postgres"
+          print("Verified loopback-only disposable PostgreSQL service: model2_test")
+          PY
+
+      - name: Run Model 2 static and PostgreSQL integration tests
+        run: >-
+          python -m pytest -q
+          tests/test_model2_domain.py
+          tests/test_model2_repository.py
+          tests/test_model2_registry_api.py
+          tests/test_model2_niche_context.py
+          tests/test_model2_learning.py
+          tests/test_model2_learning_api.py
+          tests/test_model2_dashboard.py
+          tests/test_dashboard.py
+          tests/test_deepseek_completion.py
+          tests/test_credential_vault_identity.py
+          tests/test_credential_vault_keyring.py
+          tests/test_pinterest_operation_identity.py
+          tests/test_trend_ingest_auth.py
+          tests/test_api.py
+          tests/test_model2_registry_migration.py
+          tests/test_affiliate_scheduler.py
+          tests/test_affiliate_scheduler_lock_order.py
+          tests/test_publish_reconciliation.py
+          tests/test_pinterest_readonly.py
+          tests/test_credential_vault.py
+          tests/test_postgres_publication_recovery.py
+          tests/test_model2_registry_postgres.py
+          tests/test_model2_legacy_upgrade.py
+          tests/test_model2_backup_restore.py
+          tests/test_workflow_summary.py
+          tests/test_dependency_boundaries.py
+          tests/test_security_headers.py
+
+      - name: Verify full migration ledger and fixture cleanup
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import psycopg
+          from psycopg.rows import dict_row
+
+          expected = sorted(p.name for p in Path("migrations").glob("[0-9]*.sql"))
+          with psycopg.connect(os.environ["TEST_DATABASE_URL"], row_factory=dict_row) as conn:
+              applied = [row["version"] for row in conn.execute(
+                  "SELECT version FROM schema_migrations ORDER BY version"
+              )]
+              assert applied == expected, f"migration ledger mismatch: applied={applied}, expected={expected}"
+
+              checks = {
+                  "credentials": "SELECT count(*) AS n FROM pinterest_credentials WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "pinterest_refresh_operations": "SELECT count(*) AS n FROM pinterest_refresh_operations WHERE account_id LIKE 'pinterest:pb05-test-%'",
+                  "profiles": "SELECT count(*) AS n FROM model2_account_profiles WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "niches": "SELECT count(*) AS n FROM model2_niches WHERE slug LIKE 'test-niche-%' OR slug LIKE 'second-primary-%' OR slug LIKE 'repository-primary-%' OR slug LIKE 'concurrent-primary-%'",
+                  "mappings": "SELECT count(*) AS n FROM model2_account_niches WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "learning": "SELECT count(*) AS n FROM model2_learning_snapshots WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "sources": "SELECT count(*) AS n FROM model2_learning_snapshot_sources",
+                  "attributions": "SELECT count(*) AS n FROM model2_publication_niche_attributions",
+                  "analytics": "SELECT count(*) AS n FROM pin_analytics_snapshots WHERE pinterest_pin_id LIKE 'model2-test-pin-%'",
+                  "publications": "SELECT count(*) AS n FROM pin_publications WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "products": "SELECT count(*) AS n FROM products WHERE product_name LIKE 'Model2 test product %'",
+                  "content_versions": "SELECT count(*) AS n FROM content_versions cv JOIN products p ON p.id = cv.product_id WHERE p.product_name LIKE 'Model2 test product %'",
+                  "schedules": "SELECT count(*) AS n FROM affiliate_publishing_schedules WHERE account_id LIKE 'pinterest:test-model2-%'",
+                  "scheduler_jobs": "SELECT count(*) AS n FROM affiliate_pin_jobs j JOIN affiliate_publishing_schedules s ON s.id = j.schedule_id WHERE s.account_id LIKE 'pinterest:test-model2-%'",
+                  "scheduler_sources": "SELECT count(*) AS n FROM affiliate_product_sources p JOIN affiliate_publishing_schedules s ON s.id = p.schedule_id WHERE s.account_id LIKE 'pinterest:test-model2-%'",
+                  "scheduler_reconciliation_audit": "SELECT count(*) AS n FROM affiliate_job_reconciliation_audit WHERE account_id LIKE 'pinterest:test-model2-%'",
+              }
+              leftovers = {name: conn.execute(query).fetchone()["n"] for name, query in checks.items()}
+              assert all(count == 0 for count in leftovers.values()), f"test fixture data remains: {leftovers}"
+
+          print(f"Verified all {len(expected)} numbered migrations are recorded.")
+          print("Verified all Model 2 fixture rows and synthetic Model 1 test rows were cleaned.")
+          PY

@@ -1,5 +1,6 @@
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,7 +42,7 @@ def test_create_draft_preserves_affiliate_url_and_does_not_enqueue(monkeypatch):
     calls = []
     starts_on = date.today() + timedelta(days=1)
     schedule_row = {
-        "id": 71, "account_id": "pinterest:123", "timezone": "America/New_York",
+        "id": 71, "account_id": "pinterest:123", "niche_id": None, "timezone": "America/New_York",
         "starts_on": starts_on, "ends_on": starts_on + timedelta(days=29),
         "daily_pin_limit": 5, "board_name": "Home Finds", "status": "draft",
     }
@@ -94,7 +95,7 @@ def test_activation_queues_150_slots_without_publishing(monkeypatch):
 
     calls = []
     schedule = {
-        "id": 9, "status": "draft", "timezone": "America/New_York",
+        "id": 9, "account_id": "pinterest:123", "niche_id": None, "status": "draft", "timezone": "America/New_York",
         "starts_on": date(2026, 11, 5), "ends_on": date(2026, 12, 4),
         "daily_pin_limit": 5,
     }
@@ -110,6 +111,8 @@ def test_activation_queues_150_slots_without_publishing(monkeypatch):
     class FakeConnection:
         def execute(self, query, params=None):
             calls.append((query, params))
+            if "SELECT account_id, niche_id FROM affiliate_publishing_schedules" in query:
+                return Result(one={"account_id": schedule["account_id"], "niche_id": None})
             if "SELECT * FROM affiliate_publishing_schedules" in query:
                 return Result(one=schedule)
             if "SELECT id FROM affiliate_product_sources" in query:
@@ -164,6 +167,7 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
     }
     details = {
         "account_id": "pinterest:123",
+        "niche_id": None,
         "board_name": "Home Finds",
         "board_description": "Kitchen organization",
         "product_name": "Organizer",
@@ -181,9 +185,15 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
 
     class FakeConnection:
         def execute(self, query, params=None):
+            if "SELECT s.id AS schedule_id" in query and "s.niche_id IS NOT NULL" in query:
+                return Result(None)
+            if "SELECT s.id AS schedule_id" in query and "s.niche_id IS NULL" in query:
+                return Result({"schedule_id": 9, "account_id": "pinterest:123", "niche_id": None, "timezone": "UTC"})
+            if "SELECT id, account_id, niche_id, timezone, daily_pin_limit" in query:
+                return Result({"id": 9, "account_id": "pinterest:123", "niche_id": None, "timezone": "UTC", "daily_pin_limit": 5, "status": "active"})
             if "WITH candidate AS" in query:
                 return Result(claimed)
-            if "SELECT s.account_id, s.board_name" in query:
+            if "SELECT s.account_id, s.niche_id, s.board_name" in query:
                 return Result(details)
             return Result()
 
@@ -201,6 +211,7 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
         }
 
     monkeypatch.setattr(affiliate_scheduler, "connection", fake_connection)
+    monkeypatch.setattr(affiliate_scheduler, "_finalize_claimed_job", lambda *args, **kwargs: True)
     monkeypatch.setattr(workflow, "publish_product_end_to_end", fake_workflow)
 
     result = affiliate_scheduler.run_one_due_job()
@@ -211,3 +222,317 @@ def test_worker_calls_workflow_with_supported_signature_without_publishing(monke
     payload, key = workflow_calls[0]
     assert payload.product_name == "Organizer"
     assert key == claimed["idempotency_key"]
+
+
+def test_account_local_quota_day_bounds_follow_dst_transitions():
+    from app.affiliate_scheduler import _account_local_day_bounds
+
+    spring = datetime(2026, 3, 8, 12, tzinfo=ZoneInfo("America/New_York"))
+    spring_start, spring_end = _account_local_day_bounds("America/New_York", now=spring)
+    assert spring_end - spring_start == timedelta(hours=23)
+
+    autumn = datetime(2026, 11, 1, 12, tzinfo=ZoneInfo("America/New_York"))
+    autumn_start, autumn_end = _account_local_day_bounds("America/New_York", now=autumn)
+    assert autumn_end - autumn_start == timedelta(hours=25)
+
+
+def test_model2_schedule_input_requires_positive_integer_niche_id():
+    source = {
+        "product_name": "Organizer",
+        "product_details": "Kitchen drawer organizer",
+        "affiliate_url": "https://example.com/item",
+    }
+    with pytest.raises(ValueError):
+        CreateScheduleInput(
+            account_id="pinterest:123", niche_id=0, timezone="UTC",
+            starts_on=date(2099, 11, 5), sources=[source],
+        )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("get", "/affiliate-scheduler/jobs/123/reconciliation?account_id=pinterest:123", None),
+        ("post", "/affiliate-scheduler/jobs/123/reconcile", {
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "operator_evidence": "Operator verified the exact account and Board.",
+            "confirm_pin_absent": True,
+        }),
+    ],
+)
+def test_scheduler_reconciliation_routes_fail_closed_without_configured_key(
+    monkeypatch, method, path, body,
+):
+    monkeypatch.setattr(settings, "app_api_key", None)
+    client = TestClient(app)
+    response = getattr(client, method)(path, json=body) if body is not None else client.get(path)
+    assert response.status_code == 503
+    assert response.json()["detail"] == "API authentication is not configured."
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("get", "/affiliate-scheduler/jobs/123/reconciliation?account_id=pinterest:123", None),
+        ("post", "/affiliate-scheduler/jobs/123/reconcile", {
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "operator_evidence": "Operator verified the exact account and Board.",
+            "confirm_pin_absent": True,
+        }),
+    ],
+)
+def test_scheduler_reconciliation_routes_reject_invalid_key(
+    monkeypatch, method, path, body,
+):
+    monkeypatch.setattr(settings, "app_api_key", "expected-service-key")
+    client = TestClient(app)
+    response = (
+        getattr(client, method)(path, json=body, headers={"X-API-Key": "wrong-key"})
+        if body is not None
+        else client.get(path, headers={"X-API-Key": "wrong-key"})
+    )
+    assert response.status_code == 401
+
+
+def test_scheduler_reconciliation_inspection_api_is_authenticated_and_read_only(monkeypatch):
+    from app import database
+
+    monkeypatch.setattr(settings, "app_api_key", "scheduler-test-key")
+    calls = []
+    monkeypatch.setattr(
+        database, "get_scheduler_job_reconciliation",
+        lambda job_id, *, account_id: calls.append((job_id, account_id)) or {
+            "job_id": job_id, "account_id": account_id,
+            "linkage_status": "no_publication_candidate", "read_only": True,
+        },
+    )
+    client = TestClient(app)
+    response = client.get(
+        "/affiliate-scheduler/jobs/123/reconciliation?account_id=pinterest:123",
+        headers={"X-API-Key": "scheduler-test-key"},
+    )
+    assert response.status_code == 200
+    assert response.json()["read_only"] is True
+    assert calls == [(123, "pinterest:123")]
+
+
+def test_scheduler_reconciliation_post_api_forwards_explicit_absence_confirmation(monkeypatch):
+    from app import database
+
+    monkeypatch.setattr(settings, "app_api_key", "scheduler-test-key")
+    calls = []
+    monkeypatch.setattr(
+        database, "reconcile_scheduler_job",
+        lambda job_id, **kwargs: calls.append((job_id, kwargs)) or {
+            "job_id": job_id, "status": "failed", "reconciled": True,
+        },
+    )
+    client = TestClient(app)
+    response = client.post(
+        "/affiliate-scheduler/jobs/123/reconcile",
+        headers={"X-API-Key": "scheduler-test-key"},
+        json={
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "operator_evidence": "Operator verified the exact account and Board.",
+            "confirm_pin_absent": True,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert calls == [(
+        123,
+        {
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "pinterest_pin_id": None,
+            "operator_evidence": "Operator verified the exact account and Board.",
+            "confirm_pin_absent": True,
+        },
+    )]
+
+
+def test_scheduler_reconciliation_post_api_rejects_missing_absence_confirmation(monkeypatch):
+    monkeypatch.setattr(settings, "app_api_key", "scheduler-test-key")
+    client = TestClient(app)
+    response = client.post(
+        "/affiliate-scheduler/jobs/123/reconcile",
+        headers={"X-API-Key": "scheduler-test-key"},
+        json={
+            "account_id": "pinterest:123",
+            "outcome": "failed",
+            "operator_evidence": "Operator evidence has sufficient length.",
+        },
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("workflow_detail", "http_status", "expected_status", "expected_error"),
+    [
+        (
+            {
+                "code": "niche_assignment_inactive",
+                "message": "The account profile or niche assignment is paused; no Pin request was sent.",
+            },
+            409,
+            "failed",
+            "pre_publish_conflict",
+        ),
+        (
+            {
+                "code": "niche_account_not_connected",
+                "message": "The Pinterest account is not connected; no Pin request was sent.",
+            },
+            409,
+            "failed",
+            "pre_publish_conflict",
+        ),
+        ("publish outcome uncertain", 409, "uncertain", "publish_outcome_uncertain"),
+        (
+            {"code": "niche_assignment_inactive", "message": "Pre-publish conflict"},
+            502,
+            "uncertain",
+            "publish_outcome_uncertain",
+        ),
+    ],
+)
+
+def test_worker_distinguishes_pre_publish_conflicts_from_ambiguous_409s(
+    monkeypatch, workflow_detail, http_status, expected_status, expected_error
+):
+    from app import affiliate_scheduler, workflow
+    from fastapi import HTTPException
+
+    claimed = {
+        "id": 501,
+        "schedule_id": 91,
+        "idempotency_key": "paused-niche-worker-test",
+        "attempt_count": 1,
+        "source_id": 73,
+    }
+    details = {
+        "account_id": "pinterest:123",
+        "niche_id": 19,
+        "board_name": "Home Finds",
+        "board_description": "Home organization",
+        "product_name": "Organizer",
+        "product_details": "Kitchen drawer organizer",
+        "affiliate_url": "https://example.com/item",
+    }
+    hint = {
+        "schedule_id": 91,
+        "account_id": "pinterest:123",
+        "niche_id": 19,
+        "timezone": "UTC",
+    }
+    schedule = {
+        "id": 91,
+        "account_id": "pinterest:123",
+        "niche_id": 19,
+        "timezone": "UTC",
+        "daily_pin_limit": 5,
+        "status": "active",
+    }
+    finalized = []
+
+    class Result:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class FakeConnection:
+        def execute(self, query, params=None):
+            if "SELECT s.id AS schedule_id" in query and "s.niche_id IS NOT NULL" in query:
+                return Result(hint)
+            if "SELECT id, account_id, niche_id, timezone, daily_pin_limit" in query:
+                return Result(schedule)
+            if "SELECT now() AS current_time" in query:
+                return Result({"current_time": datetime.now(timezone.utc)})
+            if "WITH candidate AS" in query:
+                return Result(claimed)
+            if "SELECT s.account_id, s.niche_id, s.board_name" in query:
+                return Result(details)
+            return Result()
+
+    @contextmanager
+    def fake_connection():
+        yield FakeConnection()
+
+    def paused_niche_workflow(*args, **kwargs):
+        raise HTTPException(
+            status_code=http_status,
+            detail=workflow_detail,
+        )
+
+    monkeypatch.setattr(affiliate_scheduler, "connection", fake_connection)
+    monkeypatch.setattr(affiliate_scheduler, "_quarantine_one_expired_claim", lambda: None)
+    monkeypatch.setattr(affiliate_scheduler, "_validate_model2_schedule_context", lambda *a, **k: "UTC")
+    monkeypatch.setattr(
+        affiliate_scheduler,
+        "_account_local_day_bounds",
+        lambda *a, **k: (datetime.now(timezone.utc), datetime.now(timezone.utc) + timedelta(days=1)),
+    )
+    monkeypatch.setattr(
+        affiliate_scheduler,
+        "_finalize_claimed_job",
+        lambda *args, **kwargs: finalized.append(kwargs) or True,
+    )
+    monkeypatch.setattr(workflow, "publish_product_end_to_end", paused_niche_workflow)
+
+    result = affiliate_scheduler.run_one_due_job()
+
+    assert result["status"] == expected_status
+    assert finalized[0]["status"] == expected_status
+    assert finalized[0]["safe_error_code"] == expected_error
+
+
+def test_legacy_scheduler_quota_counts_uncertain_publications(monkeypatch):
+    """An unknown Pin outcome consumes the daily limit for legacy Model 1 schedules."""
+    from contextlib import contextmanager
+    from app import affiliate_scheduler
+
+    hint = {
+        "schedule_id": 44, "account_id": "pinterest:legacy-123",
+        "niche_id": None, "timezone": "UTC",
+    }
+    schedule = {
+        "id": 44, "account_id": "pinterest:legacy-123", "niche_id": None,
+        "timezone": "UTC", "daily_pin_limit": 1, "status": "active",
+    }
+    observed = []
+
+    class Result:
+        def __init__(self, row=None): self.row = row
+        def fetchone(self): return self.row
+
+    class FakeConnection:
+        def execute(self, query, params=None):
+            if "s.niche_id IS NOT NULL" in query and "SELECT s.id AS schedule_id" in query:
+                return Result(None)
+            if "s.niche_id IS NULL" in query and "SELECT s.id AS schedule_id" in query:
+                observed.append(query)
+                assert "same_day.status IN ('processing', 'succeeded', 'uncertain')" in query
+                return Result(hint)
+            if "SELECT id, account_id, niche_id, timezone, daily_pin_limit" in query:
+                return Result(schedule)
+            if "WITH candidate AS" in query:
+                observed.append(query)
+                assert "same_day.status IN ('processing', 'succeeded', 'uncertain')" in query
+                return Result(None)  # the uncertain publication has consumed the one-slot quota
+            raise AssertionError(f"unexpected SQL in quota test: {query[:120]}")
+
+    @contextmanager
+    def fake_connection():
+        yield FakeConnection()
+
+    monkeypatch.setattr(affiliate_scheduler, "connection", fake_connection)
+    monkeypatch.setattr(affiliate_scheduler, "_quarantine_one_expired_claim", lambda: None)
+    result = affiliate_scheduler.run_one_due_job()
+
+    assert result == {"claimed": False, "processed": False, "reason": "no_due_job"}
+    assert len(observed) == 2

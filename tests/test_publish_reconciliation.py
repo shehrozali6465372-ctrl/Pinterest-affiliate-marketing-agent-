@@ -245,7 +245,7 @@ def test_read_only_pinterest_verification_route_paginates_and_never_mutates(monk
         "created_at": None, "updated_at": None,
     }
     monkeypatch.setattr("app.database.get_publication", lambda publication_id: publication)
-    monkeypatch.setattr("app.credential_vault.get_pinterest_credential", lambda account_id: {"access_token": "never-return-this"})
+    monkeypatch.setattr("app.credential_vault.get_pinterest_credential_read_only", lambda account_id: {"access_token": "never-return-this"})
     monkeypatch.setattr("app.pinterest.list_board_pins_read_only", lambda **kwargs: {
         "items": [{"id": "pin-1", "board_id": "board-1", "title": "A", "link": "https://example.test"}],
         "pages_read": 3, "pagination_complete": True,
@@ -269,3 +269,25 @@ def test_read_only_pinterest_verification_route_requires_auth(monkeypatch):
     monkeypatch.setattr(settings, "app_api_key", "test-api-key")
     response = client.get("/publications/7/pinterest-verification")
     assert response.status_code == 401
+
+
+def test_connection_scoped_reconciliation_helper_uses_caller_transaction(monkeypatch):
+    import app.database as database
+
+    harness = StatefulPublicationHarness("unknown")
+
+    def forbidden_new_connection():
+        raise AssertionError("connection-scoped helper must not open another connection")
+
+    monkeypatch.setattr(database, "connection", forbidden_new_connection)
+    saved = database.reconcile_unknown_publication_in_transaction(
+        harness,
+        7,
+        outcome="succeeded",
+        pinterest_pin_id="pin-transaction-scoped",
+        operator_evidence="Unit fixture: supplied connection transaction only",
+    )
+
+    assert saved["status"] == "succeeded"
+    assert saved["pinterest_pin_id"] == "pin-transaction-scoped"
+    assert any("pg_advisory_xact_lock" in sql for sql, _ in harness.calls)

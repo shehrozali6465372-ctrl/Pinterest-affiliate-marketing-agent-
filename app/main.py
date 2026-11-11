@@ -12,8 +12,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.config import settings
+from app.auth import require_api_key, require_credential_ingest_key
 from app.content_generation import ContentGenerationError, PROMPT_VERSION, generate_pin_content
 from app.publishing_gateway import publish_pin
+from app.security_headers import SecurityHeadersMiddleware
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,7 @@ app = FastAPI(
     description="Model 1: USA Home Decor & Kitchen affiliate Pin workflow.",
     lifespan=lifespan,
 )
+app.add_middleware(SecurityHeadersMiddleware)
 
 from app.workflow import router as workflow_router
 app.include_router(workflow_router)
@@ -77,23 +80,15 @@ app.include_router(trends_router)
 from app.trend_visuals import router as trend_visuals_router
 app.include_router(trend_visuals_router)
 
+from app.model2_registry import router as model2_registry_router
+app.include_router(model2_registry_router)
 
-def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
-    """Fail closed: operational endpoints require a configured and valid API key."""
-    if not settings.app_api_key:
-        raise HTTPException(status_code=503, detail="API authentication is not configured.")
-    if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+from app.model2_learning import router as model2_learning_router
+app.include_router(model2_learning_router)
 
 
-def require_configured_api_key(
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> None:
-    """Fail closed for publication-changing and operator endpoints if APP_API_KEY is missing."""
-    if not settings.app_api_key:
-        raise HTTPException(status_code=503, detail="API authentication is not configured.")
-    if not x_api_key or not hmac.compare_digest(x_api_key, settings.app_api_key):
-        raise HTTPException(status_code=401, detail="Valid X-API-Key header required.")
+# Backwards-compatible name for publication-changing routes; one auth implementation.
+require_configured_api_key = require_api_key
 
 
 class ProductInput(BaseModel):
@@ -246,19 +241,21 @@ def provider_diagnostics() -> dict[str, object]:
     return result
 
 
-@app.post("/integrations/pinterest/credentials", status_code=status.HTTP_201_CREATED)
+@app.post("/integrations/pinterest/credentials", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_credential_ingest_key)])
 def ingest_pinterest_credential(
     payload: PinterestCredentialInput,
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
 ) -> dict[str, object]:
     """Accept Pinterest OAuth credentials from the trusted Modern Living Hub backend only."""
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
-    if not settings.pinterest_token_encryption_key:
-        raise HTTPException(status_code=503, detail="Pinterest credential encryption is not configured.")
+    from app.credential_vault import (
+        store_pinterest_credential,
+        token_encryption_key_is_valid,
+    )
+    if not token_encryption_key_is_valid():
+        raise HTTPException(
+            status_code=503,
+            detail="Pinterest credential encryption is not configured or invalid.",
+        )
     try:
-        from app.credential_vault import store_pinterest_credential
         saved = store_pinterest_credential(payload.model_dump())
         return {
             "stored": True,
@@ -292,14 +289,6 @@ class PinterestAnalyticsIntegrationInput(BaseModel):
 
 
 
-def require_credential_ingest_key(
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
-) -> None:
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
-
-
 @app.post("/integrations/pinterest/analytics/run", dependencies=[Depends(require_credential_ingest_key)])
 def run_pinterest_analytics_integration(payload: PinterestAnalyticsIntegrationInput) -> dict[str, object]:
     """Run read-only Pinterest organic analytics ingestion through the trusted Hub boundary."""
@@ -307,28 +296,31 @@ def run_pinterest_analytics_integration(payload: PinterestAnalyticsIntegrationIn
     return run_learning_loop(LearningRequest(account_id=payload.account_id, period_days=payload.period_days))
 
 
-@app.post("/integrations/pinterest/refresh")
+@app.post("/integrations/pinterest/refresh", dependencies=[Depends(require_credential_ingest_key)])
 def refresh_pinterest_credential(
     payload: PinterestRefreshInput,
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
 ) -> dict[str, object]:
-    """Refresh an expired Pinterest access token using server-to-server app credentials."""
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
-
+    """Refresh one Pinterest token generation exactly once; ambiguous outcomes fail closed."""
     from datetime import datetime, timedelta, timezone
+    import hashlib
     import httpx
     from cryptography.exceptions import InvalidTag
     from app.credential_vault import (
         TokenEncryptionConfigurationError,
-        get_pinterest_refresh_credential,
+        get_pinterest_refresh_pair,
         store_pinterest_credential,
     )
-    from app.database import DatabaseConfigurationError
+    from app.database import (
+        DatabaseConfigurationError,
+        claim_pinterest_refresh_operation,
+        complete_pinterest_refresh_operation,
+        mark_pinterest_refresh_operation_failed,
+        mark_pinterest_refresh_operation_uncertain,
+    )
 
     try:
-        stored = get_pinterest_refresh_credential(payload.account_id)
+        stored = get_pinterest_refresh_pair(payload.account_id)
+        current = stored
     except LookupError:
         raise HTTPException(status_code=409, detail="No usable Pinterest refresh token is stored; reconnect Pinterest.") from None
     except InvalidTag:
@@ -340,8 +332,7 @@ def refresh_pinterest_credential(
     except Exception:
         raise HTTPException(status_code=503, detail="Pinterest refresh credential lookup failed.") from None
 
-    # Avoid sending a refresh token to Pinterest after its declared expiry.
-    # Null expiry remains supported for older stored credentials; malformed expiry fails closed.
+    now = datetime.now(timezone.utc)
     stored_refresh_expiry = stored.get("refresh_token_expires_at")
     if stored_refresh_expiry is not None:
         try:
@@ -351,54 +342,146 @@ def refresh_pinterest_credential(
                 )
             if stored_refresh_expiry.tzinfo is None:
                 stored_refresh_expiry = stored_refresh_expiry.replace(tzinfo=timezone.utc)
+            else:
+                stored_refresh_expiry = stored_refresh_expiry.astimezone(timezone.utc)
         except (TypeError, ValueError, OverflowError):
-            raise HTTPException(
-                status_code=503,
-                detail="Stored Pinterest refresh-token expiry is invalid; reconnect the account.",
-            ) from None
-        if stored_refresh_expiry <= datetime.now(timezone.utc):
-            raise HTTPException(
-                status_code=409,
-                detail="Stored Pinterest refresh token has expired; reconnect the account.",
-            )
+            raise HTTPException(status_code=503, detail="Stored Pinterest refresh-token expiry is invalid; reconnect the account.") from None
+        if stored_refresh_expiry <= now:
+            raise HTTPException(status_code=409, detail="Stored Pinterest refresh token has expired; reconnect the account.")
 
+    if stored.get("account_id") != payload.account_id:
+        raise HTTPException(status_code=409, detail="Stored Pinterest credential account identity is inconsistent.")
+
+    current_expiry = current.get("expires_at")
+    if current_expiry is not None:
+        try:
+            if not isinstance(current_expiry, datetime):
+                current_expiry = datetime.fromisoformat(str(current_expiry).replace("Z", "+00:00"))
+            if current_expiry.tzinfo is None:
+                current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+            else:
+                current_expiry = current_expiry.astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=503, detail="Stored Pinterest access-token expiry is invalid.") from None
+        if current_expiry > now + timedelta(minutes=5):
+            return {
+                "refreshed": False,
+                "already_fresh": True,
+                "account_id": payload.account_id,
+                "expires_at": current_expiry.isoformat(),
+            }
+
+    # Hash the current token generation; never persist either raw token in the ledger.
+    fingerprint = hashlib.sha256(
+        (payload.account_id + "\0" + str(current["access_token"]) + "\0" + str(stored["refresh_token"])).encode()
+    ).hexdigest()
+    try:
+        claim = claim_pinterest_refresh_operation(
+            account_id=payload.account_id, request_fingerprint=fingerprint,
+        )
+    except Exception:
+        raise HTTPException(status_code=503, detail="Pinterest refresh ledger is unavailable; no OAuth request was sent.") from None
+    if claim["status"] == "succeeded":
+        return {
+            "refreshed": True, "replayed": True, "account_id": payload.account_id,
+            "expires_at": current_expiry.isoformat() if current_expiry else None,
+        }
+    if claim["status"] in {"uncertain", "in_progress"}:
+        raise HTTPException(status_code=409, detail="Pinterest refresh outcome is uncertain or still in progress; automatic retry is blocked. Reconnect or verify the account before another refresh.")
+    if claim["status"] == "failed":
+        raise HTTPException(status_code=409, detail="This Pinterest refresh attempt was rejected; reconnect the account before retrying.")
+
+    request_dispatched = False
     try:
         with httpx.Client(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+            request_dispatched = True
             response = client.post(
                 f"{settings.pinterest_api_base_url.rstrip('/')}/oauth/token",
                 auth=(payload.client_id, payload.client_secret),
                 data={
                     "grant_type": "refresh_token",
                     "refresh_token": stored["refresh_token"],
-                    "continuous_refresh": "true",
                 },
             )
         token_data = response.json() if response.content else {}
     except (httpx.HTTPError, ValueError):
-        raise HTTPException(status_code=502, detail="Pinterest OAuth token refresh request failed.") from None
+        if request_dispatched:
+            try:
+                mark_pinterest_refresh_operation_uncertain(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+            except Exception:
+                pass
+        raise HTTPException(status_code=502, detail="Pinterest OAuth refresh outcome is uncertain; automatic retry is blocked.") from None
 
-    if not response.is_success or not isinstance(token_data, dict) or not token_data.get("access_token"):
-        status_code = 401 if response.status_code in (400, 401, 403) else 502
-        raise HTTPException(
-            status_code=status_code,
-            detail="Pinterest rejected token refresh. Reconnect the account if the refresh token is invalid or expired.",
-        )
+    if not response.is_success:
+        try:
+            if response.status_code < 500:
+                mark_pinterest_refresh_operation_failed(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+            else:
+                mark_pinterest_refresh_operation_uncertain(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+        except Exception:
+            pass
+        if response.status_code >= 500:
+            raise HTTPException(status_code=502, detail="Pinterest OAuth refresh response is ambiguous; automatic retry is blocked.")
+        status_code = 401 if response.status_code in (400, 401, 403) else response.status_code
+        raise HTTPException(status_code=status_code, detail="Pinterest rejected token refresh. Reconnect the account if the refresh token is invalid or expired.")
 
-    now = datetime.now(timezone.utc)
-    expires_at = (
-        (now + timedelta(seconds=int(token_data["expires_in"]))).isoformat()
-        if token_data.get("expires_in") is not None else None
-    )
+    if not isinstance(token_data, dict) or not token_data.get("access_token"):
+        try:
+            mark_pinterest_refresh_operation_uncertain(
+                account_id=payload.account_id, request_fingerprint=fingerprint,
+            )
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail="Pinterest returned an incomplete refresh response; outcome is uncertain and automatic retry is blocked.")
+
+    try:
+        expires_in = int(token_data["expires_in"])
+        if expires_in <= 0:
+            raise ValueError("expires_in must be positive")
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
+    except (KeyError, TypeError, ValueError, OverflowError):
+        try:
+            mark_pinterest_refresh_operation_uncertain(
+                account_id=payload.account_id, request_fingerprint=fingerprint,
+            )
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail="Pinterest refresh response has no valid access-token lifetime; outcome is uncertain.") from None
+
     refresh_expiry = token_data.get("refresh_token_expires_at")
     if refresh_expiry is not None:
         try:
             refresh_token_expires_at = datetime.fromtimestamp(float(refresh_expiry), timezone.utc).isoformat()
         except (TypeError, ValueError, OverflowError):
-            refresh_token_expires_at = None
+            try:
+                mark_pinterest_refresh_operation_uncertain(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+            except Exception:
+                pass
+            raise HTTPException(status_code=502, detail="Pinterest returned an invalid refresh-token expiry; outcome is uncertain.") from None
     elif token_data.get("refresh_token_expires_in") is not None:
-        refresh_token_expires_at = (
-            now + timedelta(seconds=int(token_data["refresh_token_expires_in"]))
-        ).isoformat()
+        try:
+            refresh_lifetime = int(token_data["refresh_token_expires_in"])
+            if refresh_lifetime <= 0:
+                raise ValueError("refresh lifetime must be positive")
+            refresh_token_expires_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=refresh_lifetime)
+            ).isoformat()
+        except (TypeError, ValueError, OverflowError):
+            try:
+                mark_pinterest_refresh_operation_uncertain(
+                    account_id=payload.account_id, request_fingerprint=fingerprint,
+                )
+            except Exception:
+                pass
+            raise HTTPException(status_code=502, detail="Pinterest returned an invalid refresh-token lifetime; outcome is uncertain.") from None
     else:
         refresh_token_expires_at = stored_refresh_expiry
 
@@ -408,7 +491,6 @@ def refresh_pinterest_credential(
             "pinterest_user_id": stored["pinterest_user_id"],
             "username": stored.get("username") or "",
             "access_token": str(token_data["access_token"]),
-            # Pinterest may omit a rotated refresh token; never erase the still-valid stored one.
             "refresh_token": str(token_data.get("refresh_token") or stored.get("refresh_token") or ""),
             "token_type": str(token_data.get("token_type") or "bearer"),
             "scope": str(token_data.get("scope") or stored.get("scope") or ""),
@@ -416,7 +498,20 @@ def refresh_pinterest_credential(
             "refresh_token_expires_at": refresh_token_expires_at,
         })
     except Exception:
-        raise HTTPException(status_code=503, detail="Pinterest refreshed a token but encrypted persistence could not be confirmed.") from None
+        try:
+            mark_pinterest_refresh_operation_uncertain(
+                account_id=payload.account_id, request_fingerprint=fingerprint,
+            )
+        except Exception:
+            pass
+        raise HTTPException(status_code=503, detail="Pinterest may have rotated the token, but encrypted persistence could not be confirmed; automatic retry is blocked.") from None
+
+    try:
+        complete_pinterest_refresh_operation(
+            account_id=payload.account_id, request_fingerprint=fingerprint,
+        )
+    except Exception:
+        raise HTTPException(status_code=503, detail="Pinterest refreshed and stored the credential, but refresh-ledger finalization could not be confirmed.") from None
 
     return {
         "refreshed": True,
@@ -430,7 +525,6 @@ def refresh_pinterest_credential(
             else refresh_token_expires_at
         ),
     }
-
 
 class ManualPublishInput(BaseModel):
     account_id: str = Field(min_length=1, max_length=200)
@@ -576,27 +670,40 @@ def publish_manual_pin(
 
 
 
-@app.post("/integrations/pinterest/operation")
+@app.post("/integrations/pinterest/operation", dependencies=[Depends(require_credential_ingest_key)])
 def pinterest_account_operation(
     payload: PinterestOperationInput,
-    x_credential_ingest_key: str | None = Header(default=None, alias="X-Credential-Ingest-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=8, max_length=200),
 ) -> dict[str, object]:
     """Execute a bounded Pinterest API operation using an encrypted Neon credential."""
-    expected = settings.pinterest_credential_ingest_key
-    if not expected or not hmac.compare_digest(x_credential_ingest_key or "", expected):
-        raise HTTPException(status_code=401, detail="Valid service credential required.")
     from app.credential_vault import get_pinterest_credential, revoke_pinterest_credential
     import httpx
+    import hashlib
+    import json
     operation = payload.operation
     data = payload.payload
+    if operation == "create_board" and not idempotency_key:
+        raise HTTPException(status_code=422, detail="Idempotency-Key is required for create_board.")
     allowed = {
         "account": ("GET", "/user_account", None),
         "boards": ("GET", "/boards?page_size=100", None),
         "create_board": ("POST", "/boards", {"name": str(data.get("name") or ""), "description": str(data.get("description") or "")}),
     }
     if operation == "disconnect":
-        revoke_pinterest_credential(payload.account_id)
-        return {"disconnected": True}
+        try:
+            revoke_pinterest_credential(payload.account_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Pinterest account is not connected.") from None
+        except ValueError:
+            raise HTTPException(status_code=409, detail="Stored Pinterest credential identity is invalid; disconnect was not applied.") from None
+        except Exception:
+            raise HTTPException(status_code=503, detail="Pinterest credential could not be safely disconnected.") from None
+        return {
+            "disconnected": True,
+            "local_access_disabled": True,
+            "provider_token_revoked": False,
+            "message": "Pinterest credentials are disabled in this service; Pinterest-side token revocation was not performed.",
+        }
     if operation not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported Pinterest operation.")
     try:
@@ -606,16 +713,102 @@ def pinterest_account_operation(
     base = settings.pinterest_api_base_url.rstrip("/")
     headers = {"Authorization": f"Bearer {credential['access_token']}", "Content-Type": "application/json"}
     method, path, body = allowed[operation]
+    board_write_started = False
+    if operation == "create_board":
+        from app.database import (
+            claim_pinterest_board_operation,
+            complete_pinterest_board_operation,
+            mark_pinterest_board_operation_failed,
+            mark_pinterest_board_operation_uncertain,
+        )
     if operation == "create_board" and not body["name"]:
         raise HTTPException(status_code=400, detail="Board name is required.")
+    expected_user_id = str(credential.get("pinterest_user_id") or "")
+    if not expected_user_id or payload.account_id != f"pinterest:{expected_user_id}":
+        raise HTTPException(status_code=409, detail="Stored Pinterest credential identity does not match the requested account.")
     try:
         with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+            identity_response = client.get(f"{base}/user_account", headers=headers)
+            if not identity_response.is_success:
+                raise HTTPException(
+                    status_code=401 if identity_response.status_code in (401, 403) else 502,
+                    detail="Stored Pinterest account could not be verified; operation was not sent.",
+                )
+            identity_data = identity_response.json()
+            actual_user_id = identity_data.get("id") if isinstance(identity_data, dict) else None
+            if not isinstance(actual_user_id, (str, int)) or str(actual_user_id) != expected_user_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Pinterest token identity does not match the requested account; operation was not sent.",
+                )
+            if operation == "create_board":
+                fingerprint = hashlib.sha256(json.dumps(
+                    {"account_id": payload.account_id, "name": body["name"],
+                     "description": body["description"]},
+                    sort_keys=True, separators=(",", ":"),
+                ).encode()).hexdigest()
+                try:
+                    claim = claim_pinterest_board_operation(
+                        account_id=payload.account_id,
+                        idempotency_key=idempotency_key,
+                        request_fingerprint=fingerprint,
+                    )
+                except ValueError as exc:
+                    if str(exc) == "idempotency_key_payload_mismatch":
+                        raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different board data.") from None
+                    raise
+                except Exception:
+                    raise HTTPException(status_code=503, detail="Board operation ledger is unavailable; Pinterest write was not sent.") from None
+                if claim["status"] == "succeeded":
+                    return {"data": claim["result"], "replayed": True}
+                if claim["status"] in {"uncertain", "in_progress"}:
+                    raise HTTPException(status_code=409, detail="Board creation outcome is uncertain or still in progress; automatic retry is blocked pending reconciliation.")
+                if claim["status"] == "failed":
+                    raise HTTPException(status_code=409, detail="This board operation was previously rejected; use a new reviewed operation after resolving the rejection.")
+            if operation == "create_board":
+                board_write_started = True
             response = client.request(method, f"{base}{path}", headers=headers, json=body)
-        result = response.json() if response.content else {}
+        try:
+            result = response.json() if response.content else {}
+        except ValueError:
+            if operation == "create_board":
+                mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
+                raise HTTPException(status_code=502, detail="Pinterest board response was unreadable; outcome marked uncertain and will not be retried.") from None
+            raise HTTPException(status_code=502, detail="Pinterest API returned an unreadable response.") from None
     except httpx.HTTPError as exc:
+        if operation == "create_board" and board_write_started:
+            try:
+                mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
+            except Exception:
+                # The durable in_progress row itself blocks another provider POST.
+                pass
+            raise HTTPException(status_code=502, detail="Pinterest board request outcome is uncertain; automatic retry is blocked.") from None
+        if operation == "create_board":
+            raise HTTPException(status_code=502, detail="Pinterest account preflight failed; no board write was sent.") from None
         raise HTTPException(status_code=502, detail="Pinterest API request failed.") from exc
     if not response.is_success:
+        if operation == "create_board":
+            try:
+                if response.status_code < 500:
+                    mark_pinterest_board_operation_failed(account_id=payload.account_id, idempotency_key=idempotency_key)
+                else:
+                    mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
+            except Exception:
+                pass
+            if response.status_code >= 500:
+                raise HTTPException(status_code=502, detail="Pinterest board response is ambiguous; automatic retry is blocked.")
         raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail="Pinterest API rejected or could not complete the operation.")
+    if operation == "create_board":
+        try:
+            complete_pinterest_board_operation(
+                account_id=payload.account_id, idempotency_key=idempotency_key, result=result,
+            )
+        except Exception:
+            try:
+                mark_pinterest_board_operation_uncertain(account_id=payload.account_id, idempotency_key=idempotency_key)
+            except Exception:
+                pass
+            raise HTTPException(status_code=503, detail="Pinterest may have created the board, but durable success could not be confirmed; automatic retry is blocked.") from None
     return {"data": result}
 
 
@@ -754,7 +947,7 @@ def verify_publication_on_pinterest(publication_id: int) -> dict[str, object]:
     if publication_id <= 0:
         raise HTTPException(status_code=422, detail="publication_id must be positive")
     from app.database import get_publication
-    from app.credential_vault import get_pinterest_credential
+    from app.credential_vault import get_pinterest_credential_read_only
     from app.pinterest import PinterestReadError, get_pin_read_only, list_board_pins_read_only
     try:
         publication = get_publication(publication_id)
@@ -764,7 +957,7 @@ def verify_publication_on_pinterest(publication_id: int) -> dict[str, object]:
             raise HTTPException(status_code=409, detail="Only a confirmed successful publication can be verified")
         if not publication.get("account_id") or not publication.get("board_id"):
             raise HTTPException(status_code=409, detail="Publication is missing account or board ownership metadata")
-        credential = get_pinterest_credential(publication["account_id"])
+        credential = get_pinterest_credential_read_only(publication["account_id"])
         token = credential["access_token"]
         board = list_board_pins_read_only(board_id=str(publication["board_id"]), access_token=token)
         pin = get_pin_read_only(pin_id=str(publication["pinterest_pin_id"]), access_token=token)

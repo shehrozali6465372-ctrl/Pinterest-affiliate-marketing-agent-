@@ -19,7 +19,7 @@ Product intake/persistence, versioned content history, DeepSeek Flash content ge
 ## Local setup
 1. Use Python 3.11 or newer.
 2. Create and activate a virtual environment: `python -m venv .venv`.
-3. Install dependencies: `pip install -r requirements.txt`.
+3. Install developer/test dependencies: `pip install -r requirements.txt -r requirements-dev.txt`. Production deployments install only `requirements.txt`.
 4. Copy `.env.example` to `.env` and set real credentials locally.
 5. Apply database migrations: `python -m scripts.migrate`.
 6. Start API: `uvicorn app.main:app --reload`.
