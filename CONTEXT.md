@@ -1027,3 +1027,37 @@ This is the latest verified feature-branch checkpoint and supersedes earlier not
 - The timezone P2 review thread was resolved after implementation and exact-head CI passed. Verified all four review threads in PR #77 are now resolved (two outdated original findings plus pre-publish conflict and timezone findings).
 - PR #77 remains OPEN against `main`; do not merge or deploy without separate explicit authorization. Phase 10 remains PRE-RELEASE / BLOCKED by production snapshot, restore/PITR, credential, access/log-retention, and separate production approval gates.
 - No production DB, credentials, OAuth, scheduler dispatch/change, Pinterest API write, real Pin/Board, merge or deployment was performed.
+
+
+### Production state verification — 2026-11-11 (read-only)
+
+This section supersedes any earlier statement that the current production deployment or migration ledger had not been inspected. It records read-only verification only.
+
+#### Current live deployments
+
+- Render service `pinterest-affiliate-marketing-agent` is configured to auto-deploy from `main`; its latest live deploy is commit `2fd07669d19e68d73099c9e3f589e2db8ca87078` (Model 1). The service is on the Free plan, Oregon region, one instance, with no HTTP `healthCheckPath` configured. The public `/health` endpoint returned HTTP 200 and `{"status":"ok","service":"pinterest-affiliate-model-1"}`. The `/readiness` endpoint returned HTTP 401 because it requires `X-API-Key`; authenticated readiness was not tested and no production API key was read.
+- Modern Living Hub Render service remains on `main` commit `e0bc46154a211639349ad48f9da42879bd51d42d`. `/api/health` returned HTTP 200 with safe configuration booleans; the production Vercel `/pinterest.html` returned HTTP 200. The root `/health` path is not implemented (404); `/api/health` is the actual Hub health route.
+- Model 2 feature branch is **not deployed**. Green CI on PR #77 is not production deployment evidence.
+
+#### Production database migration ledger
+
+- Read-only query of the production `pinterest_affiliate` database's `schema_migrations` ledger returned migrations **001–012 only** (including both separately named 009 migrations).
+- The feature branch contains migrations **013–017**. None of 013, 014, 015, 016 or 017 is recorded as applied in the production ledger. This is a hard deployment blocker: do not deploy the Model 2 application before a sanitized production-like migration rehearsal, a verified backup/restore/rollback plan, and separately approved production migration.
+- The query selected only migration version and applied timestamp metadata. No credential rows, token ciphertext, token plaintext, account data or publication records were selected. No SQL write, migration, branch restore or database setting change was performed.
+
+#### Hub integration contract progress
+
+- The previous Hub caller-contract blocker now has an implementation on `modern-living-hub` draft PR #22: https://github.com/shehrozali6465372-ctrl/modern-living-hub/pull/22 (branch `fix/model2-board-idempotency-contract`, initially committed as `12b681c`). It requires/forwards stable Board idempotency keys, handles `replayed: true`, blocks blind retries for uncertain outcomes, exposes OAuth-refresh uncertainty, and states local-only disconnect as `provider_token_revoked: false`.
+- Hub local `npm test` passed, `npm audit --audit-level=moderate` reported 0 vulnerabilities, and PR #22 credential-security, Vercel and preview-comment checks passed. PR #22 remains draft, open, unreviewed, unmerged and undeployed. Its implementation is not yet part of the production Hub `main`/Render deployment.
+- Therefore the Hub caller-contract gate is **implemented in a draft PR but not yet closed for production**. It must be reviewed, merged and deployed before Model 2 release.
+
+#### Current PR / CI state
+
+- Agent PR #77 remains OPEN and NOT MERGED. Exact feature head at this verification: `6f9560d3cdf06f96e40e8cde7c0148edb7e384f4`. Model 2 PostgreSQL integration, Python tests and Python CI/security checks all report SUCCESS for this exact head. The PR has no recorded review decision; the existing Codex review receipts are on older commits. A fresh `@codex review` was requested after this check; do not treat it as complete until a receipt or findings for the current exact head are inspected.
+- Hub PR #22 remains DRAFT and OPEN. Exact head at this verification: `12b681c0cd50b50de9b44e054d0593bfbfe8d987`. Credential-security, Vercel and Vercel Preview Comments checks all report SUCCESS. A fresh `@codex review` was requested; no review result is recorded yet.
+
+#### Release boundary
+
+- Model 1 hourly Affiliate Scheduler Worker and daily Pinterest Learning Loop remain active by owner decision; no workflow was dispatched, paused, resumed or modified.
+- No production migration, production deployment, credential read/rotation, OAuth refresh, scheduler activation/change, Pinterest API write, real Pin or Board creation, PR merge or Render configuration change occurred.
+- **Phase 10 remains PRE-RELEASE / BLOCKED.** Required gates still include production-like snapshot/restore/rollback rehearsal, Neon restore/PITR and owner RPO/RTO/escalation evidence, credential inventory and separately approved rotation/re-encryption, production access/log-retention evidence, fresh exact-head independent review, and separate explicit approvals for migration, deployment and scheduler activation.
